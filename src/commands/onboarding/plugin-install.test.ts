@@ -71,6 +71,7 @@ import {
 
 const baseEntry: ChannelPluginCatalogEntry = {
   id: "zalo",
+  pluginId: "zalo",
   meta: {
     id: "zalo",
     label: "Zalo",
@@ -174,6 +175,30 @@ describe("ensureOnboardingPluginInstalled", () => {
 
     expectPluginLoadedFromLocalPath(result);
     expect(result.cfg.plugins?.entries?.zalo?.enabled).toBe(true);
+  });
+
+  it("uses the catalog plugin id for local-path installs", async () => {
+    const runtime = makeRuntime();
+    const prompter = makePrompter({
+      select: vi.fn(async () => "local") as WizardPrompter["select"],
+    });
+    const cfg: OpenClawConfig = {};
+    mockRepoLocalPathExists();
+
+    const result = await ensureOnboardingPluginInstalled({
+      cfg,
+      entry: {
+        ...baseEntry,
+        id: "teams",
+        pluginId: "@openclaw/msteams-plugin",
+      },
+      prompter,
+      runtime,
+    });
+
+    expect(result.installed).toBe(true);
+    expect(result.pluginId).toBe("@openclaw/msteams-plugin");
+    expect(result.cfg.plugins?.entries?.["@openclaw/msteams-plugin"]?.enabled).toBe(true);
   });
 
   it("defaults to local on dev channel when local path exists", async () => {
@@ -351,6 +376,29 @@ describe("ensureOnboardingPluginInstalled", () => {
         workspaceDir: "/tmp/openclaw-workspace",
         cache: false,
         onlyPluginIds: ["telegram"],
+        activate: false,
+      }),
+    );
+  });
+
+  it("scopes snapshots by plugin id when channel and plugin ids differ", () => {
+    const runtime = makeRuntime();
+    const cfg: OpenClawConfig = {};
+
+    loadOnboardingPluginRegistrySnapshotForChannel({
+      cfg,
+      runtime,
+      channel: "msteams",
+      pluginId: "@openclaw/msteams-plugin",
+      workspaceDir: "/tmp/openclaw-workspace",
+    });
+
+    expect(loadOpenClawPlugins).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: cfg,
+        workspaceDir: "/tmp/openclaw-workspace",
+        cache: false,
+        onlyPluginIds: ["@openclaw/msteams-plugin"],
         activate: false,
       }),
     );

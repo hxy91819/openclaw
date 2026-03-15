@@ -178,7 +178,10 @@ export async function channelsAddCommand(
   const resolveWorkspaceDir = () =>
     resolveAgentWorkspaceDir(nextConfig, resolveDefaultAgentId(nextConfig));
   // May trigger loadOpenClawPlugins on cache miss (disk scan + jiti import)
-  const loadScopedPlugin = async (channelId: ChannelId): Promise<ChannelPlugin | undefined> => {
+  const loadScopedPlugin = async (
+    channelId: ChannelId,
+    pluginId?: string,
+  ): Promise<ChannelPlugin | undefined> => {
     const existing = getChannelPlugin(channelId);
     if (existing) {
       return existing;
@@ -189,6 +192,7 @@ export async function channelsAddCommand(
       cfg: nextConfig,
       runtime,
       channel: channelId,
+      ...(pluginId ? { pluginId } : {}),
       workspaceDir: resolveWorkspaceDir(),
     });
     return snapshot.channels.find((entry) => entry.plugin.id === channelId)?.plugin;
@@ -209,6 +213,10 @@ export async function channelsAddCommand(
     if (!result.installed) {
       return;
     }
+    catalogEntry = {
+      ...catalogEntry,
+      ...(result.pluginId ? { pluginId: result.pluginId } : {}),
+    };
     channel = normalizeChannelId(catalogEntry.id) ?? (catalogEntry.id as ChannelId);
   }
 
@@ -221,7 +229,7 @@ export async function channelsAddCommand(
     return;
   }
 
-  const plugin = await loadScopedPlugin(channel);
+  const plugin = await loadScopedPlugin(channel, catalogEntry?.pluginId);
   if (!plugin?.setup?.applyAccountConfig) {
     runtime.error(`Channel ${channel} does not support add.`);
     runtime.exit(1);

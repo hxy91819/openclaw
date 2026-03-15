@@ -102,6 +102,7 @@ describe("channelsAddCommand", () => {
     setActivePluginRegistry(createTestRegistry());
     const catalogEntry: ChannelPluginCatalogEntry = {
       id: "msteams",
+      pluginId: "@openclaw/msteams-plugin",
       meta: {
         id: "msteams",
         label: "Microsoft Teams",
@@ -151,7 +152,10 @@ describe("channelsAddCommand", () => {
       expect.objectContaining({ entry: catalogEntry }),
     );
     expect(loadOnboardingPluginRegistrySnapshotForChannel).toHaveBeenCalledWith(
-      expect.objectContaining({ channel: "msteams" }),
+      expect.objectContaining({
+        channel: "msteams",
+        pluginId: "@openclaw/msteams-plugin",
+      }),
     );
     expect(configMocks.writeConfigFile).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -161,6 +165,77 @@ describe("channelsAddCommand", () => {
             tenantId: "tenant-scoped",
           },
         },
+      }),
+    );
+    expect(runtime.error).not.toHaveBeenCalled();
+    expect(runtime.exit).not.toHaveBeenCalled();
+  });
+
+  it("uses the installed plugin id when channel and plugin ids differ", async () => {
+    configMocks.readConfigFileSnapshot.mockResolvedValue({ ...baseConfigSnapshot });
+    setActivePluginRegistry(createTestRegistry());
+    const catalogEntry: ChannelPluginCatalogEntry = {
+      id: "msteams",
+      pluginId: "@openclaw/msteams-plugin",
+      meta: {
+        id: "msteams",
+        label: "Microsoft Teams",
+        selectionLabel: "Microsoft Teams",
+        docsPath: "/channels/msteams",
+        blurb: "teams channel",
+      },
+      install: {
+        npmSpec: "@openclaw/msteams",
+      },
+    };
+    catalogMocks.listChannelPluginCatalogEntries.mockReturnValue([catalogEntry]);
+    vi.mocked(ensureOnboardingPluginInstalled).mockImplementation(async ({ cfg }) => ({
+      cfg,
+      installed: true,
+      pluginId: "@vendor/teams-runtime",
+    }));
+    vi.mocked(loadOnboardingPluginRegistrySnapshotForChannel).mockReturnValue(
+      createTestRegistry([
+        {
+          pluginId: "@vendor/teams-runtime",
+          plugin: {
+            ...createChannelTestPluginBase({
+              id: "msteams",
+              label: "Microsoft Teams",
+              docsPath: "/channels/msteams",
+            }),
+            setup: {
+              applyAccountConfig: vi.fn(({ cfg, input }) => ({
+                ...cfg,
+                channels: {
+                  ...cfg.channels,
+                  msteams: {
+                    enabled: true,
+                    tenantId: input.token,
+                  },
+                },
+              })),
+            },
+          },
+          source: "test",
+        },
+      ]),
+    );
+
+    await channelsAddCommand(
+      {
+        channel: "msteams",
+        account: "default",
+        token: "tenant-scoped",
+      },
+      runtime,
+      { hasFlags: true },
+    );
+
+    expect(loadOnboardingPluginRegistrySnapshotForChannel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "msteams",
+        pluginId: "@vendor/teams-runtime",
       }),
     );
     expect(runtime.error).not.toHaveBeenCalled();

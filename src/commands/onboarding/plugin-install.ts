@@ -25,6 +25,7 @@ type InstallChoice = "npm" | "local" | "skip";
 type InstallResult = {
   cfg: OpenClawConfig;
   installed: boolean;
+  pluginId?: string;
 };
 
 function hasGitWorkspace(workspaceDir?: string): boolean {
@@ -176,8 +177,9 @@ export async function ensureOnboardingPluginInstalled(params: {
 
   if (choice === "local" && localPath) {
     next = addPluginLoadPath(next, localPath);
-    next = enablePluginInConfig(next, entry.id).config;
-    return { cfg: next, installed: true };
+    const pluginId = entry.pluginId ?? entry.id;
+    next = enablePluginInConfig(next, pluginId).config;
+    return { cfg: next, installed: true, pluginId };
   }
 
   const result = await installPluginFromNpmSpec({
@@ -198,7 +200,7 @@ export async function ensureOnboardingPluginInstalled(params: {
       version: result.version,
       ...buildNpmResolutionInstallFields(result.npmResolution),
     });
-    return { cfg: next, installed: true };
+    return { cfg: next, installed: true, pluginId: result.pluginId };
   }
 
   await prompter.note(
@@ -213,8 +215,9 @@ export async function ensureOnboardingPluginInstalled(params: {
     });
     if (fallback) {
       next = addPluginLoadPath(next, localPath);
-      next = enablePluginInConfig(next, entry.id).config;
-      return { cfg: next, installed: true };
+      const pluginId = entry.pluginId ?? entry.id;
+      next = enablePluginInConfig(next, pluginId).config;
+      return { cfg: next, installed: true, pluginId };
     }
   }
 
@@ -255,12 +258,15 @@ export function reloadOnboardingPluginRegistryForChannel(params: {
   cfg: OpenClawConfig;
   runtime: RuntimeEnv;
   channel: string;
+  pluginId?: string;
   workspaceDir?: string;
 }): void {
   const activeRegistry = getActivePluginRegistry();
   // On low-memory hosts, the empty-registry fallback should only recover the selected
   // plugin instead of importing every bundled extension during onboarding.
-  const onlyPluginIds = activeRegistry?.plugins.length ? undefined : [params.channel];
+  const onlyPluginIds = activeRegistry?.plugins.length
+    ? undefined
+    : [params.pluginId ?? params.channel];
   loadOnboardingPluginRegistry({
     ...params,
     onlyPluginIds,
@@ -271,11 +277,12 @@ export function loadOnboardingPluginRegistrySnapshotForChannel(params: {
   cfg: OpenClawConfig;
   runtime: RuntimeEnv;
   channel: string;
+  pluginId?: string;
   workspaceDir?: string;
 }): PluginRegistry {
   return loadOnboardingPluginRegistry({
     ...params,
-    onlyPluginIds: [params.channel],
+    onlyPluginIds: [params.pluginId ?? params.channel],
     activate: false,
   });
 }

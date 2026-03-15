@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChannelPluginCatalogEntry } from "../channels/plugins/catalog.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { createEmptyPluginRegistry } from "../plugins/registry.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
@@ -13,6 +14,10 @@ import {
   reloadOnboardingPluginRegistry,
 } from "./onboarding/plugin-install.js";
 import { createExitThrowingRuntime, createWizardPrompter } from "./test-wizard-helpers.js";
+
+const catalogMocks = vi.hoisted(() => ({
+  listChannelPluginCatalogEntries: vi.fn(),
+}));
 
 function createPrompter(overrides: Partial<WizardPrompter>): WizardPrompter {
   return createWizardPrompter(
@@ -178,6 +183,20 @@ vi.mock("../channel-web.js", () => ({
   loginWeb: vi.fn(async () => {}),
 }));
 
+vi.mock("../channels/plugins/catalog.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../channels/plugins/catalog.js")>();
+  return {
+    ...actual,
+    listChannelPluginCatalogEntries: ((...args) => {
+      const implementation = catalogMocks.listChannelPluginCatalogEntries.getMockImplementation();
+      if (implementation) {
+        return catalogMocks.listChannelPluginCatalogEntries(...args);
+      }
+      return actual.listChannelPluginCatalogEntries(...args);
+    }) as typeof actual.listChannelPluginCatalogEntries,
+  };
+});
+
 vi.mock("./onboard-helpers.js", () => ({
   detectBinary: vi.fn(async () => false),
 }));
@@ -195,6 +214,7 @@ vi.mock("./onboarding/plugin-install.js", async (importOriginal) => {
 describe("setupChannels", () => {
   beforeEach(() => {
     setDefaultChannelPluginRegistryForTests();
+    catalogMocks.listChannelPluginCatalogEntries.mockReset();
     vi.mocked(loadOnboardingPluginRegistrySnapshotForChannel).mockClear();
     vi.mocked(reloadOnboardingPluginRegistry).mockClear();
   });
@@ -297,12 +317,28 @@ describe("setupChannels", () => {
 
   it("keeps configured external plugin channels visible when the active registry starts empty", async () => {
     setActivePluginRegistry(createEmptyPluginRegistry());
+    catalogMocks.listChannelPluginCatalogEntries.mockReturnValue([
+      {
+        id: "msteams",
+        pluginId: "@openclaw/msteams-plugin",
+        meta: {
+          id: "msteams",
+          label: "Microsoft Teams",
+          selectionLabel: "Microsoft Teams",
+          docsPath: "/channels/msteams",
+          blurb: "teams channel",
+        },
+        install: {
+          npmSpec: "@openclaw/msteams",
+        },
+      } satisfies ChannelPluginCatalogEntry,
+    ]);
     vi.mocked(loadOnboardingPluginRegistrySnapshotForChannel).mockImplementation(
       ({ channel }: { channel: string }) => {
         const registry = createEmptyPluginRegistry();
         if (channel === "msteams") {
           registry.channels.push({
-            pluginId: "msteams",
+            pluginId: "@openclaw/msteams-plugin",
             source: "test",
             plugin: {
               id: "msteams",
@@ -352,7 +388,7 @@ describe("setupChannels", () => {
         },
         plugins: {
           entries: {
-            msteams: { enabled: true },
+            "@openclaw/msteams-plugin": { enabled: true },
           },
         },
       } as OpenClawConfig,
@@ -362,6 +398,7 @@ describe("setupChannels", () => {
     expect(loadOnboardingPluginRegistrySnapshotForChannel).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "msteams",
+        pluginId: "@openclaw/msteams-plugin",
       }),
     );
     expect(multiselect).not.toHaveBeenCalled();

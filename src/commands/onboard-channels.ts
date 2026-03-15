@@ -336,7 +336,10 @@ export async function setupChannels(
     }
     return Array.from(merged.values());
   };
-  const loadScopedChannelPlugin = (channel: ChannelChoice): ChannelPlugin | undefined => {
+  const loadScopedChannelPlugin = (
+    channel: ChannelChoice,
+    pluginId?: string,
+  ): ChannelPlugin | undefined => {
     const existing = getVisibleChannelPlugin(channel);
     if (existing) {
       return existing;
@@ -345,6 +348,7 @@ export async function setupChannels(
       cfg: next,
       runtime,
       channel,
+      ...(pluginId ? { pluginId } : {}),
       workspaceDir: resolveWorkspaceDir(),
     });
     const plugin = snapshot.channels.find((entry) => entry.plugin.id === channel)?.plugin;
@@ -368,11 +372,12 @@ export async function setupChannels(
       if (getVisibleChannelPlugin(channel)) {
         continue;
       }
-      const explicitlyEnabled = next.plugins?.entries?.[channel]?.enabled === true;
+      const explicitlyEnabled =
+        next.plugins?.entries?.[entry.pluginId ?? channel]?.enabled === true;
       if (!explicitlyEnabled && !isChannelConfigured(next, channel)) {
         continue;
       }
-      loadScopedChannelPlugin(channel);
+      loadScopedChannelPlugin(channel, entry.pluginId);
     }
   };
   if (options?.whatsappAccountId?.trim()) {
@@ -712,7 +717,7 @@ export async function setupChannels(
       if (!result.installed) {
         return;
       }
-      loadScopedChannelPlugin(channel);
+      loadScopedChannelPlugin(channel, result.pluginId ?? catalogEntry.pluginId);
       await refreshStatus(channel);
     } else {
       const enabled = await enableBundledPluginForSetup(channel);
