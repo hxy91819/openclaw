@@ -201,7 +201,6 @@ function resolveInstallInfo(params: {
 function resolveCatalogPluginId(params: {
   packageDir?: string;
   rootDir?: string;
-  packageName?: string;
   origin?: PluginOrigin;
 }): string | undefined {
   const manifestDir = params.packageDir ?? params.rootDir;
@@ -211,8 +210,7 @@ function resolveCatalogPluginId(params: {
       return manifest.manifest.id;
     }
   }
-  const packageName = params.packageName?.trim();
-  return packageName ? packageName : undefined;
+  return undefined;
 }
 
 function buildCatalogEntry(candidate: {
@@ -247,7 +245,6 @@ function buildCatalogEntry(candidate: {
   const pluginId = resolveCatalogPluginId({
     packageDir: candidate.packageDir,
     rootDir: candidate.rootDir,
-    packageName: candidate.packageName,
     origin: candidate.origin,
   });
   return {
