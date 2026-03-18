@@ -55,6 +55,7 @@ describe("resolveBundledPluginsDir", () => {
     fs.mkdirSync(path.join(repoRoot, "extensions"), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, "dist-runtime", "extensions"), { recursive: true });
     fs.mkdirSync(path.join(repoRoot, "dist", "extensions"), { recursive: true });
+
     fs.writeFileSync(
       path.join(repoRoot, "package.json"),
       `${JSON.stringify({ name: "openclaw" }, null, 2)}\n`,
@@ -66,6 +67,23 @@ describe("resolveBundledPluginsDir", () => {
 
     expect(fs.realpathSync(resolveBundledPluginsDir() ?? "")).toBe(
       fs.realpathSync(path.join(repoRoot, "extensions")),
+    );
+  });
+
+  it("prefers built bundled plugins from dist in packaged installs", () => {
+    const repoRoot = makeRepoRoot("openclaw-bundled-dir-dist-");
+    fs.mkdirSync(path.join(repoRoot, "dist", "extensions"), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, "extensions"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, "package.json"),
+      `${JSON.stringify({ name: "openclaw" }, null, 2)}\n`,
+      "utf8",
+    );
+
+    process.chdir(repoRoot);
+
+    expect(fs.realpathSync(resolveBundledPluginsDir() ?? "")).toBe(
+      fs.realpathSync(path.join(repoRoot, "dist", "extensions")),
     );
   });
 });

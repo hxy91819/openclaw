@@ -32,6 +32,12 @@ export function resolveBundledPluginsDir(env: NodeJS.ProcessEnv = process.env): 
       if (fs.existsSync(runtimeExtensionsDir) && fs.existsSync(builtExtensionsDir)) {
         return runtimeExtensionsDir;
       }
+      // Published/npm installs ship built bundled plugins under dist/extensions.
+      // Prefer those over the source tree to avoid loading TypeScript plugin
+      // entrypoints through jiti in production packages.
+      if (fs.existsSync(builtExtensionsDir)) {
+        return builtExtensionsDir;
+      }
     }
   } catch {
     // ignore
