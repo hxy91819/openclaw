@@ -57,6 +57,26 @@ describe("stageBundledPluginRuntime", () => {
     expect(fs.realpathSync(distNodeModules)).toBe(fs.realpathSync(sourcePluginNodeModulesDir));
   });
 
+  it("can restage bundled plugin node_modules links without EEXIST", () => {
+    const repoRoot = makeRepoRoot("openclaw-stage-bundled-runtime-restage-");
+    const distPluginDir = path.join(repoRoot, "dist", "extensions", "acpx");
+    const sourcePluginNodeModulesDir = path.join(repoRoot, "extensions", "acpx", "node_modules");
+    fs.mkdirSync(distPluginDir, { recursive: true });
+    fs.mkdirSync(path.join(sourcePluginNodeModulesDir, "demo"), { recursive: true });
+    fs.writeFileSync(path.join(distPluginDir, "index.js"), "export default {}\n", "utf8");
+    fs.writeFileSync(path.join(sourcePluginNodeModulesDir, "demo", "index.js"), "ok\n", "utf8");
+
+    stageBundledPluginRuntime({ repoRoot });
+    expect(() => stageBundledPluginRuntime({ repoRoot })).not.toThrow();
+
+    expect(
+      fs.realpathSync(path.join(repoRoot, "dist-runtime", "extensions", "acpx", "node_modules")),
+    ).toBe(fs.realpathSync(sourcePluginNodeModulesDir));
+    expect(fs.realpathSync(path.join(distPluginDir, "node_modules"))).toBe(
+      fs.realpathSync(sourcePluginNodeModulesDir),
+    );
+  });
+
   it("writes wrappers that forward plugin entry imports into canonical dist files", async () => {
     const repoRoot = makeRepoRoot("openclaw-stage-bundled-runtime-chunks-");
     fs.mkdirSync(path.join(repoRoot, "dist", "extensions", "diffs"), { recursive: true });
