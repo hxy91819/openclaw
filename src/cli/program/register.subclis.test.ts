@@ -18,6 +18,16 @@ const { nodesAction, registerNodesCli } = vi.hoisted(() => {
   return { nodesAction: action, registerNodesCli: register };
 });
 
+const { registerPluginsCli } = vi.hoisted(() => ({
+  registerPluginsCli: vi.fn((program: Command) => {
+    program.command("plugins");
+  }),
+}));
+
+const pluginCliModule = vi.hoisted(() => ({
+  registerPluginCliCommands: vi.fn(),
+}));
+
 const configModule = vi.hoisted(() => ({
   loadConfig: vi.fn(),
   readConfigFileSnapshot: vi.fn(),
@@ -25,9 +35,17 @@ const configModule = vi.hoisted(() => ({
 
 vi.mock("../acp-cli.js", () => ({ registerAcpCli }));
 vi.mock("../nodes-cli.js", () => ({ registerNodesCli }));
+vi.mock("../plugins-cli.js", () => ({ registerPluginsCli }));
+vi.mock("../../plugins/cli.js", () => pluginCliModule);
 vi.mock("../../config/config.js", () => configModule);
 
-const mockedModuleIds = ["../acp-cli.js", "../nodes-cli.js", "../../config/config.js"];
+const mockedModuleIds = [
+  "../acp-cli.js",
+  "../nodes-cli.js",
+  "../plugins-cli.js",
+  "../../plugins/cli.js",
+  "../../config/config.js",
+];
 
 const { loadValidatedConfigForPluginRegistration, registerSubCliByName, registerSubCliCommands } =
   await import("./register.subclis.js");
@@ -63,6 +81,8 @@ describe("registerSubCliCommands", () => {
     acpAction.mockClear();
     registerNodesCli.mockClear();
     nodesAction.mockClear();
+    registerPluginsCli.mockClear();
+    pluginCliModule.registerPluginCliCommands.mockReset();
     configModule.loadConfig.mockReset();
     configModule.readConfigFileSnapshot.mockReset();
   });
@@ -141,5 +161,30 @@ describe("registerSubCliCommands", () => {
     await program.parseAsync(["acp"], { from: "user" });
     expect(registerAcpCli).toHaveBeenCalledTimes(1);
     expect(acpAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips external plugin CLI registration for bare plugins root", async () => {
+    const program = createRegisteredProgram(["node", "openclaw", "plugins"], "openclaw");
+
+    await registerSubCliByName(program, "plugins");
+
+    expect(registerPluginsCli).toHaveBeenCalledTimes(1);
+    expect(pluginCliModule.registerPluginCliCommands).not.toHaveBeenCalled();
+    expect(configModule.readConfigFileSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("loads external plugin CLI registration for nested plugins subcommands", async () => {
+    const loadedConfig = { plugins: { enabled: true } };
+    configModule.readConfigFileSnapshot.mockResolvedValueOnce({
+      valid: true,
+      config: loadedConfig,
+    });
+    configModule.loadConfig.mockReturnValueOnce(loadedConfig);
+    const program = createRegisteredProgram(["node", "openclaw", "plugins", "list"], "openclaw");
+
+    await registerSubCliByName(program, "plugins");
+
+    expect(registerPluginsCli).toHaveBeenCalledTimes(1);
+    expect(pluginCliModule.registerPluginCliCommands).toHaveBeenCalledWith(program, loadedConfig);
   });
 });

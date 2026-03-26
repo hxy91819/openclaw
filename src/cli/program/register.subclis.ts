@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import type { OpenClawConfig } from "../../config/config.js";
 import { isTruthyEnvValue } from "../../infra/env.js";
-import { getPrimaryCommand, hasHelpOrVersion } from "../argv.js";
+import { getCommandPathWithRootOptions, getPrimaryCommand, hasHelpOrVersion } from "../argv.js";
 import { reparseProgramFromActionArgs } from "./action-reparse.js";
 import { removeCommand, removeCommandByName } from "./command-tree.js";
 import {
@@ -31,6 +31,18 @@ const shouldRegisterPrimaryOnly = (argv: string[]) => {
 const shouldEagerRegisterSubcommands = (_argv: string[]) => {
   return isTruthyEnvValue(process.env.OPENCLAW_DISABLE_LAZY_SUBCOMMANDS);
 };
+
+function shouldRegisterPluginCliForPluginsSubcommand(argv: string[]): boolean {
+  const commandPath = getCommandPathWithRootOptions(argv, 2);
+  if (commandPath[0] !== "plugins") {
+    return true;
+  }
+  const secondary = commandPath[1];
+  if (!secondary || secondary === "help") {
+    return false;
+  }
+  return true;
+}
 
 export const loadValidatedConfigForPluginRegistration =
   async (): Promise<OpenClawConfig | null> => {
@@ -241,6 +253,9 @@ const entries: SubCliEntry[] = [
     register: async (program) => {
       const mod = await import("../plugins-cli.js");
       mod.registerPluginsCli(program);
+      if (!shouldRegisterPluginCliForPluginsSubcommand(process.argv)) {
+        return;
+      }
       const { registerPluginCliCommands } = await import("../../plugins/cli.js");
       const config = await loadValidatedConfigForPluginRegistration();
       if (config) {
