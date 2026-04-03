@@ -602,11 +602,12 @@ export async function handleOpenResponsesHttpRequest(
                       },
                 limits: limits.files,
               });
-              if (file.text?.trim()) {
+              const text = file.text?.trim();
+              if (text) {
                 fileContexts.push(
                   renderFileContextBlock({
                     filename: file.filename,
-                    content: wrapUntrustedFileContent(file.text),
+                    content: wrapUntrustedFileContent(text),
                   }),
                 );
               } else if (file.images && file.images.length > 0) {
