@@ -75,7 +75,8 @@ export function resolveChannelSetupEntries(params: {
     env: params.env,
   });
   const installedPluginIds = new Set(params.installedPlugins.map((plugin) => plugin.id));
-  const catalogEntries = listChannelPluginCatalogEntries({ workspaceDir });
+  // Security: exclude untrusted workspace shadows during setup. See GHSA-2qrv-rc5x-2g2h
+  const catalogEntries = listChannelPluginCatalogEntries({ workspaceDir, excludeWorkspace: true });
   const installedCatalogEntries = catalogEntries.filter(
     (entry) =>
       !installedPluginIds.has(entry.id) &&

@@ -274,8 +274,10 @@ function resolveScopedChannelPluginId(params: {
     return explicitPluginId;
   }
   return (
+    // Security: exclude untrusted workspace shadows during setup. See GHSA-2qrv-rc5x-2g2h
     getChannelPluginCatalogEntry(params.channel, {
       workspaceDir: params.workspaceDir,
+      excludeWorkspace: true,
     })?.pluginId ?? resolveUniqueManifestScopedChannelPluginId(params)
   );
 }
