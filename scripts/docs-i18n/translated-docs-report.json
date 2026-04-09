@@ -1,0 +1,163 @@
+{
+  "generated_at": "2026-04-08T01:52:28Z",
+  "source_root": "/data/tmp/docs-i18n-chunked-raw-gemini/site",
+  "translated_root": "/data/tmp/docs-i18n-chunked-raw-gemini/site/zh-CN",
+  "lang": "zh-CN",
+  "files_checked": 1,
+  "fail_count": 0,
+  "warn_count": 1,
+  "pass_count": 0,
+  "files": [
+    {
+      "rel_path": "plugins/sdk-provider-plugins.md",
+      "source": {
+        "bytes": 29642,
+        "lines": 735,
+        "fence_count": 28,
+        "has_frontmatter": true,
+        "has_x_i18n": false,
+        "tag_open_close": {
+          "Accordion": [
+            1,
+            1
+          ],
+          "AccordionGroup": [
+            0,
+            0
+          ],
+          "Card": [
+            0,
+            0
+          ],
+          "CardGroup": [
+            0,
+            0
+          ],
+          "Check": [
+            0,
+            0
+          ],
+          "CodeGroup": [
+            1,
+            1
+          ],
+          "Columns": [
+            0,
+            0
+          ],
+          "Info": [
+            1,
+            1
+          ],
+          "Note": [
+            0,
+            0
+          ],
+          "Step": [
+            6,
+            6
+          ],
+          "Steps": [
+            1,
+            1
+          ],
+          "Tab": [
+            4,
+            4
+          ],
+          "Tabs": [
+            1,
+            1
+          ],
+          "Tip": [
+            0,
+            0
+          ],
+          "Warning": [
+            0,
+            0
+          ]
+        }
+      },
+      "target": {
+        "bytes": 29840,
+        "lines": 653,
+        "fence_count": 28,
+        "has_frontmatter": true,
+        "has_x_i18n": true,
+        "tag_open_close": {
+          "Accordion": [
+            1,
+            1
+          ],
+          "AccordionGroup": [
+            0,
+            0
+          ],
+          "Card": [
+            0,
+            0
+          ],
+          "CardGroup": [
+            0,
+            0
+          ],
+          "Check": [
+            0,
+            0
+          ],
+          "CodeGroup": [
+            1,
+            1
+          ],
+          "Columns": [
+            0,
+            0
+          ],
+          "Info": [
+            1,
+            1
+          ],
+          "Note": [
+            0,
+            0
+          ],
+          "Step": [
+            6,
+            6
+          ],
+          "Steps": [
+            1,
+            1
+          ],
+          "Tab": [
+            4,
+            4
+          ],
+          "Tabs": [
+            1,
+            1
+          ],
+          "Tip": [
+            0,
+            0
+          ],
+          "Warning": [
+            0,
+            0
+          ]
+        }
+      },
+      "findings": [
+        {
+          "level": "warn",
+          "code": "english_residue",
+          "message": "suspicious untranslated English: line 85: 清单声明了 `providerAuthEnvVars`，以便 OpenClaw 无需加载插件运行时即可检测凭证。`modelSupport` 是可选的，它允许 OpenClaw 在运行时钩子存在之前，通过类似 `acme-large` 的简短模型 ID 自动加载你的提供商插件。如果你在 ClawHub 上发布提供商，则 `package.json` 中必须包含 `openclaw.compat` 和 `openclaw.build` 字段。 | line 90: 一个最简提供商需要 `id`、`label`、`auth` 和 `catalog`： | line 161: 这是一个可以工作的提供商。用户现在可以运行 `openclaw onboard --acme-ai-api-key \u003ckey\u003e` 并选择 `acme-ai/acme-large` 作为他们的模型。"
+        }
+      ],
+      "fail_count": 0,
+      "warn_count": 1,
+      "status": "warn"
+    }
+  ]
+}

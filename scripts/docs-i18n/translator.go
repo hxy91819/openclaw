@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -161,10 +162,14 @@ func runPrompt(ctx context.Context, client promptRunner, message string) (string
 	promptCtx, cancel := context.WithTimeout(ctx, docsI18nPromptTimeout())
 	defer cancel()
 
+	start := time.Now()
+	log.Printf("docs-i18n: prompt start bytes=%d timeout=%s", len(message), docsI18nPromptTimeout())
 	result, err := client.Prompt(promptCtx, message)
 	if err != nil {
+		log.Printf("docs-i18n: prompt error elapsed=%s bytes=%d err=%v", time.Since(start).Round(time.Millisecond), len(message), err)
 		return "", decoratePromptError(err, client.Stderr())
 	}
+	log.Printf("docs-i18n: prompt done elapsed=%s in_bytes=%d out_bytes=%d", time.Since(start).Round(time.Millisecond), len(message), len(result))
 	return result, nil
 }
 

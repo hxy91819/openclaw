@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -10,12 +12,15 @@ import (
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
 	"golang.org/x/net/html"
-	"sort"
 )
 
 type htmlReplacement struct {
 	Start int
 	Stop  int
+	Value string
+}
+
+type htmlTranslationSlot struct {
 	Value string
 }
 
@@ -97,7 +102,10 @@ func sortHTMLReplacements(replacements []htmlReplacement) {
 
 func translateHTMLBlock(ctx context.Context, translator docsTranslator, htmlText, srcLang, tgtLang string) (string, error) {
 	tokenizer := html.NewTokenizer(strings.NewReader(htmlText))
-	var out strings.Builder
+	var (
+		out   strings.Builder
+		slots []htmlTranslationSlot
+	)
 	skipDepth := 0
 
 	for {
@@ -114,7 +122,9 @@ func translateHTMLBlock(ctx context.Context, translator docsTranslator, htmlText
 
 		switch tt {
 		case html.StartTagToken:
-			out.WriteString(raw)
+			tagWithMarkers, newSlots := markHTMLTagAttributes(raw, len(slots))
+			out.WriteString(tagWithMarkers)
+			slots = append(slots, newSlots...)
 			if isSkipTag(strings.ToLower(tok.Data)) {
 				skipDepth++
 			}
@@ -124,14 +134,14 @@ func translateHTMLBlock(ctx context.Context, translator docsTranslator, htmlText
 				skipDepth--
 			}
 		case html.SelfClosingTagToken:
-			out.WriteString(raw)
+			tagWithMarkers, newSlots := markHTMLTagAttributes(raw, len(slots))
+			out.WriteString(tagWithMarkers)
+			slots = append(slots, newSlots...)
 		case html.TextToken:
 			if shouldTranslateHTMLText(skipDepth, raw) {
-				translated, err := translator.Translate(ctx, raw, srcLang, tgtLang)
-				if err != nil {
-					return "", err
-				}
-				out.WriteString(translated)
+				placeholder := htmlSlotPlaceholder(len(slots))
+				out.WriteString(placeholder)
+				slots = append(slots, htmlTranslationSlot{Value: raw})
 			} else {
 				out.WriteString(raw)
 			}
@@ -140,7 +150,50 @@ func translateHTMLBlock(ctx context.Context, translator docsTranslator, htmlText
 		}
 	}
 
-	return out.String(), nil
+	if len(slots) == 0 {
+		return out.String(), nil
+	}
+
+	values := make([]string, 0, len(slots))
+	for _, slot := range slots {
+		values = append(values, slot.Value)
+	}
+	translatedValues, err := translateStructuredFields(ctx, translator, srcLang, tgtLang, values)
+	if err != nil {
+		return "", err
+	}
+	result := out.String()
+	for index, translated := range translatedValues {
+		result = strings.ReplaceAll(result, htmlSlotPlaceholder(index), translated)
+	}
+	return result, nil
+}
+
+func markHTMLTagAttributes(raw string, offset int) (string, []htmlTranslationSlot) {
+	result := raw
+	slots := make([]htmlTranslationSlot, 0, len(translatableHTMLAttributes()))
+	for _, attribute := range translatableHTMLAttributes() {
+		valueStart, valueEnd, ok := findQuotedAttributeValue(result, attribute)
+		if !ok {
+			continue
+		}
+		value := result[valueStart:valueEnd]
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		placeholder := htmlSlotPlaceholder(offset + len(slots))
+		slots = append(slots, htmlTranslationSlot{Value: value})
+		result = result[:valueStart] + placeholder + result[valueEnd:]
+	}
+	return result, slots
+}
+
+func translatableHTMLAttributes() []string {
+	return []string{"title", "label", "summary", "description"}
+}
+
+func htmlSlotPlaceholder(index int) string {
+	return "__OC_I18N_HTML_SLOT_" + strconv.Itoa(index) + "__"
 }
 
 func shouldTranslateHTMLText(skipDepth int, text string) bool {

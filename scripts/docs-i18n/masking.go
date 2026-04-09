@@ -7,6 +7,7 @@ import (
 )
 
 var (
+	fencedCodeRe  = regexp.MustCompile("(?s)```.*?```")
 	inlineCodeRe  = regexp.MustCompile("`[^`]+`")
 	angleLinkRe   = regexp.MustCompile(`<https?://[^>]+>`)
 	linkURLRe     = regexp.MustCompile(`\[[^\]]*\]\(([^)]+)\)`)
@@ -14,7 +15,8 @@ var (
 )
 
 func maskMarkdown(text string, nextPlaceholder func() string, placeholders *[]string, mapping map[string]string) string {
-	masked := maskMatches(text, inlineCodeRe, nextPlaceholder, placeholders, mapping)
+	masked := maskMatches(text, fencedCodeRe, nextPlaceholder, placeholders, mapping)
+	masked = maskMatches(masked, inlineCodeRe, nextPlaceholder, placeholders, mapping)
 	masked = maskMatches(masked, angleLinkRe, nextPlaceholder, placeholders, mapping)
 	masked = maskLinkURLs(masked, nextPlaceholder, placeholders, mapping)
 	return masked

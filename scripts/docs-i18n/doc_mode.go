@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,23 +48,13 @@ func processFileDoc(ctx context.Context, translator docsTranslator, docsRoot, fi
 			return false, "", fmt.Errorf("frontmatter parse failed for %s: %w", relPath, err)
 		}
 	}
-	frontTemplate, markers := buildFrontmatterTemplate(frontData)
-	taggedInput := formatTaggedDocument(frontTemplate, sourceBody)
+	if err := translateDocFrontMatter(ctx, translator, frontData, srcLang, tgtLang); err != nil {
+		return false, "", fmt.Errorf("frontmatter translation failed for %s: %w", relPath, err)
+	}
 
-	translatedDoc, err := translator.TranslateRaw(ctx, taggedInput, srcLang, tgtLang)
+	translatedBody, err := translateDocBody(ctx, translator, relPath, srcLang, tgtLang, sourceBody)
 	if err != nil {
 		return false, "", fmt.Errorf("translate failed (%s): %w", relPath, err)
-	}
-
-	translatedFront, translatedBody, err := parseTaggedDocument(translatedDoc)
-	if err != nil {
-		return false, "", fmt.Errorf("tagged output invalid for %s: %w", relPath, err)
-	}
-	if sourceFront != "" && strings.TrimSpace(translatedFront) == "" {
-		return false, "", fmt.Errorf("translation removed frontmatter for %s", relPath)
-	}
-	if err := applyFrontmatterTranslations(frontData, markers, translatedFront); err != nil {
-		return false, "", fmt.Errorf("frontmatter translation failed for %s: %w", relPath, err)
 	}
 	updatedFront, err := encodeFrontMatter(frontData, relPath, content)
 	if err != nil {
@@ -76,6 +67,147 @@ func processFileDoc(ctx context.Context, translator docsTranslator, docsRoot, fi
 
 	output := updatedFront + translatedBody
 	return false, outputPath, os.WriteFile(outputPath, []byte(output), 0o644)
+}
+
+func translateDocFrontMatter(ctx context.Context, translator docsTranslator, data map[string]any, srcLang, tgtLang string) error {
+	if len(data) == 0 {
+		return nil
+	}
+	values := make([]string, 0, 4)
+	apply := make([]func(string), 0, 4)
+
+	if summary, ok := data["summary"].(string); ok && strings.TrimSpace(summary) != "" {
+		values = append(values, summary)
+		apply = append(apply, func(value string) {
+			data["summary"] = value
+		})
+	}
+	if title, ok := data["title"].(string); ok && strings.TrimSpace(title) != "" {
+		values = append(values, title)
+		apply = append(apply, func(value string) {
+			data["title"] = value
+		})
+	}
+	if readWhen, ok := data["read_when"].([]any); ok {
+		for index, item := range readWhen {
+			textValue, ok := item.(string)
+			if !ok || strings.TrimSpace(textValue) == "" {
+				continue
+			}
+			slotIndex := index
+			values = append(values, textValue)
+			apply = append(apply, func(value string) {
+				readWhen[slotIndex] = value
+			})
+		}
+		data["read_when"] = readWhen
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	translated, err := translateStructuredFieldsIndividually(ctx, translator, srcLang, tgtLang, values)
+	if err != nil {
+		return err
+	}
+	for index, value := range translated {
+		apply[index](value)
+	}
+	return nil
+}
+
+func translateDocBody(ctx context.Context, translator docsTranslator, relPath, srcLang, tgtLang, body string) (string, error) {
+	chunks := splitDocBodyForTranslation(body)
+	if len(chunks) == 0 {
+		return body, nil
+	}
+	translatedChunks := 0
+	for _, chunk := range chunks {
+		if chunk.Translate {
+			translatedChunks++
+		}
+	}
+	log.Printf("docs-i18n: body-plan %s chunks=%d translated=%d bytes=%d", relPath, len(chunks), translatedChunks, len(body))
+
+	var out strings.Builder
+	for index, chunk := range chunks {
+		if !chunk.Translate {
+			out.WriteString(chunk.Text)
+			continue
+		}
+		chunkPath := fmt.Sprintf("%s.body-%03d", relPath, index+1)
+		log.Printf("docs-i18n: chunk start %s bytes=%d accordion=%t", chunkPath, len(chunk.Text), isAccordionBlock(chunk.Text))
+		translatedBody, err := translateStructuredDocChunk(
+			ctx,
+			translator,
+			chunkPath,
+			srcLang,
+			tgtLang,
+			chunk.Text,
+		)
+		if err != nil {
+			return "", err
+		}
+		log.Printf("docs-i18n: chunk done %s out_bytes=%d", chunkPath, len(translatedBody))
+		out.WriteString(translatedBody)
+	}
+	return out.String(), nil
+}
+
+func translateDocTaggedSection(ctx context.Context, translator docsTranslator, relPath, srcLang, tgtLang, frontMatter, body string) (string, error) {
+	taggedInput := formatTaggedDocument(frontMatter, body)
+	captureMetadata := docCaptureMetadata{
+		RelPath:       relPath,
+		SourceLang:    srcLang,
+		TargetLang:    tgtLang,
+		Provider:      docsPiProvider(),
+		Model:         docsPiModel(),
+		RequestBytes:  len(taggedInput),
+		RequestSHA256: hashText(taggedInput),
+	}
+	bestEffortCaptureDocArtifacts(relPath, captureMetadata, map[string]string{
+		"request.tagged.txt": taggedInput,
+	})
+
+	translatedDoc, err := translator.TranslateRaw(ctx, taggedInput, srcLang, tgtLang)
+	if err != nil {
+		captureMetadata.TranslateError = err.Error()
+		bestEffortCaptureDocArtifacts(relPath, captureMetadata, map[string]string{
+			"translate-error.txt": err.Error() + "\n",
+		})
+		return "", err
+	}
+	captureMetadata.ResponseBytes = len(translatedDoc)
+	captureMetadata.ResponseSHA256 = hashText(translatedDoc)
+	bestEffortCaptureDocArtifacts(relPath, captureMetadata, map[string]string{
+		"response.tagged.txt": translatedDoc,
+	})
+
+	translatedFront, translatedBody, err := parseTaggedDocument(translatedDoc)
+	if err != nil {
+		if frontMatter == "" && canAcceptBareBodyResponse(translatedDoc) {
+			return translatedDoc, nil
+		}
+		captureMetadata.ParseError = err.Error()
+		bestEffortCaptureDocArtifacts(relPath, captureMetadata, map[string]string{
+			"parse-error.txt": err.Error() + "\n",
+		})
+		return "", fmt.Errorf("tagged output invalid for %s: %w", relPath, err)
+	}
+	if frontMatter != "" {
+		return translatedFront, nil
+	}
+	return translatedBody, nil
+}
+
+func canAcceptBareBodyResponse(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	if strings.Contains(trimmed, frontmatterTagStart) || strings.Contains(trimmed, bodyTagStart) {
+		return false
+	}
+	return true
 }
 
 func formatTaggedDocument(frontMatter, body string) string {
@@ -107,10 +239,7 @@ func parseTaggedDocument(text string) (string, string, error) {
 		body = trimTagNewlines(text[bodyStart:bodyEnd])
 		suffix = strings.TrimSpace(text[bodyEnd+len(bodyTagEnd):])
 	} else {
-		// Some model replies omit the final closing tag but otherwise return a
-		// valid document. Treat EOF as the end of <body> so doc retries do not
-		// burn through the whole workflow on a recoverable formatting slip.
-		body = trimTagNewlines(text[bodyStart:])
+		return "", "", fmt.Errorf("missing %s", bodyTagEnd)
 	}
 
 	prefix := strings.TrimSpace(text[:frontStart-len(frontmatterTagStart)])

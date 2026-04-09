@@ -7,6 +7,7 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
+	extensionast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
 )
 
@@ -105,7 +106,7 @@ func blockParent(n ast.Node) ast.Node {
 
 func isTranslatableBlock(n ast.Node) bool {
 	switch n.(type) {
-	case *ast.Paragraph, *ast.Heading, *ast.ListItem:
+	case *ast.Paragraph, *ast.Heading, *ast.ListItem, *extensionast.TableCell:
 		return true
 	default:
 		return false

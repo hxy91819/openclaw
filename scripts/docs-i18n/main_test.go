@@ -10,17 +10,24 @@ import (
 type fakeDocsTranslator struct{}
 
 func (fakeDocsTranslator) Translate(_ context.Context, text, _, _ string) (string, error) {
-	return text, nil
+	replaced := strings.NewReplacer(
+		"Gateway", "网关",
+		"See", "参见",
+		"See ", "参见 ",
+	).Replace(text)
+	return replaced, nil
 }
 
 func (fakeDocsTranslator) TranslateRaw(_ context.Context, text, _, _ string) (string, error) {
 	// Keep the fake translator deterministic so this test exercises the
 	// docs-i18n pipeline wiring and final link relocalization, not model output.
-	replaced := strings.NewReplacer(
-		"Gateway", "网关",
-		"See ", "参见 ",
-	).Replace(text)
-	return replaced, nil
+	return applyStructuredTestTranslation(text, func(value string) string {
+		return strings.NewReplacer(
+			"Gateway", "网关",
+			"See", "参见",
+			"See ", "参见 ",
+		).Replace(value)
+	}), nil
 }
 
 func (fakeDocsTranslator) Close() {}
