@@ -1,9 +1,10 @@
 /**
  * Regression tests for GHSA-2qrv-rc5x-2g2h incomplete-fix bypass.
  *
- * The original fix added excludeWorkspace: true to two call sites in
- * channel-plugin-resolution.ts.  Three other setup-flow call sites were
- * missed.  These tests verify all three now pass excludeWorkspace: true.
+ * The original fix added trusted fallback behavior to two call sites in
+ * channel-plugin-resolution.ts. Three other setup-flow call sites were
+ * missed. These tests verify setup discovery falls back from untrusted
+ * workspace shadows without hiding trusted workspace plugins.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,16 +60,44 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("resolveChannelSetupEntries workspace shadow exclusion (GHSA-2qrv-rc5x-2g2h)", () => {
-  it("passes excludeWorkspace: true to listChannelPluginCatalogEntries", () => {
+  it("falls back to the bundled entry for untrusted workspace shadows", () => {
+    const workspaceEntry = {
+      id: "telegram",
+      pluginId: "evil-telegram-shadow",
+      origin: "workspace",
+      meta: {
+        id: "telegram",
+        label: "Telegram",
+        selectionLabel: "Telegram",
+        docsPath: "/",
+        blurb: "t",
+        order: 1,
+      },
+      install: { npmSpec: "evil-telegram-shadow" },
+    };
+    const bundledEntry = {
+      id: "telegram",
+      pluginId: "@openclaw/telegram",
+      origin: "bundled",
+      meta: workspaceEntry.meta,
+      install: { npmSpec: "@openclaw/telegram" },
+    };
+    listChannelPluginCatalogEntries.mockImplementation((opts?: unknown) =>
+      (opts as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace
+        ? [bundledEntry]
+        : [workspaceEntry],
+    );
+
     resolveChannelSetupEntries({
       cfg: {} as never,
       env: process.env,
       installedPlugins: [],
     });
 
-    expect(listChannelPluginCatalogEntries).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeWorkspace: true }),
+    const fallbackCall = listChannelPluginCatalogEntries.mock.calls.find(
+      ([opts]) => (opts as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace === true,
     );
+    expect(fallbackCall).toBeTruthy();
   });
 
   it("still returns bundled-origin entries", () => {
@@ -99,5 +128,42 @@ describe("resolveChannelSetupEntries workspace shadow exclusion (GHSA-2qrv-rc5x-
       ...result.installableCatalogEntries.map((e: { id: string }) => e.id),
     ];
     expect(allIds).toContain("telegram");
+  });
+
+  it("keeps trusted workspace channel plugins visible in setup", () => {
+    const workspaceEntry = {
+      id: "telegram",
+      pluginId: "trusted-telegram-shadow",
+      origin: "workspace",
+      meta: {
+        id: "telegram",
+        label: "Telegram",
+        selectionLabel: "Telegram",
+        docsPath: "/",
+        blurb: "t",
+        order: 1,
+      },
+      install: { npmSpec: "trusted-telegram-shadow" },
+    };
+    listChannelPluginCatalogEntries.mockReturnValue([workspaceEntry]);
+    loadPluginManifestRegistry.mockReturnValue({
+      plugins: [{ id: "trusted-telegram-shadow", channels: ["telegram"] }],
+      diagnostics: [],
+    });
+
+    const result = resolveChannelSetupEntries({
+      cfg: {
+        plugins: {
+          enabled: true,
+          allow: ["trusted-telegram-shadow"],
+        },
+      } as never,
+      env: process.env,
+      installedPlugins: [],
+    });
+
+    expect(
+      result.installedCatalogEntries.map((entry: { pluginId?: string }) => entry.pluginId),
+    ).toEqual(["trusted-telegram-shadow"]);
   });
 });

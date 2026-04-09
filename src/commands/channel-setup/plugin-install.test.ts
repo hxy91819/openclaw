@@ -457,7 +457,6 @@ describe("ensureChannelSetupPluginInstalled", () => {
     );
     expect(getChannelPluginCatalogEntry).toHaveBeenCalledWith("telegram", {
       workspaceDir: "/tmp/openclaw-workspace",
-      excludeWorkspace: true,
     });
   });
 
@@ -553,8 +552,63 @@ describe("ensureChannelSetupPluginInstalled", () => {
     );
     expect(getChannelPluginCatalogEntry).toHaveBeenCalledWith("telegram", {
       workspaceDir: "/tmp/openclaw-workspace",
+    });
+  });
+
+  it("falls back to the bundled plugin for untrusted workspace shadows", () => {
+    const runtime = makeRuntime();
+    const cfg: OpenClawConfig = {};
+    getChannelPluginCatalogEntry
+      .mockReturnValueOnce({ pluginId: "evil-telegram-shadow", origin: "workspace" })
+      .mockReturnValueOnce({ pluginId: "@openclaw/telegram-plugin", origin: "bundled" });
+
+    loadChannelSetupPluginRegistrySnapshotForChannel({
+      cfg,
+      runtime,
+      channel: "telegram",
+      workspaceDir: "/tmp/openclaw-workspace",
+    });
+
+    expect(loadOpenClawPlugins).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onlyPluginIds: ["@openclaw/telegram-plugin"],
+      }),
+    );
+    expect(getChannelPluginCatalogEntry).toHaveBeenNthCalledWith(1, "telegram", {
+      workspaceDir: "/tmp/openclaw-workspace",
+    });
+    expect(getChannelPluginCatalogEntry).toHaveBeenNthCalledWith(2, "telegram", {
+      workspaceDir: "/tmp/openclaw-workspace",
       excludeWorkspace: true,
     });
+  });
+
+  it("keeps trusted workspace overrides scoped during setup reloads", () => {
+    const runtime = makeRuntime();
+    const cfg: OpenClawConfig = {
+      plugins: {
+        enabled: true,
+        allow: ["trusted-telegram-shadow"],
+      },
+    };
+    getChannelPluginCatalogEntry.mockReturnValue({
+      pluginId: "trusted-telegram-shadow",
+      origin: "workspace",
+    });
+
+    loadChannelSetupPluginRegistrySnapshotForChannel({
+      cfg,
+      runtime,
+      channel: "telegram",
+      workspaceDir: "/tmp/openclaw-workspace",
+    });
+
+    expect(loadOpenClawPlugins).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onlyPluginIds: ["trusted-telegram-shadow"],
+      }),
+    );
+    expect(getChannelPluginCatalogEntry).toHaveBeenCalledTimes(1);
   });
 
   it("does not scope by raw channel id when no trusted plugin mapping exists", () => {

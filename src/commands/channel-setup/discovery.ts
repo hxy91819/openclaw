@@ -1,8 +1,5 @@
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
-import {
-  listChannelPluginCatalogEntries,
-  type ChannelPluginCatalogEntry,
-} from "../../channels/plugins/catalog.js";
+import { type ChannelPluginCatalogEntry } from "../../channels/plugins/catalog.js";
 import { isChannelVisibleInSetup } from "../../channels/plugins/exposure.js";
 import type { ChannelMeta, ChannelPlugin } from "../../channels/plugins/types.js";
 import { listChatChannels } from "../../channels/registry.js";
@@ -10,6 +7,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { applyPluginAutoEnable } from "../../config/plugin-auto-enable.js";
 import { loadPluginManifestRegistry } from "../../plugins/manifest-registry.js";
 import type { ChannelChoice } from "../onboard-types.js";
+import { listTrustedChannelPluginCatalogEntries } from "./trusted-catalog.js";
 
 type ChannelCatalogEntry = {
   id: ChannelChoice;
@@ -75,8 +73,12 @@ export function resolveChannelSetupEntries(params: {
     env: params.env,
   });
   const installedPluginIds = new Set(params.installedPlugins.map((plugin) => plugin.id));
-  // Security: exclude untrusted workspace shadows during setup. See GHSA-2qrv-rc5x-2g2h
-  const catalogEntries = listChannelPluginCatalogEntries({ workspaceDir, excludeWorkspace: true });
+  // Security: keep trusted workspace overrides eligible during setup while
+  // falling back from untrusted workspace shadows to the non-workspace entry.
+  const catalogEntries = listTrustedChannelPluginCatalogEntries({
+    cfg: params.cfg,
+    workspaceDir,
+  });
   const installedCatalogEntries = catalogEntries.filter(
     (entry) =>
       !installedPluginIds.has(entry.id) &&

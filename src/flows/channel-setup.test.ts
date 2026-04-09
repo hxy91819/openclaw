@@ -5,6 +5,9 @@ const resolveAgentWorkspaceDir = vi.hoisted(() =>
 );
 const resolveDefaultAgentId = vi.hoisted(() => vi.fn((_cfg?: unknown) => "default"));
 const listChannelPluginCatalogEntries = vi.hoisted(() => vi.fn((_opts?: unknown): unknown[] => []));
+const getChannelPluginCatalogEntry = vi.hoisted(() =>
+  vi.fn((_id?: unknown, _opts?: unknown) => undefined),
+);
 const getChannelSetupPlugin = vi.hoisted(() => vi.fn((_channel?: unknown) => undefined));
 const listChannelSetupPlugins = vi.hoisted(() => vi.fn((): unknown[] => []));
 const loadChannelSetupPluginRegistrySnapshotForChannel = vi.hoisted(() =>
@@ -29,6 +32,8 @@ vi.mock("../agents/agent-scope.js", () => ({
 
 vi.mock("../channels/plugins/catalog.js", () => ({
   listChannelPluginCatalogEntries: (opts?: unknown) => listChannelPluginCatalogEntries(opts),
+  getChannelPluginCatalogEntry: (id?: unknown, opts?: unknown) =>
+    getChannelPluginCatalogEntry(id, opts),
 }));
 
 vi.mock("../channels/plugins/setup-registry.js", () => ({
@@ -104,7 +109,13 @@ describe("setupChannels workspace shadow exclusion", () => {
     isChannelConfigured.mockReturnValue(true);
   });
 
-  it("preloads configured external plugins with excludeWorkspace: true", async () => {
+  it("preloads configured external plugins from the bundled fallback for untrusted shadows", async () => {
+    listChannelPluginCatalogEntries.mockImplementation((opts?: unknown) =>
+      (opts as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace
+        ? [{ id: "telegram", pluginId: "@openclaw/telegram-plugin", origin: "bundled" }]
+        : [{ id: "telegram", pluginId: "evil-telegram-shadow", origin: "workspace" }],
+    );
+
     await setupChannels(
       {} as never,
       {} as never,
@@ -114,14 +125,42 @@ describe("setupChannels workspace shadow exclusion", () => {
       } as never,
     );
 
-    expect(listChannelPluginCatalogEntries).toHaveBeenCalledWith({
-      workspaceDir: "/tmp/openclaw-workspace",
-      excludeWorkspace: true,
-    });
+    const fallbackCall = listChannelPluginCatalogEntries.mock.calls.find(
+      ([opts]) => (opts as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace === true,
+    );
+    expect(fallbackCall).toBeTruthy();
     expect(loadChannelSetupPluginRegistrySnapshotForChannel).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "telegram",
         pluginId: "@openclaw/telegram-plugin",
+        workspaceDir: "/tmp/openclaw-workspace",
+      }),
+    );
+  });
+
+  it("keeps trusted workspace overrides eligible during preload", async () => {
+    listChannelPluginCatalogEntries.mockReturnValue([
+      { id: "telegram", pluginId: "trusted-telegram-shadow", origin: "workspace" },
+    ]);
+
+    await setupChannels(
+      {
+        plugins: {
+          enabled: true,
+          allow: ["trusted-telegram-shadow"],
+        },
+      } as never,
+      {} as never,
+      {
+        confirm: vi.fn(async () => false),
+        note: vi.fn(async () => undefined),
+      } as never,
+    );
+
+    expect(loadChannelSetupPluginRegistrySnapshotForChannel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        pluginId: "trusted-telegram-shadow",
         workspaceDir: "/tmp/openclaw-workspace",
       }),
     );
