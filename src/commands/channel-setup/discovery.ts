@@ -7,7 +7,10 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { applyPluginAutoEnable } from "../../config/plugin-auto-enable.js";
 import { loadPluginManifestRegistry } from "../../plugins/manifest-registry.js";
 import type { ChannelChoice } from "../onboard-types.js";
-import { listSetupDiscoveryChannelPluginCatalogEntries } from "./trusted-catalog.js";
+import {
+  listSetupDiscoveryChannelPluginCatalogEntries,
+  listTrustedChannelPluginCatalogEntries,
+} from "./trusted-catalog.js";
 
 type ChannelCatalogEntry = {
   id: ChannelChoice;
@@ -73,19 +76,25 @@ export function resolveChannelSetupEntries(params: {
     env: params.env,
   });
   const installedPluginIds = new Set(params.installedPlugins.map((plugin) => plugin.id));
-  // Security: keep trusted workspace overrides eligible during setup while
-  // falling back from untrusted workspace shadows to the non-workspace entry.
-  const catalogEntries = listSetupDiscoveryChannelPluginCatalogEntries({
+  // Discovery keeps workspace-only install candidates visible, while the
+  // installed bucket must still reflect what setup can safely auto-load.
+  const installedCatalogEntriesSource = listTrustedChannelPluginCatalogEntries({
     cfg: params.cfg,
     workspaceDir,
+    env: params.env,
   });
-  const installedCatalogEntries = catalogEntries.filter(
+  const installableCatalogEntriesSource = listSetupDiscoveryChannelPluginCatalogEntries({
+    cfg: params.cfg,
+    workspaceDir,
+    env: params.env,
+  });
+  const installedCatalogEntries = installedCatalogEntriesSource.filter(
     (entry) =>
       !installedPluginIds.has(entry.id) &&
       manifestInstalledIds.has(entry.id as ChannelChoice) &&
       shouldShowChannelInSetup(entry.meta),
   );
-  const installableCatalogEntries = catalogEntries.filter(
+  const installableCatalogEntries = installableCatalogEntriesSource.filter(
     (entry) =>
       !installedPluginIds.has(entry.id) &&
       !manifestInstalledIds.has(entry.id as ChannelChoice) &&

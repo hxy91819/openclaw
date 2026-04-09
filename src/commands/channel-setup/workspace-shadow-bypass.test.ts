@@ -167,6 +167,55 @@ describe("resolveChannelSetupEntries workspace shadow exclusion (GHSA-2qrv-rc5x-
     ).toEqual(["trusted-telegram-shadow"]);
   });
 
+  it("treats auto-enabled workspace channel plugins as trusted during setup discovery", () => {
+    const workspaceEntry = {
+      id: "telegram",
+      pluginId: "trusted-telegram-shadow",
+      origin: "workspace",
+      meta: {
+        id: "telegram",
+        label: "Telegram",
+        selectionLabel: "Telegram",
+        docsPath: "/",
+        blurb: "t",
+        order: 1,
+      },
+      install: { npmSpec: "trusted-telegram-shadow" },
+    };
+    listChannelPluginCatalogEntries.mockReturnValue([workspaceEntry]);
+    applyPluginAutoEnable.mockImplementation(({ config }: { config: unknown }) => ({
+      config: {
+        ...(config as Record<string, unknown>),
+        plugins: {
+          enabled: true,
+          allow: ["trusted-telegram-shadow"],
+        },
+      } as never,
+      changes: ["trusted-telegram-shadow"] as string[],
+      autoEnabledReasons: {
+        "trusted-telegram-shadow": ["channel configured"],
+      },
+    }));
+    loadPluginManifestRegistry.mockReturnValue({
+      plugins: [{ id: "trusted-telegram-shadow", channels: ["telegram"] }],
+      diagnostics: [],
+    });
+
+    const result = resolveChannelSetupEntries({
+      cfg: {
+        channels: {
+          telegram: { token: "existing-token" },
+        },
+      } as never,
+      env: process.env,
+      installedPlugins: [],
+    });
+
+    expect(
+      result.installedCatalogEntries.map((entry: { pluginId?: string }) => entry.pluginId),
+    ).toEqual(["trusted-telegram-shadow"]);
+  });
+
   it("keeps workspace-only install candidates visible until the user trusts them", () => {
     const workspaceEntry = {
       id: "my-cool-plugin",
@@ -197,5 +246,52 @@ describe("resolveChannelSetupEntries workspace shadow exclusion (GHSA-2qrv-rc5x-
     expect(
       result.installableCatalogEntries.map((entry: { pluginId?: string }) => entry.pluginId),
     ).toEqual(["my-cool-plugin"]);
+  });
+
+  it("does not surface untrusted workspace-only entries as installed", () => {
+    const workspaceEntry = {
+      id: "my-cool-plugin",
+      pluginId: "my-cool-plugin",
+      origin: "workspace",
+      meta: {
+        id: "my-cool-plugin",
+        label: "My Cool Plugin",
+        selectionLabel: "My Cool Plugin",
+        docsPath: "/",
+        blurb: "t",
+        order: 1,
+      },
+      install: { npmSpec: "my-cool-plugin" },
+    };
+    listChannelPluginCatalogEntries.mockImplementation((opts?: unknown) =>
+      (opts as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace
+        ? []
+        : [workspaceEntry],
+    );
+    applyPluginAutoEnable.mockImplementation(({ config }: { config: unknown }) => ({
+      config: {
+        ...(config as Record<string, unknown>),
+        plugins: {},
+      } as never,
+      changes: [] as string[],
+      autoEnabledReasons: {},
+    }));
+    loadPluginManifestRegistry.mockReturnValue({
+      plugins: [{ id: "my-cool-plugin", channels: ["my-cool-plugin"] }],
+      diagnostics: [],
+    });
+
+    const result = resolveChannelSetupEntries({
+      cfg: {
+        channels: {
+          "my-cool-plugin": { token: "existing-token" },
+        },
+      } as never,
+      env: process.env,
+      installedPlugins: [],
+    });
+
+    expect(result.installedCatalogEntries).toEqual([]);
+    expect(result.installableCatalogEntries).toEqual([]);
   });
 });
