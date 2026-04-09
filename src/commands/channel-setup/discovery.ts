@@ -7,7 +7,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { applyPluginAutoEnable } from "../../config/plugin-auto-enable.js";
 import { loadPluginManifestRegistry } from "../../plugins/manifest-registry.js";
 import type { ChannelChoice } from "../onboard-types.js";
-import { listTrustedChannelPluginCatalogEntries } from "./trusted-catalog.js";
+import { listSetupDiscoveryChannelPluginCatalogEntries } from "./trusted-catalog.js";
 
 type ChannelCatalogEntry = {
   id: ChannelChoice;
@@ -75,7 +75,7 @@ export function resolveChannelSetupEntries(params: {
   const installedPluginIds = new Set(params.installedPlugins.map((plugin) => plugin.id));
   // Security: keep trusted workspace overrides eligible during setup while
   // falling back from untrusted workspace shadows to the non-workspace entry.
-  const catalogEntries = listTrustedChannelPluginCatalogEntries({
+  const catalogEntries = listSetupDiscoveryChannelPluginCatalogEntries({
     cfg: params.cfg,
     workspaceDir,
   });

@@ -166,4 +166,36 @@ describe("resolveChannelSetupEntries workspace shadow exclusion (GHSA-2qrv-rc5x-
       result.installedCatalogEntries.map((entry: { pluginId?: string }) => entry.pluginId),
     ).toEqual(["trusted-telegram-shadow"]);
   });
+
+  it("keeps workspace-only install candidates visible until the user trusts them", () => {
+    const workspaceEntry = {
+      id: "my-cool-plugin",
+      pluginId: "my-cool-plugin",
+      origin: "workspace",
+      meta: {
+        id: "my-cool-plugin",
+        label: "My Cool Plugin",
+        selectionLabel: "My Cool Plugin",
+        docsPath: "/",
+        blurb: "t",
+        order: 1,
+      },
+      install: { npmSpec: "my-cool-plugin" },
+    };
+    listChannelPluginCatalogEntries.mockImplementation((opts?: unknown) =>
+      (opts as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace
+        ? []
+        : [workspaceEntry],
+    );
+
+    const result = resolveChannelSetupEntries({
+      cfg: {} as never,
+      env: process.env,
+      installedPlugins: [],
+    });
+
+    expect(
+      result.installableCatalogEntries.map((entry: { pluginId?: string }) => entry.pluginId),
+    ).toEqual(["my-cool-plugin"]);
+  });
 });

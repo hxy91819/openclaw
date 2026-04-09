@@ -60,3 +60,25 @@ export function listTrustedChannelPluginCatalogEntries(params: {
     return fallback ? [fallback] : [];
   });
 }
+
+export function listSetupDiscoveryChannelPluginCatalogEntries(params: {
+  cfg: OpenClawConfig;
+  workspaceDir?: string;
+}): ChannelPluginCatalogEntry[] {
+  const unfiltered = listChannelPluginCatalogEntries({
+    workspaceDir: params.workspaceDir,
+  });
+  const fallbackById = new Map(
+    listChannelPluginCatalogEntries({
+      workspaceDir: params.workspaceDir,
+      excludeWorkspace: true,
+    }).map((entry) => [entry.id, entry]),
+  );
+  return unfiltered.flatMap((entry) => {
+    if (isTrustedWorkspaceChannelCatalogEntry(entry, params.cfg)) {
+      return [entry];
+    }
+    const fallback = fallbackById.get(entry.id);
+    return fallback ? [fallback] : [entry];
+  });
+}
