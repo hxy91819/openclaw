@@ -13,6 +13,7 @@ import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js"
 import { createClackPrompter } from "../../wizard/clack-prompter.js";
 import { applyAgentBindings, describeBinding } from "../agents.bindings.js";
 import { isCatalogChannelInstalled } from "../channel-setup/discovery.js";
+import { listSetupDiscoveryChannelPluginCatalogEntries } from "../channel-setup/trusted-catalog.js";
 import {
   createChannelOnboardingPostWriteHookCollector,
   runCollectedChannelOnboardingPostWriteHooks,
@@ -35,7 +36,14 @@ function resolveCatalogChannelEntry(raw: string, cfg: OpenClawConfig | null) {
     return undefined;
   }
   const workspaceDir = cfg ? resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg)) : undefined;
-  return listChannelPluginCatalogEntries({ workspaceDir }).find((entry) => {
+  const catalogEntries = cfg
+    ? listSetupDiscoveryChannelPluginCatalogEntries({
+        cfg,
+        workspaceDir,
+        env: process.env,
+      })
+    : listChannelPluginCatalogEntries({ workspaceDir });
+  return catalogEntries.find((entry) => {
     if (normalizeOptionalLowercaseString(entry.id) === trimmed) {
       return true;
     }
