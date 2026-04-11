@@ -461,6 +461,15 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
+    if (record.origin === "workspace" && !record.enabled) {
+      pushDiagnostic({
+        level: "warn",
+        pluginId: record.id,
+        source: record.source,
+        message: `channel registration rejected for disabled workspace plugin: ${id}`,
+      });
+      return;
+    }
     const existingRuntime = registry.channels.find((entry) => entry.plugin.id === id);
     if (mode !== "setup-only" && existingRuntime) {
       pushDiagnostic({
