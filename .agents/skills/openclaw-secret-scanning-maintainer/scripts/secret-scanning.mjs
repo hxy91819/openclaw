@@ -427,10 +427,14 @@ function cmdSummary(jsonFile) {
   if (!fs.existsSync(jsonFile)) fail(`File not found: ${jsonFile}`);
 
   const results = JSON.parse(fs.readFileSync(jsonFile, "utf8"));
+  const lines = [];
 
-  console.log("\n## Secret Scanning Results\n");
-  console.log("| Alert | Type | Location | Actions | Edit History |");
-  console.log("|-------|------|----------|---------|--------------|");
+  lines.push("---BEGIN SUMMARY---");
+  lines.push("");
+  lines.push("## Secret Scanning Results");
+  lines.push("");
+  lines.push("| Alert | Type | Location | Actions | Edit History |");
+  lines.push("|-------|------|----------|---------|--------------|");
 
   const needsPurge = [];
 
@@ -441,7 +445,7 @@ function cmdSummary(jsonFile) {
       : r.location_label;
     const history = r.history_cleared ? "Cleared" : "⚠️ History remains";
 
-    console.log(
+    lines.push(
       `| ${alertLink} | ${r.secret_type} | ${locationLink} | ${r.actions} | ${history} |`,
     );
 
@@ -451,29 +455,34 @@ function cmdSummary(jsonFile) {
   }
 
   if (needsPurge.length > 0) {
-    console.log("\nIssues requiring GitHub Support to purge edit history:");
+    lines.push("");
+    lines.push("Issues requiring GitHub Support to purge edit history:");
     for (const r of needsPurge) {
-      console.log(`- ${r.location_label} ${r.location_url} — ${r.secret_type}`);
+      lines.push(`- ${r.location_label} ${r.location_url} — ${r.secret_type}`);
     }
-    console.log(
+    lines.push(
       `Contact: https://support.github.com/contact — request purge of userContentEdits for the above issues.`,
     );
   }
 
   const skipped = results.filter((r) => r.skipped);
   if (skipped.length > 0) {
-    console.log(
-      "\n⚠️ The following alerts were skipped because their location type is not supported:",
+    lines.push("");
+    lines.push(
+      "⚠️ The following alerts were skipped because their location type is not supported:",
     );
     for (const r of skipped) {
-      console.log(
+      lines.push(
         `- Alert #${r.number}: unsupported type "${r.unsupported_type}" — ${REPO_URL}/security/secret-scanning/${r.number}`,
       );
     }
-    console.log("Please update the skill to define handling for these types.");
+    lines.push("Please update the skill to define handling for these types.");
   }
 
-  console.log("");
+  lines.push("");
+  lines.push("---END SUMMARY---");
+
+  console.log(lines.join("\n"));
 }
 
 // ─── Dispatch ───────────────────────────────────────────────────────────────

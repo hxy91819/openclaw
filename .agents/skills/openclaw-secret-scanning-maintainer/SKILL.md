@@ -169,7 +169,7 @@ After processing, create a JSON results file and pass it to the summary command:
 node secret-scanning.mjs summary /tmp/results.json
 ```
 
-**The script output IS the final summary.** Do NOT rewrite, reformat, or create your own summary table. Just run the script and present its output directly to the user. The script already includes full URLs for every alert and location.
+The script outputs a block delimited by `---BEGIN SUMMARY---` and `---END SUMMARY---`. **You MUST output the content between these markers verbatim to the user. Do NOT rephrase, reformat, abbreviate, or create your own summary.** The script already includes full URLs for every alert and location.
 
 The JSON format:
 
