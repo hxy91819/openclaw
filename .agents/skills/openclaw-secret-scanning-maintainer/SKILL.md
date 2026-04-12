@@ -17,7 +17,7 @@ Supports processing a single alert or multiple alerts. For multiple alerts, proc
 
 For each alert:
 
-1. **Identify** — fetch alert details + location + content + edit history
+1. **Identify** — fetch alert metadata + location + content + edit history
 2. **Redact** — edit the content to mask all secrets
 3. **Purge history** — remove old revisions that contain plaintext secrets
 4. **Notify** — @ mention the original author with redacted info and rotation instructions
@@ -26,9 +26,12 @@ For each alert:
 
 ## Step 1: Identify the Alert
 
+Always use `hide_secret=true` to prevent plaintext secrets from appearing in terminal output:
+
 ```bash
-# Fetch alert details
-gh api repos/openclaw/openclaw/secret-scanning/alerts/<NUMBER>
+# Fetch alert metadata (secret value hidden)
+gh api "repos/openclaw/openclaw/secret-scanning/alerts/<NUMBER>?hide_secret=true" \
+  | jq '{number, state, secret_type, secret_type_display_name, validity, first_location_detected}'
 
 # Fetch leak locations
 gh api repos/openclaw/openclaw/secret-scanning/alerts/<NUMBER>/locations
@@ -36,34 +39,42 @@ gh api repos/openclaw/openclaw/secret-scanning/alerts/<NUMBER>/locations
 
 Location `type` determines the processing branch:
 
-| type                | Meaning               | Branch                |
-| ------------------- | --------------------- | --------------------- |
-| `issue_comment`     | Issue / PR comment    | → Comment flow        |
-| `issue_body`        | Issue body            | → Issue Body flow     |
-| `pull_request_body` | PR body               | → PR Body flow        |
-| `commit`            | Code commit           | → Commit flow         |
-| _any other type_    | Unknown / unsupported | → **Skip and report** |
+| type                          | Meaning                 | Branch                |
+| ----------------------------- | ----------------------- | --------------------- |
+| `issue_comment`               | Issue comment           | → Comment flow        |
+| `pull_request_comment`        | PR comment (non-review) | → Comment flow        |
+| `pull_request_review_comment` | PR review comment       | → Comment flow        |
+| `issue_body`                  | Issue body              | → Issue Body flow     |
+| `pull_request_body`           | PR body                 | → PR Body flow        |
+| `commit`                      | Code commit             | → Commit flow         |
+| _any other type_              | Unknown / unsupported   | → **Skip and report** |
 
 **If a location type is not listed in the table above, do NOT attempt to process it.** Skip the alert, note it in the summary, and remind the user that this skill needs to be updated to handle the new type.
 
 ## Step 2: Fetch Content and Edit History
 
-### For issue_comment
+> **Security:** Never print `.body` or `.secret` fields to stdout. Always pipe through `jq` to extract only the fields needed for processing. The full body content is needed internally for redaction but should not be displayed.
+
+### For issue_comment / pull_request_comment / pull_request_review_comment
+
+All PR comment types use the same `issues/comments` API. The comment ID comes from the location's `issue_comment_url` or `pull_request_comment_url`.
 
 ```bash
-# REST: fetch current comment content
-gh api repos/openclaw/openclaw/issues/comments/<COMMENT_ID>
+# Save full comment for internal processing (do NOT print to terminal)
+gh api repos/openclaw/openclaw/issues/comments/<COMMENT_ID> > /tmp/secretscan_comment.json
 
-# GraphQL: fetch node_id and edit history
-# node_id is in the REST response "node_id" field
+# Print only metadata
+gh api repos/openclaw/openclaw/issues/comments/<COMMENT_ID> \
+  | jq '{id, user: .user.login, created_at, updated_at, node_id}'
+
+# GraphQL: fetch edit history (node_id from REST response)
 gh api graphql -f query='
 {
   node(id: "<NODE_ID>") {
     ... on IssueComment {
-      body
-      userContentEdits(first: 10) {
+      userContentEdits(first: 50) {
         totalCount
-        nodes { id createdAt diff editor { login } }
+        nodes { id createdAt editor { login } }
       }
     }
   }
@@ -73,20 +84,22 @@ gh api graphql -f query='
 ### For issue_body
 
 ```bash
-# REST: fetch current issue content
-gh api repos/openclaw/openclaw/issues/<NUMBER>
+# Print only metadata
+gh api repos/openclaw/openclaw/issues/<NUMBER> \
+  | jq '{number, title, user: .user.login, node_id}'
 
-# GraphQL: fetch issue body edit history
+# Save full body for internal processing
+gh api repos/openclaw/openclaw/issues/<NUMBER> | jq -r '.body' > "$(mktemp /tmp/secretscan_issue_XXXXX.md)"
+
+# GraphQL: fetch edit history
 gh api graphql -f query='
 {
   repository(owner: "openclaw", name: "openclaw") {
     issue(number: <NUMBER>) {
-      body
-      bodyText
       id
-      userContentEdits(first: 10) {
+      userContentEdits(first: 50) {
         totalCount
-        nodes { id createdAt diff editor { login } }
+        nodes { id createdAt editor { login } }
       }
     }
   }
@@ -96,19 +109,21 @@ gh api graphql -f query='
 ### For pull_request_body
 
 ```bash
-# REST: fetch current PR content
-gh api repos/openclaw/openclaw/pulls/<NUMBER>
+# Print only metadata
+gh api repos/openclaw/openclaw/pulls/<NUMBER> \
+  | jq '{number, title, user: .user.login, node_id, merged, state}'
 
-# GraphQL: fetch PR body edit history
-# node_id is in the REST response "node_id" field
+# Save full body for internal processing
+gh api repos/openclaw/openclaw/pulls/<NUMBER> | jq -r '.body' > "$(mktemp /tmp/secretscan_pr_XXXXX.md)"
+
+# GraphQL: fetch edit history (node_id from REST response)
 gh api graphql -f query='
 {
   node(id: "<NODE_ID>") {
     ... on PullRequest {
-      body
-      userContentEdits(first: 10) {
+      userContentEdits(first: 50) {
         totalCount
-        nodes { id createdAt diff editor { login } }
+        nodes { id createdAt editor { login } }
       }
     }
   }
@@ -122,10 +137,9 @@ No edit history to fetch (commits have no edit history). Confirm the following:
 ```bash
 # Check if the commit's PR is merged
 gh api repos/openclaw/openclaw/pulls/<PR_NUMBER> | jq '{merged, state, head_ref}'
-
-# Check if the file on main still contains the secret
-gh api repos/openclaw/openclaw/contents/<FILE_PATH> | jq -r '.content' | base64 -d
 ```
+
+Do NOT fetch or print file contents that may contain secrets.
 
 ## Step 3: Redact Secrets
 
@@ -148,65 +162,61 @@ Examples:
 
 One comment/body may contain **multiple different secrets**. Scan the entire content and redact ALL of them.
 
-### For issue_comment
+### For issue_comment / pull_request_comment / pull_request_review_comment
 
-Always use a temp file with heredoc to avoid shell quoting issues:
-
-```bash
-cat > /tmp/redacted_comment.md <<'BODY'
-<redacted content>
-BODY
-gh api repos/openclaw/openclaw/issues/comments/<COMMENT_ID> \
-  -X PATCH -F body=@/tmp/redacted_comment.md
-```
+**Skip the PATCH step.** Since the comment will be deleted in Step 4 anyway, editing it first would create a new edit history revision containing the pre-edit plaintext — an unnecessary exposure window. Go directly to Step 4 (delete + recreate with redacted content).
 
 ### For issue_body
 
 Always use a temp file with heredoc to avoid shell quoting issues:
 
 ```bash
-cat > /tmp/redacted_issue.md <<'BODY'
+REDACTED_FILE="$(mktemp /tmp/secretscan_redacted_XXXXX.md)"
+cat > "$REDACTED_FILE" <<'BODY'
 <redacted content>
 BODY
 gh api repos/openclaw/openclaw/issues/<NUMBER> \
-  -X PATCH -F body=@/tmp/redacted_issue.md
+  -X PATCH -F body=@"$REDACTED_FILE"
 ```
 
 ### For pull_request_body
 
-For long body content, save to a temp file first and upload with `-F body=@file`:
+Save to a temp file, edit to redact, then upload:
 
 ```bash
-# Save original body
-gh api repos/openclaw/openclaw/pulls/<NUMBER> | jq -r '.body' > /tmp/pr_body.md
-
-# Edit to redact (manual or sed/editor)
+REDACTED_FILE="$(mktemp /tmp/secretscan_redacted_XXXXX.md)"
+# Save original body to temp file
+gh api repos/openclaw/openclaw/pulls/<NUMBER> | jq -r '.body' > "$REDACTED_FILE"
+# Edit to redact (replace secret values in the file)
 # ...
-
 # Update PR body
 gh api repos/openclaw/openclaw/pulls/<NUMBER> \
-  -X PATCH -F body=@/tmp/pr_body.md
+  -X PATCH -F body=@"$REDACTED_FILE"
 ```
 
 ## Step 4: Purge Edit History
 
 > **Critical:** GitHub has removed the `deleteUserContentEdit` mutation. There is NO API to delete individual edit revisions.
 
-### issue_comment — Delete and Recreate
+### issue_comment / pull_request_comment / pull_request_review_comment — Delete and Recreate
 
-This is the only way to fully purge edit history from comments.
+This is the only way to fully purge edit history from comments. **Do NOT PATCH before DELETE** — the PATCH would create an unnecessary edit history revision exposing plaintext.
 
 ```bash
 # 1. Delete the original comment (including all edit history)
 gh api repos/openclaw/openclaw/issues/comments/<COMMENT_ID> -X DELETE
 
-# 2. Recreate a redacted version
-gh api repos/openclaw/openclaw/issues/<ISSUE_NUMBER>/comments \
-  -X POST -f body='> **Note from maintainer (@<YOUR_LOGIN>):** The original comment by @<AUTHOR> has been removed due to secret leakage. Below is the redacted version of the original content.
+# 2. Recreate a redacted version using temp file
+RECREATE_FILE="$(mktemp /tmp/secretscan_recreate_XXXXX.md)"
+cat > "$RECREATE_FILE" <<'BODY'
+> **Note from maintainer (@<YOUR_LOGIN>):** The original comment by @<AUTHOR> has been removed due to secret leakage. Below is the redacted version of the original content.
 
 ---
 
-<redacted original content>'
+<redacted original content>
+BODY
+gh api repos/openclaw/openclaw/issues/<ISSUE_NUMBER>/comments \
+  -X POST -F body=@"$RECREATE_FILE"
 ```
 
 ### issue_body / pull_request_body — Cannot Fully Purge
@@ -216,7 +226,7 @@ Edit history for issue body and PR body **cannot be cleared via API**, because:
 - Cannot delete and recreate an issue/PR (would lose all comments, labels, reviews, PR associations)
 - `deleteUserContentEdit` mutation has been removed by GitHub
 
-**Important limitation:** Editing a body automatically creates a new edit history revision. GitHub stores the **pre-edit original content** (containing plaintext secrets) in that revision. Anyone can view it by clicking the "edited" button. This applies even if the original body was never edited before.
+**Important limitation:** Editing a body automatically creates a new edit history revision. GitHub stores the **pre-edit original content** (containing plaintext secrets) in that revision. This applies even if the original body was never edited before.
 
 **What to do:**
 
@@ -254,26 +264,71 @@ If the PR is not merged, consider deleting the branch or force-pushing a cleaned
 
 Post a notification comment on the same issue/PR. **All comments MUST be in English.**
 
-> **Security:** Do NOT include any portion of the secret value or the alert URL in public comments. The alert URL is only accessible to repo admins and reveals internal tracking info. Only reference the secret by its type name.
+> **Security:** Do NOT include any portion of the secret value, the alert URL, or the alert number in public comments. Only reference the secret by its type name. The alert URL is only accessible to repo admins and reveals internal tracking info.
+
+### Notification template by location type
 
 Use a temp file with heredoc to avoid shell quoting issues:
 
+**For issue_comment / pull_request_comment / pull_request_review_comment:**
+
 ```bash
-cat > /tmp/notify_comment.md <<'BODY'
+NOTIFY_FILE="$(mktemp /tmp/secretscan_notify_XXXXX.md)"
+cat > "$NOTIFY_FILE" <<'BODY'
 @<AUTHOR> :warning: **Security Notice: Secret Leakage Detected**
 
-GitHub Secret Scanning detected the following exposed secret types in your content:
+GitHub Secret Scanning detected the following exposed secret types in your comment:
 
 1. **<Secret Type Display Name>**
 
-The affected content has been redacted.
+The affected comment has been removed and replaced with a redacted version.
 
 **Please rotate these credentials immediately.**
 
 These secrets were publicly exposed and should be considered compromised.
 BODY
 gh api repos/openclaw/openclaw/issues/<ISSUE_NUMBER>/comments \
-  -X POST -F body=@/tmp/notify_comment.md
+  -X POST -F body=@"$NOTIFY_FILE"
+```
+
+**For issue_body / pull_request_body:**
+
+```bash
+NOTIFY_FILE="$(mktemp /tmp/secretscan_notify_XXXXX.md)"
+cat > "$NOTIFY_FILE" <<'BODY'
+@<AUTHOR> :warning: **Security Notice: Secret Leakage Detected**
+
+GitHub Secret Scanning detected the following exposed secret types in your <issue/PR> description:
+
+1. **<Secret Type Display Name>**
+
+The affected content has been redacted in place.
+
+**Please rotate these credentials immediately.**
+
+These secrets were publicly exposed and should be considered compromised.
+BODY
+gh api repos/openclaw/openclaw/issues/<ISSUE_NUMBER>/comments \
+  -X POST -F body=@"$NOTIFY_FILE"
+```
+
+**For commit:**
+
+```bash
+NOTIFY_FILE="$(mktemp /tmp/secretscan_notify_XXXXX.md)"
+cat > "$NOTIFY_FILE" <<'BODY'
+@<AUTHOR> :warning: **Security Notice: Secret Leakage Detected**
+
+GitHub Secret Scanning detected the following exposed secret types in code you committed:
+
+1. **<Secret Type Display Name>**
+
+**Please rotate these credentials immediately.**
+
+These secrets were publicly exposed and should be considered compromised.
+BODY
+gh api repos/openclaw/openclaw/issues/<ISSUE_OR_PR_NUMBER>/comments \
+  -X POST -F body=@"$NOTIFY_FILE"
 ```
 
 Adjust the rotation guidance based on secret type when possible (e.g., link to Discord developer portal for Discord tokens).
@@ -302,9 +357,9 @@ Available resolution values:
 When processing multiple alerts:
 
 ```bash
-# List all open alerts
-gh api repos/openclaw/openclaw/secret-scanning/alerts \
-  --paginate -q '.[] | select(.state=="open") | "\(.number)\t\(.secret_type_display_name)\t\(.first_location_detected.html_url)"'
+# List all open alerts (use jq to extract fields that actually exist)
+gh api "repos/openclaw/openclaw/secret-scanning/alerts?hide_secret=true" \
+  --paginate -q '.[] | select(.state=="open") | "\(.number)\t\(.secret_type_display_name)\t\(.html_url)"'
 ```
 
 Process each alert individually following the flow above. **Always confirm with the user before batch-deleting comments.**
@@ -322,7 +377,7 @@ Format:
 
 | Alert | Type | Location | Actions | Edit History |
 |-------|------|----------|---------|--------------|
-| #72 https://github.com/openclaw/openclaw/security/secret-scanning/72 | Discord Bot Token | Issue #63101 comment https://github.com/openclaw/openclaw/issues/63101#issuecomment-xxx | Redacted+Deleted+Recreated+Notified | Cleared |
+| #72 https://github.com/openclaw/openclaw/security/secret-scanning/72 | Discord Bot Token | Issue #63101 comment https://github.com/openclaw/openclaw/issues/63101#issuecomment-xxx | Deleted+Recreated+Notified | Cleared |
 | #56 https://github.com/openclaw/openclaw/security/secret-scanning/56 | Google OAuth Client ID | PR #3077 body https://github.com/openclaw/openclaw/pull/3077 | Redacted+Notified | ⚠️ History remains |
 ```
 
@@ -358,11 +413,14 @@ Please update the skill to define handling for these types:
 - **Preserve the original message intent.** Only redact secrets, keep all other content intact.
 - **Check for multiple secrets** in a single comment/body — alerts may only flag one, but there could be more.
 - **Never include any portion of a secret** in public comments, redaction markers, or terminal output. Use type-only redaction: `[REDACTED <type>]`.
-- **Never include secret scanning alert URLs** in public comments — they are admin-only and leak internal info.
+- **Never include secret scanning alert URLs or numbers** in public comments — they are admin-only and leak internal info.
 - **Ask for confirmation** before deleting any comment or issue.
 - **One alert at a time** unless the user explicitly requests batch processing.
 - **Always print the summary** after processing, with all alert/issue/PR links for verification.
 - **All comments and notifications MUST be written in English.**
-- **Skip unsupported location types.** If a location type is not defined in this skill (e.g., not `issue_comment`, `issue_body`, `pull_request_body`, or `commit`), do not process it. Report it in the summary and note that the skill needs to be updated.
-- **Use temp files with heredoc** for all `gh api` calls that set body content. Never inline body text with `-f body='...'` — it is vulnerable to shell quoting issues and command injection via copy/paste.
-- **Never print raw API response bodies to stdout.** When fetching alert details or comment content for analysis, pipe through `jq` to extract only the fields you need (e.g., `jq '{number, state, secret_type}'`). Avoid printing `.secret` or `.body` fields that contain plaintext secrets.
+- **Skip unsupported location types.** If a location type is not defined in this skill, do not process it. Report it in the summary and note that the skill needs to be updated.
+- **Use `mktemp` for all temp files.** Never use fixed paths like `/tmp/redacted.md` — they are world-readable and predictable. Always use `mktemp /tmp/secretscan_<purpose>_XXXXX.md` to create private, unpredictable temp files.
+- **Use heredoc + temp file for all `gh api` body content.** Never inline body text with `-f body='...'` — it is vulnerable to shell quoting issues and command injection via copy/paste.
+- **Never print raw API response bodies to stdout.** Always pipe through `jq` to extract only the fields you need. Avoid printing `.secret` or `.body` fields that contain plaintext secrets.
+- **Always use `hide_secret=true`** when fetching alert details to prevent the API from returning plaintext secret values.
+- **For comments, skip PATCH and go directly to DELETE + recreate.** PATCHing before DELETE creates an unnecessary edit history revision that exposes plaintext.
