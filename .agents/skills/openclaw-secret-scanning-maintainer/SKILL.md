@@ -163,11 +163,13 @@ Resolution is `revoked` by default. As maintainers we cannot control whether use
 
 ## Step 7: Summary
 
-After processing, create a JSON results file and pass it to summary:
+After processing, create a JSON results file and pass it to the summary command:
 
 ```bash
 node secret-scanning.mjs summary /tmp/results.json
 ```
+
+**The script output IS the final summary.** Do NOT rewrite, reformat, or create your own summary table. Just run the script and present its output directly to the user. The script already includes full URLs for every alert and location.
 
 The JSON format:
 
