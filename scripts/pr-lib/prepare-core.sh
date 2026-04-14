@@ -61,6 +61,13 @@ prepare_init() {
   # shellcheck disable=SC1091
   source .local/pr-meta.env
 
+  local existing_rebase_count=0
+  if [ -s .local/prep-context.env ]; then
+    # shellcheck disable=SC1091
+    source .local/prep-context.env
+    existing_rebase_count=${PREP_REBASE_COUNT:-0}
+  fi
+
   local json
   json=$(pr_meta_json "$pr")
 
@@ -84,6 +91,7 @@ prepare_init() {
     PR_HEAD "$head" \
     PR_HEAD_SHA_BEFORE "$pr_head_sha_before" \
     PREP_BRANCH "pr-$pr-prep" \
+    PREP_REBASE_COUNT "$existing_rebase_count" \
     PREP_STARTED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > .local/prep-context.env
 
@@ -212,8 +220,23 @@ prepare_sync_head() {
   local rebased=false
   git fetch origin main
   if ! git merge-base --is-ancestor origin/main HEAD; then
+    local rebase_count="${PREP_REBASE_COUNT:-0}"
+    if [ "$rebase_count" -ge 1 ]; then
+      echo "prepare-sync-head already rebased this prep branch once; stop here and merge from the current prepared head or re-run prepare-init intentionally."
+      exit 1
+    fi
+
     git rebase origin/main
     rebased=true
+    rebase_count=$((rebase_count + 1))
+    printf '%s=%q\n' \
+      PR_NUMBER "$PR_NUMBER" \
+      PR_HEAD "$PR_HEAD" \
+      PR_HEAD_SHA_BEFORE "${PR_HEAD_SHA_BEFORE:-}" \
+      PREP_BRANCH "$PREP_BRANCH" \
+      PREP_REBASE_COUNT "$rebase_count" \
+      PREP_STARTED_AT "$PREP_STARTED_AT" \
+      > .local/prep-context.env
     prepare_gates "$pr"
     checkout_prep_branch "$pr"
   fi
@@ -244,6 +267,7 @@ prepare_sync_head() {
   cat >> .local/prep.md <<EOF_PREP
 - Prep head sync completed to branch $PR_HEAD.
 - Rebased onto origin/main: $rebased.
+- Prepare sync rebase count: ${PREP_REBASE_COUNT:-0}.
 - Verified PR head SHA matches local prep HEAD.
 - Verified PR head contains origin/main.
 - Prepare gates reran automatically when the sync rebase changed the prep head.
