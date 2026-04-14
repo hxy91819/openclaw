@@ -164,6 +164,59 @@ merge_verify() {
   echo "merge-verify passed for PR #$pr"
 }
 
+refresh_merge_prep_metadata() {
+  local pr="$1"
+  local prep_head_sha="$2"
+  local pushed_from_sha="$3"
+  local contrib="$4"
+
+  local contrib_id
+  contrib_id=$(gh api "users/$contrib" --jq .id)
+  local coauthor_email="${contrib_id}+${contrib}@users.noreply.github.com"
+
+  printf '%s=%q\n' \
+    PR_NUMBER "$pr" \
+    PR_AUTHOR "$contrib" \
+    PR_URL "${PR_URL:-}" \
+    PR_HEAD "$PR_HEAD" \
+    PR_HEAD_SHA_BEFORE "$pushed_from_sha" \
+    PREP_HEAD_SHA "$prep_head_sha" \
+    COAUTHOR_EMAIL "$coauthor_email" \
+    > .local/prep.env
+}
+
+write_merge_prep_log_entry() {
+  local changelog_status="$1"
+  cat >> .local/prep.md <<EOF_PREP
+- Merge-stage changelog status: $changelog_status.
+- Merge is waiting for explicit maintainer confirmation before gh pr merge.
+EOF_PREP
+}
+
+confirm_ready_to_merge() {
+  local pr="$1"
+  local prep_head_sha="$2"
+  local changelog_status="$3"
+  local changelog_preview="${4:-}"
+
+  echo "Final confirmation required before merge."
+  echo "PR #$pr"
+  echo "prepared_head_sha=$prep_head_sha"
+  echo "changelog_status=$changelog_status"
+  if [ -n "$changelog_preview" ]; then
+    echo "changelog_entry=$changelog_preview"
+  fi
+  echo "Review the PR on GitHub now."
+  echo "Type 'merge' to continue or anything else to cancel."
+
+  local answer
+  read -r answer
+  if [ "$answer" != "merge" ]; then
+    echo "Merge canceled before gh pr merge."
+    exit 1
+  fi
+}
+
 merge_run() {
   local pr="$1"
   enter_worktree "$pr" false
@@ -217,6 +270,51 @@ merge_run() {
 
   local reviewer_email="${reviewer_email_candidates[0]}"
   local reviewer_coauthor_email="${reviewer_id}+${reviewer}@users.noreply.github.com"
+  local changelog_preview=""
+
+  local changelog_status="not_required"
+  if [ -s .local/gates.env ]; then
+    # shellcheck disable=SC1091
+    source .local/gates.env
+    if [ "${CHANGELOG_REQUIRED:-false}" = "true" ]; then
+      changelog_status="required_pending"
+    fi
+  fi
+
+  if [ "$changelog_status" = "required_pending" ]; then
+    checkout_prep_branch "$pr"
+    local resolved_changelog_entry
+    resolved_changelog_entry=$(resolve_pr_changelog_entry "$pr" "$contrib" "$pr_title")
+    changelog_preview=$(printf '%s' "$resolved_changelog_entry" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')
+    local changelog_result
+    changelog_result=$(ensure_pr_changelog_entry "$pr" "$contrib" "$pr_title" "Changes" "$resolved_changelog_entry")
+    echo "$changelog_result"
+
+    if printf '%s\n' "$changelog_result" | rg -q '^pr_changelog_changed=true$'; then
+      local commit_msg
+      commit_msg=$(printf '%s' "$pr_title" | sed 's/[[:space:]]\+$//')
+      scripts/committer --fast "$commit_msg" CHANGELOG.md
+
+      local prep_head_sha_before_push
+      prep_head_sha_before_push=$(git rev-parse HEAD)
+      local lease_sha
+      lease_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+      local push_result_env=".local/merge-changelog-push-result.env"
+      push_prep_head_to_pr_branch "$pr" "$PR_HEAD" "$prep_head_sha_before_push" "$lease_sha" false false "$push_result_env"
+      # shellcheck disable=SC1090
+      source "$push_result_env"
+      PREP_HEAD_SHA="$PUSH_PREP_HEAD_SHA"
+      refresh_merge_prep_metadata "$pr" "$PREP_HEAD_SHA" "$PUSHED_FROM_SHA" "$contrib"
+      merge_verify "$pr"
+      # shellcheck disable=SC1091
+      source .local/prep.env
+      changelog_status="added_and_pushed"
+    else
+      changelog_status="already_present"
+    fi
+  fi
+
+  write_merge_prep_log_entry "$changelog_status"
 
   cat > .local/merge-body.txt <<EOF_BODY
 Merged via squash.
@@ -226,6 +324,8 @@ Co-authored-by: $contrib <$contrib_coauthor_email>
 Co-authored-by: $reviewer <$reviewer_coauthor_email>
 Reviewed-by: @$reviewer
 EOF_BODY
+
+  confirm_ready_to_merge "$pr" "$PREP_HEAD_SHA" "$changelog_status" "$changelog_preview"
 
   delete_remote_pr_head_branch_after_merge() {
     local head_json

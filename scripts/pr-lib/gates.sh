@@ -53,19 +53,16 @@ prepare_gates() {
     exit 1
   fi
 
-  if [ "$changelog_required" = "true" ] && [ "$has_changelog_update" = "false" ]; then
-    echo "Missing changelog update. Add CHANGELOG.md changes."
-    exit 1
-  fi
-
   if [ "$has_changelog_update" = "true" ]; then
     normalize_pr_changelog_entries "$pr"
   fi
 
-  if [ "$changelog_required" = "true" ]; then
+  if [ "$has_changelog_update" = "true" ]; then
     local contrib="${PR_AUTHOR:-}"
     validate_changelog_merge_hygiene
     validate_changelog_entry_for_pr "$pr" "$contrib"
+  elif [ "$changelog_required" = "true" ]; then
+    echo "Changelog will be required before merge, but prepare no longer blocks on adding it now."
   else
     echo "Changelog not required for this changed-file set."
   fi

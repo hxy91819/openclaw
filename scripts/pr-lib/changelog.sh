@@ -1,3 +1,93 @@
+build_default_pr_changelog_entry() {
+  local pr="$1"
+  local contrib="$2"
+  local title="$3"
+
+  local trimmed_title
+  trimmed_title=$(printf '%s' "$title" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  if [ -z "$trimmed_title" ]; then
+    echo "Cannot build changelog entry: missing PR title."
+    exit 1
+  fi
+
+  if [ -n "$contrib" ] && [ "$contrib" != "null" ]; then
+    printf '%s (#%s). Thanks @%s\n' "$trimmed_title" "$pr" "$contrib"
+    return 0
+  fi
+
+  printf '%s (#%s).\n' "$trimmed_title" "$pr"
+}
+
+ensure_pr_changelog_entry() {
+  local pr="$1"
+  local contrib="$2"
+  local title="$3"
+  local section="${4:-Changes}"
+  local explicit_entry="${5:-}"
+
+  [ -f CHANGELOG.md ] || {
+    echo "CHANGELOG.md is missing."
+    exit 1
+  }
+
+  local entry
+  if [ -n "$explicit_entry" ]; then
+    entry="$explicit_entry"
+  else
+    entry=$(build_default_pr_changelog_entry "$pr" "$contrib" "$title")
+  fi
+  local before_hash
+  before_hash=$(sha256sum CHANGELOG.md | awk '{print $1}')
+
+  local changelog_output
+  changelog_output=$(bun scripts/changelog-add-unreleased.ts --section "${section,,}" "$entry")
+  echo "$changelog_output"
+
+  normalize_pr_changelog_entries "$pr"
+  validate_changelog_merge_hygiene
+  validate_changelog_entry_for_pr "$pr" "$contrib"
+
+  local after_hash
+  after_hash=$(sha256sum CHANGELOG.md | awk '{print $1}')
+  if [ "$before_hash" = "$after_hash" ]; then
+    echo "pr_changelog_changed=false"
+  else
+    echo "pr_changelog_changed=true"
+  fi
+}
+
+resolve_pr_changelog_entry() {
+  local pr="$1"
+  local contrib="$2"
+  local title="$3"
+
+  local default_entry
+  default_entry=$(build_default_pr_changelog_entry "$pr" "$contrib" "$title")
+
+  if [ -n "${OPENCLAW_PR_CHANGELOG_ENTRY:-}" ]; then
+    printf '%s\n' "$OPENCLAW_PR_CHANGELOG_ENTRY"
+    return 0
+  fi
+
+  if [ ! -t 0 ]; then
+    printf '%s\n' "$default_entry"
+    return 0
+  fi
+
+  echo "Default changelog entry:"
+  echo "  $default_entry"
+  echo "Press Enter to accept, or paste a replacement single-line entry."
+
+  local answer
+  read -r answer
+  if [ -n "$answer" ]; then
+    printf '%s\n' "$answer"
+    return 0
+  fi
+
+  printf '%s\n' "$default_entry"
+}
+
 normalize_pr_changelog_entries() {
   local pr="$1"
   local changelog_path="CHANGELOG.md"
