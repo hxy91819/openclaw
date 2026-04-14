@@ -1,4 +1,41 @@
-type UnreleasedSection = "Breaking" | "Changes" | "Fixes";
+export type UnreleasedSection = "Breaking" | "Changes" | "Fixes";
+
+function normalizePrRefToken(value: string): string {
+  const match = value.match(/(?:^|\()#(\d+)(?:\)|$)|openclaw#(\d+)/i);
+  const prNumber = match?.[1] ?? match?.[2];
+  return prNumber ? `#${prNumber}` : value.trim().toLowerCase();
+}
+
+function stripBullet(line: string): string {
+  return line.trim().replace(/^-\s+/, "");
+}
+
+function findPrReference(line: string): string | undefined {
+  const match = line.match(/(?:\(#\d+\)|openclaw#\d+)/i);
+  return match?.[0];
+}
+
+function entriesAreEquivalent(existingLine: string, newBullet: string): boolean {
+  const existingBody = stripBullet(existingLine);
+  const newBody = stripBullet(newBullet);
+  if (existingBody === newBody) {
+    return true;
+  }
+
+  const existingPrRef = findPrReference(existingBody);
+  const newPrRef = findPrReference(newBody);
+  if (!existingPrRef || !newPrRef) {
+    return false;
+  }
+
+  if (normalizePrRefToken(existingPrRef) !== normalizePrRefToken(newPrRef)) {
+    return false;
+  }
+
+  const existingWithoutRef = existingBody.replace(/(?:\s*\(#\d+\)|\s*openclaw#\d+)/gi, "").trim();
+  const newWithoutRef = newBody.replace(/(?:\s*\(#\d+\)|\s*openclaw#\d+)/gi, "").trim();
+  return existingWithoutRef === newWithoutRef;
+}
 
 function findSectionRange(
   lines: string[],
@@ -58,7 +95,7 @@ export function appendUnreleasedChangelogEntry(
 
   const lines = content.split("\n");
   const bullet = entry.startsWith("- ") ? entry : `- ${entry}`;
-  if (lines.some((line) => line.trim() === bullet)) {
+  if (lines.some((line) => entriesAreEquivalent(line, bullet))) {
     return content;
   }
 

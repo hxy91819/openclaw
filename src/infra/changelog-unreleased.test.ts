@@ -43,6 +43,26 @@ describe("appendUnreleasedChangelogEntry", () => {
     expect(next).toBe(baseChangelog);
   });
 
+  it("avoids duplicating an equivalent entry with the same PR reference", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Fixes
+
+- Fix onboarding timeout handling (#123). Thanks @alice
+
+## 2026.4.5
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Fixes",
+      entry: "Fix onboarding timeout handling openclaw#123. Thanks @alice",
+    });
+
+    expect(next).toBe(content);
+  });
+
   it("throws when the unreleased section is missing", () => {
     expect(() =>
       appendUnreleasedChangelogEntry("# Changelog\n", {
