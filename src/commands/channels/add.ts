@@ -13,7 +13,7 @@ import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js"
 import { createClackPrompter } from "../../wizard/clack-prompter.js";
 import { applyAgentBindings, describeBinding } from "../agents.bindings.js";
 import { isCatalogChannelInstalled } from "../channel-setup/discovery.js";
-import { listSetupDiscoveryChannelPluginCatalogEntries } from "../channel-setup/trusted-catalog.js";
+import { listTrustedChannelPluginCatalogEntries } from "../channel-setup/trusted-catalog.js";
 import {
   createChannelOnboardingPostWriteHookCollector,
   runCollectedChannelOnboardingPostWriteHooks,
@@ -37,7 +37,7 @@ function resolveCatalogChannelEntry(raw: string, cfg: OpenClawConfig | null) {
   }
   const workspaceDir = cfg ? resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg)) : undefined;
   const catalogEntries = cfg
-    ? listSetupDiscoveryChannelPluginCatalogEntries({
+    ? listTrustedChannelPluginCatalogEntries({
         cfg,
         workspaceDir,
         env: process.env,

@@ -1457,7 +1457,9 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
       };
 
       const allowSetupOnlyChannelRegistration =
-        candidate.origin !== "workspace" && !validateOnly && onlyPluginIdSet
+        !(candidate.origin === "workspace" && !enableState.enabled) &&
+        !validateOnly &&
+        onlyPluginIdSet
           ? manifestRecord.channels.length > 0
           : false;
 
