@@ -1,5 +1,5 @@
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
-import { listChannelPluginCatalogEntries } from "../../channels/plugins/catalog.js";
+import { listChannelPluginCatalogEntriesUnfiltered } from "../../channels/plugins/catalog.js";
 import { parseOptionalDelimitedEntries } from "../../channels/plugins/helpers.js";
 import { getChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
 import { moveSingleAccountChannelSectionToDefaultAccount } from "../../channels/plugins/setup-helpers.js";
@@ -42,7 +42,7 @@ function resolveCatalogChannelEntry(raw: string, cfg: OpenClawConfig | null) {
         workspaceDir,
         env: process.env,
       })
-    : listChannelPluginCatalogEntries({ workspaceDir });
+    : listChannelPluginCatalogEntriesUnfiltered({ workspaceDir });
   return catalogEntries.find((entry) => {
     if (normalizeOptionalLowercaseString(entry.id) === trimmed) {
       return true;
