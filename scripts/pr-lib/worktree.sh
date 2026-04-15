@@ -40,6 +40,11 @@ enter_worktree() {
     echo "Detected non-root invocation cwd=$invoke_cwd, using canonical root $root"
   fi
 
+  if [ -d .local ] && [ -s .local/review-mode.env ] && [ ! -e .local/pr-meta.env ]; then
+    echo "Refusing to continue from a review-mode worktree with missing PR metadata. Re-run scripts/pr review-init <PR> from repo root."
+    exit 1
+  fi
+
   cd "$root"
   ensure_gh_api_auth
   git fetch origin main
