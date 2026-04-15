@@ -281,17 +281,22 @@ push_prep_head_to_pr_branch() {
   local pr_head_sha_after
   pr_head_sha_after=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
 
+  local push_main_status="up_to_date"
+  local push_main_verified_sha=""
   git fetch origin main
+  push_main_verified_sha=$(git rev-parse origin/main)
   git fetch origin "pull/$pr/head:pr-$pr-verify" --force
-  git merge-base --is-ancestor origin/main "pr-$pr-verify" || {
-    echo "PR branch is behind main after push."
-    exit 1
-  }
+  if ! git merge-base --is-ancestor origin/main "pr-$pr-verify"; then
+    push_main_status="main_advanced_after_push"
+    echo "PR branch accepted the push, but origin/main advanced again before post-push freshness verification."
+  fi
   git branch -D "pr-$pr-verify" 2>/dev/null || true
   # Security: shell-escape values to prevent command injection when sourced.
   printf '%s=%q\n' \
     PUSH_PREP_HEAD_SHA "$prep_head_sha" \
     PUSHED_FROM_SHA "$pushed_from_sha" \
     PR_HEAD_SHA_AFTER_PUSH "$pr_head_sha_after" \
+    PUSH_MAIN_STATUS "$push_main_status" \
+    PUSH_MAIN_VERIFIED_SHA "$push_main_verified_sha" \
     > "$result_env_path"
 }

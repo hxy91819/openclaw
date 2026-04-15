@@ -301,15 +301,15 @@ remove_worktree_if_present() {
     return 0
   fi
 
-  if command -v trash >/dev/null 2>&1; then
-    trash "$path" >/dev/null 2>&1 || {
-      echo "Warning: failed to trash orphaned worktree dir $path"
-      return 0
-    }
+  rm -rf "$path" >/dev/null 2>&1 || {
+    echo "Warning: failed to remove orphaned worktree dir $path"
     return 0
+  }
+
+  if [ -e "$path" ]; then
+    echo "Warning: orphaned worktree dir remains after cleanup attempt: $path"
   fi
 
-  echo "Warning: orphaned worktree dir remains and trash is unavailable: $path"
   return 0
 }
 

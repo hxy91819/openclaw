@@ -352,6 +352,11 @@ EOF_BODY
       return 0
     fi
 
+    if ! gh api "repos/$repo_owner/$repo_name/git/ref/$encoded_ref" >/dev/null 2>&1; then
+      echo "Remote branch cleanup: branch already absent for $repo_owner/$repo_name:$head_ref"
+      return 0
+    fi
+
     echo "Warning: failed to delete remote branch $repo_owner/$repo_name:$head_ref"
     return 0
   }
