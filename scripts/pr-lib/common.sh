@@ -26,6 +26,16 @@ path_is_testish() {
   return 1
 }
 
+path_is_qa_infra_only() {
+  local path="$1"
+  case "$path" in
+    extensions/qa-channel/*|extensions/qa-lab/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 path_is_maintainer_workflow_only() {
   local path="$1"
   case "$path" in
@@ -58,7 +68,12 @@ changelog_required_for_changed_files() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     saw_any=true
-    if path_is_docsish "$path" || path_is_testish "$path" || path_is_maintainer_workflow_only "$path"; then
+    if \
+      path_is_docsish "$path" || \
+      path_is_testish "$path" || \
+      path_is_qa_infra_only "$path" || \
+      path_is_maintainer_workflow_only "$path"
+    then
       continue
     fi
     return 0
