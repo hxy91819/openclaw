@@ -189,32 +189,8 @@ write_merge_prep_log_entry() {
   local changelog_status="$1"
   cat >> .local/prep.md <<EOF_PREP
 - Merge-stage changelog status: $changelog_status.
-- Merge is waiting for explicit maintainer confirmation before gh pr merge.
+- Merge is ready to execute the deterministic gh pr merge step.
 EOF_PREP
-}
-
-confirm_ready_to_merge() {
-  local pr="$1"
-  local prep_head_sha="$2"
-  local changelog_status="$3"
-  local changelog_preview="${4:-}"
-
-  echo "Final confirmation required before merge."
-  echo "PR #$pr"
-  echo "prepared_head_sha=$prep_head_sha"
-  echo "changelog_status=$changelog_status"
-  if [ -n "$changelog_preview" ]; then
-    echo "changelog_entry=$changelog_preview"
-  fi
-  echo "Review the PR on GitHub now."
-  echo "Type 'merge' to continue or anything else to cancel."
-
-  local answer
-  read -r answer
-  if [ "$answer" != "merge" ]; then
-    echo "Merge canceled before gh pr merge."
-    exit 1
-  fi
 }
 
 merge_run() {
@@ -324,8 +300,6 @@ Co-authored-by: $contrib <$contrib_coauthor_email>
 Co-authored-by: $reviewer <$reviewer_coauthor_email>
 Reviewed-by: @$reviewer
 EOF_BODY
-
-  confirm_ready_to_merge "$pr" "$PREP_HEAD_SHA" "$changelog_status" "$changelog_preview"
 
   delete_remote_pr_head_branch_after_merge() {
     local head_json
