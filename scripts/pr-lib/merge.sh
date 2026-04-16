@@ -185,6 +185,18 @@ refresh_merge_prep_metadata() {
     > .local/prep.env
 }
 
+run_merge_changelog_with_diagnostics() {
+  local changelog_result=""
+  if ! changelog_result=$(ensure_pr_changelog_entry "$@"); then
+    if [ -n "$changelog_result" ]; then
+      printf '%s\n' "$changelog_result" >&2
+    fi
+    return 1
+  fi
+
+  printf '%s\n' "$changelog_result"
+}
+
 write_merge_prep_log_entry() {
   local changelog_status="$1"
   cat >> .local/prep.md <<EOF_PREP
@@ -263,7 +275,10 @@ merge_run() {
     resolved_changelog_entry=$(resolve_pr_changelog_entry "$pr" "$contrib" "$pr_title")
     changelog_preview=$(printf '%s' "$resolved_changelog_entry" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')
     local changelog_result
-    changelog_result=$(ensure_pr_changelog_entry "$pr" "$contrib" "$pr_title" "Changes" "$resolved_changelog_entry")
+    if ! changelog_result=$(run_merge_changelog_with_diagnostics "$pr" "$contrib" "$pr_title" "Changes" "$resolved_changelog_entry"); then
+      echo "Changelog validation failed during merge-run." >&2
+      exit 1
+    fi
     echo "$changelog_result"
 
     if printf '%s\n' "$changelog_result" | rg -q '^pr_changelog_changed=true$'; then
