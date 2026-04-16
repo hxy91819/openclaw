@@ -89,7 +89,7 @@ clean_pr_worktree_state() {
   git -C "$worktree_dir" am --abort >/dev/null 2>&1 || true
   git -C "$worktree_dir" cherry-pick --abort >/dev/null 2>&1 || true
   git -C "$worktree_dir" reset --hard HEAD >/dev/null
-  git -C "$worktree_dir" clean -fd >/dev/null
+  git -C "$worktree_dir" clean -fd -e .local/ >/dev/null
 }
 
 pr_meta_json() {
