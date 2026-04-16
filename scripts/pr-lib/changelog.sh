@@ -271,12 +271,41 @@ changelog_explicit_human_thanks_required_for_contributor() {
   node "$(changelog_attribution_script)" --requires-explicit-human-thanks "$contrib"
 }
 
+resolve_changelog_diff_range() {
+  local env_file
+  for env_file in .local/prep.env .local/prep-context.env; do
+    [ -s "$env_file" ] || continue
+
+    local candidate
+    candidate=$(
+      (
+        set +u
+        # shellcheck disable=SC1090
+        source "$env_file" >/dev/null 2>&1 || exit 0
+        printf '%s' "${PR_HEAD_SHA_BEFORE:-}"
+      )
+    )
+
+    if [ -n "$candidate" ] \
+      && git cat-file -e "${candidate}^{commit}" 2>/dev/null \
+      && git merge-base --is-ancestor "$candidate" HEAD 2>/dev/null; then
+      printf '%s\n' "${candidate}..HEAD"
+      return 0
+    fi
+  done
+
+  printf '%s\n' 'origin/main...HEAD'
+}
+
 validate_changelog_entry_for_pr() {
   local pr="$1"
   local contrib="$2"
 
+  local diff_range
+  diff_range=$(resolve_changelog_diff_range)
+
   local added_lines
-  added_lines=$(git diff --unified=0 origin/main...HEAD -- CHANGELOG.md | awk '
+  added_lines=$(git diff --unified=0 "$diff_range" -- CHANGELOG.md | awk '
     /^\+\+\+/ { next }
     /^\+/ { print substr($0, 2) }
   ')
@@ -290,7 +319,7 @@ validate_changelog_entry_for_pr() {
   pr_pattern="(#$pr|openclaw#$pr)"
 
   local with_pr
-  with_pr=$(printf '%s\n' "$added_lines" | grep -Ein "$pr_pattern" || true)
+  with_pr=$(printf '%s\n' "$added_lines" | rg -in "$pr_pattern" || true)
   if [ -z "$with_pr" ]; then
     echo "CHANGELOG.md update must reference PR #$pr (for example, (#$pr))."
     exit 1
@@ -298,7 +327,7 @@ validate_changelog_entry_for_pr() {
 
   local diff_file
   diff_file=$(mktemp)
-  git diff --unified=0 origin/main...HEAD -- CHANGELOG.md > "$diff_file"
+  git diff --unified=0 "$diff_range" -- CHANGELOG.md > "$diff_file"
 
   if ! awk -v pr_pattern="$pr_pattern" '
 BEGIN {
@@ -454,8 +483,11 @@ END {
 }
 
 validate_changelog_merge_hygiene() {
+  local diff_range
+  diff_range=$(resolve_changelog_diff_range)
+
   local diff
-  diff=$(git diff --unified=0 origin/main...HEAD -- CHANGELOG.md)
+  diff=$(git diff --unified=0 "$diff_range" -- CHANGELOG.md)
 
   local removed_lines
   removed_lines=$(printf '%s\n' "$diff" | awk '
@@ -467,7 +499,7 @@ validate_changelog_merge_hygiene() {
   fi
 
   local removed_refs
-  removed_refs=$(printf '%s\n' "$removed_lines" | grep -Eo '#[0-9]+' | sort -u || true)
+  removed_refs=$(printf '%s\n' "$removed_lines" | rg -o '#[0-9]+' | sort -u || true)
   if [ -z "$removed_refs" ]; then
     return 0
   fi
@@ -481,7 +513,7 @@ validate_changelog_merge_hygiene() {
   local ref
   while IFS= read -r ref; do
     [ -z "$ref" ] && continue
-    if ! printf '%s\n' "$added_lines" | grep -Fq "$ref"; then
+    if ! printf '%s\n' "$added_lines" | rg -q -F "$ref"; then
       echo "CHANGELOG.md drops existing entry reference $ref without re-adding it."
       echo "Likely merge conflict loss; restore the dropped entry (or keep the same PR ref in rewritten text)."
       exit 1
