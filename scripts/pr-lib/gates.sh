@@ -145,7 +145,11 @@ run_prepare_push_retry_gates() {
   run_quiet_logged "pnpm build (lease-retry)" ".local/lease-retry-build.log" pnpm build
   run_quiet_logged "pnpm check (lease-retry)" ".local/lease-retry-check.log" pnpm check
   if [ "$docs_only" != "true" ]; then
-    run_quiet_logged "pnpm test (lease-retry)" ".local/lease-retry-test.log" pnpm test
+    if [ "${OPENCLAW_GATES_FULL_TEST:-}" = "1" ]; then
+      run_quiet_logged "pnpm test (lease-retry)" ".local/lease-retry-test.log" pnpm test
+    else
+      run_quiet_logged "pnpm test --changed (lease-retry)" ".local/lease-retry-test.log" pnpm test -- --changed origin/main
+    fi
   fi
 }
 
@@ -255,25 +259,31 @@ prepare_gates() {
       test_gate_status="skipped_docs_only"
       echo "Docs-only change detected with high confidence; skipping pnpm test."
     else
-      gates_mode="full"
-      if [ -n "${OPENCLAW_VITEST_MAX_WORKERS:-}" ]; then
-        echo "Running pnpm test with OPENCLAW_VITEST_MAX_WORKERS=$OPENCLAW_VITEST_MAX_WORKERS."
-        run_prepare_gate_with_ack \
-          "$pr" \
-          test \
-          "$current_head" \
-          "pnpm test" \
-          ".local/gates-test.log" \
-          env OPENCLAW_VITEST_MAX_WORKERS="$OPENCLAW_VITEST_MAX_WORKERS" pnpm test
+      local test_args=(pnpm test)
+      if [ "${OPENCLAW_GATES_FULL_TEST:-}" != "1" ]; then
+        test_args+=(-- --changed origin/main)
+        gates_mode="changed"
+        echo "Running pnpm test --changed origin/main (set OPENCLAW_GATES_FULL_TEST=1 to force full suite)."
       else
-        echo "Running pnpm test with host-aware scheduling defaults."
+        gates_mode="full"
+        echo "Running full pnpm test (OPENCLAW_GATES_FULL_TEST=1)."
+      fi
+      if [ -n "${OPENCLAW_VITEST_MAX_WORKERS:-}" ]; then
         run_prepare_gate_with_ack \
           "$pr" \
           test \
           "$current_head" \
           "pnpm test" \
           ".local/gates-test.log" \
-          pnpm test
+          env OPENCLAW_VITEST_MAX_WORKERS="$OPENCLAW_VITEST_MAX_WORKERS" "${test_args[@]}"
+      else
+        run_prepare_gate_with_ack \
+          "$pr" \
+          test \
+          "$current_head" \
+          "pnpm test" \
+          ".local/gates-test.log" \
+          "${test_args[@]}"
       fi
       test_gate_status="$PREPARE_GATE_LAST_STATUS"
       previous_full_gates_head="$current_head"
