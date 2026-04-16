@@ -128,6 +128,8 @@ describe("scripts/pr-lib/worktree.sh", () => {
 
     writeFileSync(path.join(worktreeDir, "tracked.txt"), "dirty\n", "utf8");
     writeFileSync(path.join(worktreeDir, "untracked.txt"), "remove me\n", "utf8");
+    mkdirSync(path.join(worktreeDir, ".local"), { recursive: true });
+    writeFileSync(path.join(worktreeDir, ".local", "pr-meta.env"), "KEEP=1\n", "utf8");
 
     runWorktreeShell(
       root,
@@ -140,5 +142,6 @@ clean_pr_worktree_state "$TEST_REPO_ROOT/.worktrees/pr-123"
 
     expect(readFileSync(path.join(worktreeDir, "tracked.txt"), "utf8")).toBe("seed\n");
     expect(existsSync(path.join(worktreeDir, "untracked.txt"))).toBe(false);
+    expect(readFileSync(path.join(worktreeDir, ".local", "pr-meta.env"), "utf8")).toBe("KEEP=1\n");
   });
 });
