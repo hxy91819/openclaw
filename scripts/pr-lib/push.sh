@@ -166,7 +166,20 @@ verify_pr_head_branch_matches_expected() {
   fi
 }
 
+refresh_pr_head_push_metadata() {
+  local pr="$1"
+  local json
+  json=$(pr_meta_json "$pr")
+  mkdir -p .local
+  write_pr_meta_files "$json"
+}
+
 setup_prhead_remote() {
+  local pr="${1:-}"
+  if [ -n "$pr" ]; then
+    refresh_pr_head_push_metadata "$pr"
+  fi
+
   local push_url
   push_url=$(resolve_head_push_url) || {
     echo "Unable to resolve PR head repo push URL."
@@ -211,7 +224,7 @@ push_prep_head_to_pr_branch() {
   local docs_only="${6:-false}"
   local result_env_path="${7:-.local/push-result.env}"
 
-  setup_prhead_remote
+  setup_prhead_remote "$pr"
 
   local remote_sha
   remote_sha=$(resolve_prhead_remote_sha "$pr_head")
