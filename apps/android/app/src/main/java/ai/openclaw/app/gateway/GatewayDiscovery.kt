@@ -9,8 +9,6 @@ import android.net.nsd.NsdServiceInfo
 import android.os.CancellationSignal
 import android.util.Log
 import java.io.IOException
-import java.lang.reflect.Proxy
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
@@ -46,6 +44,7 @@ import org.xbill.DNS.Type
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+@Suppress("DEPRECATION")
 class GatewayDiscovery(
   context: Context,
   private val scope: CoroutineScope,
@@ -56,7 +55,6 @@ class GatewayDiscovery(
   private val serviceType = "_openclaw-gw._tcp."
   private val wideAreaDomain = System.getenv("OPENCLAW_WIDE_AREA_DOMAIN")
   private val logTag = "OpenClaw/GatewayDiscovery"
-  private val directExecutor = Executor { runnable -> runnable.run() }
 
   private val localById = ConcurrentHashMap<String, GatewayEndpoint>()
   private val unicastById = ConcurrentHashMap<String, GatewayEndpoint>()
@@ -130,128 +128,43 @@ class GatewayDiscovery(
   }
 
   private fun resolve(serviceInfo: NsdServiceInfo) {
-    if (registerServiceInfoCallbackCompat(serviceInfo)) return
-    resolveServiceCompat(serviceInfo)
-  }
+    nsd.resolveService(
+      serviceInfo,
+      object : NsdManager.ResolveListener {
+        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
 
-  private fun registerServiceInfoCallbackCompat(serviceInfo: NsdServiceInfo): Boolean {
-    return try {
-      // compileSdk 36 marks resolveService/getHost as deprecated, but we still need
-      // a runtime-compatible path back to Android 12. Prefer the newer callback API
-      // when the device exposes it, and fall back without hard-linking deprecated calls.
-      val callbackClass = Class.forName("android.net.nsd.NsdManager\$ServiceInfoCallback")
-      var callbackRef: Any? = null
-      val callback =
-        Proxy.newProxyInstance(callbackClass.classLoader, arrayOf(callbackClass)) { _, method, args ->
-          when (method.name) {
-            "onServiceUpdated" -> {
-              val resolved = args?.getOrNull(0) as? NsdServiceInfo
-              if (resolved != null) {
-                onServiceResolved(resolved)
-              }
-              callbackRef?.let(::unregisterServiceInfoCallbackCompat)
-              null
-            }
-            "onServiceLost", "onServiceInfoCallbackRegistrationFailed" -> {
-              callbackRef?.let(::unregisterServiceInfoCallbackCompat)
-              null
-            }
-            else -> null
-          }
+        override fun onServiceResolved(resolved: NsdServiceInfo) {
+          val host = resolved.host?.hostAddress ?: return
+          val port = resolved.port
+          if (port <= 0) return
+
+          val rawServiceName = resolved.serviceName
+          val serviceName = BonjourEscapes.decode(rawServiceName)
+          val displayName = BonjourEscapes.decode(txt(resolved, "displayName") ?: serviceName)
+          val lanHost = txt(resolved, "lanHost")
+          val tailnetDns = txt(resolved, "tailnetDns")
+          val gatewayPort = txtInt(resolved, "gatewayPort")
+          val canvasPort = txtInt(resolved, "canvasPort")
+          val tlsEnabled = txtBool(resolved, "gatewayTls")
+          val tlsFingerprint = txt(resolved, "gatewayTlsSha256")
+          val id = stableId(serviceName, "local.")
+          localById[id] =
+            GatewayEndpoint(
+              stableId = id,
+              name = displayName,
+              host = host,
+              port = port,
+              lanHost = lanHost,
+              tailnetDns = tailnetDns,
+              gatewayPort = gatewayPort,
+              canvasPort = canvasPort,
+              tlsEnabled = tlsEnabled,
+              tlsFingerprintSha256 = tlsFingerprint,
+            )
+          publish()
         }
-      callbackRef = callback
-      nsd.javaClass
-        .getMethod(
-          "registerServiceInfoCallback",
-          NsdServiceInfo::class.java,
-          Executor::class.java,
-          callbackClass,
-        ).invoke(nsd, serviceInfo, directExecutor, callback)
-      true
-    } catch (_: Throwable) {
-      false
-    }
-  }
-
-  private fun unregisterServiceInfoCallbackCompat(callback: Any) {
-    try {
-      val callbackClass = Class.forName("android.net.nsd.NsdManager\$ServiceInfoCallback")
-      nsd.javaClass.getMethod("unregisterServiceInfoCallback", callbackClass).invoke(nsd, callback)
-    } catch (_: Throwable) {
-      // ignore (best-effort)
-    }
-  }
-
-  private fun resolveServiceCompat(serviceInfo: NsdServiceInfo) {
-    try {
-      val listenerClass = Class.forName("android.net.nsd.NsdManager\$ResolveListener")
-      val listener =
-        Proxy.newProxyInstance(listenerClass.classLoader, arrayOf(listenerClass)) { _, method, args ->
-          when (method.name) {
-            "onServiceResolved" -> {
-              val resolved = args?.getOrNull(0) as? NsdServiceInfo
-              if (resolved != null) {
-                onServiceResolved(resolved)
-              }
-              null
-            }
-            else -> null
-          }
-        }
-      nsd.javaClass.getMethod("resolveService", NsdServiceInfo::class.java, listenerClass).invoke(
-        nsd,
-        serviceInfo,
-        listener,
-      )
-    } catch (_: Throwable) {
-      // ignore (best-effort)
-    }
-  }
-
-  private fun onServiceResolved(resolved: NsdServiceInfo) {
-    val host = resolveServiceHostAddress(resolved) ?: return
-    val port = resolved.port
-    if (port <= 0) return
-
-    val rawServiceName = resolved.serviceName
-    val serviceName = BonjourEscapes.decode(rawServiceName)
-    val displayName = BonjourEscapes.decode(txt(resolved, "displayName") ?: serviceName)
-    val lanHost = txt(resolved, "lanHost")
-    val tailnetDns = txt(resolved, "tailnetDns")
-    val gatewayPort = txtInt(resolved, "gatewayPort")
-    val canvasPort = txtInt(resolved, "canvasPort")
-    val tlsEnabled = txtBool(resolved, "gatewayTls")
-    val tlsFingerprint = txt(resolved, "gatewayTlsSha256")
-    val id = stableId(serviceName, "local.")
-    localById[id] =
-      GatewayEndpoint(
-        stableId = id,
-        name = displayName,
-        host = host,
-        port = port,
-        lanHost = lanHost,
-        tailnetDns = tailnetDns,
-        gatewayPort = gatewayPort,
-        canvasPort = canvasPort,
-        tlsEnabled = tlsEnabled,
-        tlsFingerprintSha256 = tlsFingerprint,
-      )
-    publish()
-  }
-
-  private fun resolveServiceHostAddress(info: NsdServiceInfo): String? {
-    val modernHost =
-      runCatching {
-        @Suppress("UNCHECKED_CAST")
-        info.javaClass.getMethod("getHostAddresses").invoke(info) as? List<InetAddress>
-      }.getOrNull()
-        ?.firstOrNull()
-        ?.hostAddress
-    if (!modernHost.isNullOrBlank()) return modernHost
-
-    return runCatching {
-      (info.javaClass.getMethod("getHost").invoke(info) as? InetAddress)?.hostAddress
-    }.getOrNull()
+      },
+    )
   }
 
   private fun publish() {
@@ -477,7 +390,7 @@ class GatewayDiscovery(
     val cm = connectivity ?: return null
 
     // Prefer VPN (Tailscale) when present; otherwise use the active network.
-    allNetworksCompat(cm).firstOrNull { n ->
+    cm.allNetworks.firstOrNull { n ->
       val caps = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
       caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
     }?.let { return it }
@@ -490,7 +403,7 @@ class GatewayDiscovery(
 
     val candidateNetworks =
       buildList {
-        allNetworksCompat(cm)
+        cm.allNetworks
           .firstOrNull { n ->
             val caps = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
             caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
@@ -525,13 +438,6 @@ class GatewayDiscovery(
     } catch (_: Throwable) {
       null
     }
-  }
-
-  private fun allNetworksCompat(cm: ConnectivityManager): List<android.net.Network> {
-    return runCatching {
-      @Suppress("UNCHECKED_CAST")
-      (cm.javaClass.getMethod("getAllNetworks").invoke(cm) as? Array<android.net.Network>)?.toList()
-    }.getOrNull().orEmpty()
   }
 
   private suspend fun rawQuery(network: android.net.Network?, wireQuery: ByteArray): ByteArray =
