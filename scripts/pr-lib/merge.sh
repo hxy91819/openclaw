@@ -197,6 +197,48 @@ run_merge_changelog_with_diagnostics() {
   printf '%s\n' "$changelog_result"
 }
 
+normalize_merge_changelog_section() {
+  local raw_section="${1:-Changes}"
+  local normalized
+  normalized=$(printf '%s' "$raw_section" | tr '[:upper:]' '[:lower:]')
+
+  case "$normalized" in
+    fixes|fix)
+      printf '%s\n' "Fixes"
+      ;;
+    changes|change|enhancement|feature)
+      printf '%s\n' "Changes"
+      ;;
+    *)
+      echo "Unsupported changelog section override: $raw_section"
+      exit 1
+      ;;
+  esac
+}
+
+resolve_merge_changelog_section() {
+  local pr_json="$1"
+
+  if [ -n "${OPENCLAW_PR_CHANGELOG_SECTION:-}" ]; then
+    normalize_merge_changelog_section "$OPENCLAW_PR_CHANGELOG_SECTION"
+    return 0
+  fi
+
+  local label_names
+  label_names=$(printf '%s\n' "$pr_json" | jq -r '.labels[]?.name // empty' | tr '[:upper:]' '[:lower:]')
+  if printf '%s\n' "$label_names" | rg -q '(^|[-_[:space:]])(bug|fix|bugfix|hotfix)([-_[:space:]]|$)'; then
+    printf '%s\n' "Fixes"
+    return 0
+  fi
+
+  if printf '%s\n' "$label_names" | rg -q '(^|[-_[:space:]])(feature|enhancement)([-_[:space:]]|$)'; then
+    printf '%s\n' "Changes"
+    return 0
+  fi
+
+  printf '%s\n' "Changes"
+}
+
 write_merge_prep_log_entry() {
   local changelog_status="$1"
   cat >> .local/prep.md <<EOF_PREP
@@ -219,7 +261,7 @@ merge_run() {
   source .local/prep.env
 
   local pr_meta_json
-  pr_meta_json=$(gh pr view "$pr" --json number,title,state,isDraft,author)
+  pr_meta_json=$(gh pr view "$pr" --json number,title,state,isDraft,author,labels)
   local pr_title
   pr_title=$(printf '%s\n' "$pr_meta_json" | jq -r .title)
   local pr_number
@@ -273,9 +315,11 @@ merge_run() {
     checkout_prep_branch "$pr"
     local resolved_changelog_entry
     resolved_changelog_entry=$(resolve_pr_changelog_entry "$pr" "$contrib" "$pr_title")
+    local changelog_section
+    changelog_section=$(resolve_merge_changelog_section "$pr_meta_json")
     changelog_preview=$(printf '%s' "$resolved_changelog_entry" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')
     local changelog_result
-    if ! changelog_result=$(run_merge_changelog_with_diagnostics "$pr" "$contrib" "$pr_title" "Changes" "$resolved_changelog_entry"); then
+    if ! changelog_result=$(run_merge_changelog_with_diagnostics "$pr" "$contrib" "$pr_title" "$changelog_section" "$resolved_changelog_entry"); then
       echo "Changelog validation failed during merge-run." >&2
       exit 1
     fi

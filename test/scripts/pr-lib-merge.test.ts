@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const mergeScriptPath = path.join(process.cwd(), "scripts", "pr-lib", "merge.sh");
 
-function runMergeShell(body: string) {
+function runMergeShell(body: string, env?: NodeJS.ProcessEnv) {
   return spawnSync(
     "bash",
     [
@@ -20,6 +20,7 @@ ${body}
       env: {
         ...process.env,
         OPENCLAW_PR_MERGE_SH: mergeScriptPath,
+        ...env,
       },
     },
   );
@@ -54,5 +55,26 @@ run_merge_changelog_with_diagnostics 67082 contributor "PR title" Changes "Entry
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("pr_changelog_changed=true");
     expect(result.stderr).toBe("");
+  });
+
+  it("maps bug-fix labels to the Fixes section", () => {
+    const result = runMergeShell(`
+printf '%s\\n' "$(resolve_merge_changelog_section '{"labels":[{"name":"bug"}]}')"
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("Fixes");
+  });
+
+  it("lets an explicit override choose the changelog section", () => {
+    const result = runMergeShell(
+      `
+printf '%s\\n' "$(resolve_merge_changelog_section '{"labels":[{"name":"bug"}]}')"
+`,
+      { OPENCLAW_PR_CHANGELOG_SECTION: "changes" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("Changes");
   });
 });
