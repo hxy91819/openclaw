@@ -27,12 +27,12 @@ Usage:
   scripts/pr review-artifacts-init <PR>
   scripts/pr review-validate-artifacts <PR>
   scripts/pr review-tests <PR> <test-file> [<test-file> ...]
-  scripts/pr prepare-init <PR>
+  scripts/pr prepare-init <PR> [--force-clean]
   scripts/pr prepare-ack-unrelated <PR> <build|check|test> <reason> [scoped_verification]
   scripts/pr prepare-validate-commit <PR>
   scripts/pr prepare-gates <PR>
   scripts/pr prepare-push <PR>
-  scripts/pr prepare-sync-head <PR>
+  scripts/pr prepare-sync-head <PR> [--force]
   scripts/pr prepare-run <PR>
   scripts/pr merge-verify <PR>
   scripts/pr merge-run <PR>
@@ -137,7 +137,21 @@ main() {
     prepare-init)
       local pr="${1-}"
       [ -n "$pr" ] || { usage; exit 2; }
-      prepare_init "$pr"
+      shift || true
+      local force_clean=false
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --force-clean)
+            force_clean=true
+            ;;
+          *)
+            usage
+            exit 2
+            ;;
+        esac
+        shift || true
+      done
+      prepare_init "$pr" "$force_clean"
       ;;
     prepare-ack-unrelated)
       local pr="${1-}"
@@ -167,7 +181,21 @@ main() {
     prepare-sync-head)
       local pr="${1-}"
       [ -n "$pr" ] || { usage; exit 2; }
-      prepare_sync_head "$pr"
+      shift || true
+      local force_rebase=false
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --force)
+            force_rebase=true
+            ;;
+          *)
+            usage
+            exit 2
+            ;;
+        esac
+        shift || true
+      done
+      prepare_sync_head "$pr" "$force_rebase"
       ;;
     prepare-run)
       local pr="${1-}"

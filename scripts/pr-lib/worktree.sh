@@ -31,6 +31,7 @@ EOF
 enter_worktree() {
   local pr="$1"
   local reset_to_main="${2:-false}"
+  local force_clean="${3:-false}"
   local invoke_cwd
   invoke_cwd="$PWD"
   local root
@@ -51,6 +52,9 @@ enter_worktree() {
 
   local dir=".worktrees/pr-$pr"
   if [ -d "$dir" ]; then
+    if [ "$force_clean" = "true" ]; then
+      clean_pr_worktree_state "$root/$dir"
+    fi
     cd "$dir"
     git fetch origin main
     if [ "$reset_to_main" = "true" ]; then
@@ -62,6 +66,30 @@ enter_worktree() {
   fi
 
   mkdir -p .local
+}
+
+clean_pr_worktree_state() {
+  local worktree_dir="$1"
+  local root
+  root=$(repo_root)
+
+  case "$worktree_dir" in
+    "$root"/.worktrees/pr-*)
+      ;;
+    *)
+      echo "Refusing to force-clean non-PR worktree path: $worktree_dir"
+      exit 1
+      ;;
+  esac
+
+  [ -d "$worktree_dir" ] || return 0
+
+  git -C "$worktree_dir" rebase --abort >/dev/null 2>&1 || true
+  git -C "$worktree_dir" merge --abort >/dev/null 2>&1 || true
+  git -C "$worktree_dir" am --abort >/dev/null 2>&1 || true
+  git -C "$worktree_dir" cherry-pick --abort >/dev/null 2>&1 || true
+  git -C "$worktree_dir" reset --hard HEAD >/dev/null
+  git -C "$worktree_dir" clean -fd >/dev/null
 }
 
 pr_meta_json() {

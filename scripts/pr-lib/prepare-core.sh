@@ -49,7 +49,8 @@ verify_prep_branch_matches_prepared_head() {
 
 prepare_init() {
   local pr="$1"
-  enter_worktree "$pr" true
+  local force_clean="${2:-false}"
+  enter_worktree "$pr" true "$force_clean"
 
   require_artifact .local/pr-meta.env
   require_artifact .local/review.md
@@ -60,13 +61,6 @@ prepare_init() {
 
   # shellcheck disable=SC1091
   source .local/pr-meta.env
-
-  local existing_rebase_count=0
-  if [ -s .local/prep-context.env ]; then
-    # shellcheck disable=SC1091
-    source .local/prep-context.env
-    existing_rebase_count=${PREP_REBASE_COUNT:-0}
-  fi
 
   local json
   json=$(pr_meta_json "$pr")
@@ -91,7 +85,7 @@ prepare_init() {
     PR_HEAD "$head" \
     PR_HEAD_SHA_BEFORE "$pr_head_sha_before" \
     PREP_BRANCH "pr-$pr-prep" \
-    PREP_REBASE_COUNT "$existing_rebase_count" \
+    PREP_REBASE_COUNT 0 \
     PREP_STARTED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > .local/prep-context.env
 
@@ -106,6 +100,17 @@ EOF_PREP
   echo "worktree=$PWD"
   echo "branch=$(git branch --show-current)"
   echo "wrote=.local/prep-context.env .local/prep.md"
+}
+
+prepare_sync_rebase_allowed() {
+  local rebase_count="$1"
+  local force_rebase="${2:-false}"
+
+  if [ "$rebase_count" -ge 1 ] && [ "$force_rebase" != "true" ]; then
+    return 1
+  fi
+
+  return 0
 }
 
 prepare_validate_commit() {
@@ -218,6 +223,7 @@ EOF_PREP
 
 prepare_sync_head() {
   local pr="$1"
+  local force_rebase="${2:-false}"
   enter_worktree "$pr" false
 
   require_artifact .local/pr-meta.env
@@ -234,9 +240,12 @@ prepare_sync_head() {
   git fetch origin main
   if ! git merge-base --is-ancestor origin/main HEAD; then
     local rebase_count="${PREP_REBASE_COUNT:-0}"
-    if [ "$rebase_count" -ge 1 ]; then
-      echo "prepare-sync-head already rebased this prep branch once; stop here and merge from the current prepared head or re-run prepare-init intentionally."
+    if ! prepare_sync_rebase_allowed "$rebase_count" "$force_rebase"; then
+      echo "prepare-sync-head already rebased this prep branch once; stop here and merge from the current prepared head, or re-run with --force if another rebase is intentional."
       exit 1
+    fi
+    if [ "$rebase_count" -ge 1 ] && [ "$force_rebase" = "true" ]; then
+      echo "prepare-sync-head --force: allowing another rebase after PREP_REBASE_COUNT=$rebase_count."
     fi
 
     git rebase origin/main
