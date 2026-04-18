@@ -21,7 +21,7 @@ const baseChangelog = `# Changelog
 `;
 
 describe("appendUnreleasedChangelogEntry", () => {
-  it("appends to the end of the requested unreleased section", () => {
+  it("falls back to appending when the new entry has no PR ref", () => {
     const next = appendUnreleasedChangelogEntry(baseChangelog, {
       section: "Fixes",
       entry: "New fix entry.",
@@ -32,6 +32,165 @@ describe("appendUnreleasedChangelogEntry", () => {
 - Existing fix.
 - New fix entry.`);
     expect(next).toContain("## 2026.4.5");
+  });
+
+  it("inserts a PR-linked entry ordered by PR number in the middle", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+- Earlier change (#100). Thanks @alice
+- Later change (#300). Thanks @carol
+
+## 2026.4.5
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "Middle change (#200). Thanks @bob",
+    });
+
+    expect(next).toBe(`# Changelog
+
+## Unreleased
+
+### Changes
+
+- Earlier change (#100). Thanks @alice
+- Middle change (#200). Thanks @bob
+- Later change (#300). Thanks @carol
+
+## 2026.4.5
+`);
+  });
+
+  it("inserts a PR-linked entry with the smallest number at the top of the section", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+- Later change (#300). Thanks @carol
+
+## 2026.4.5
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "Earliest change (#50). Thanks @alice",
+    });
+
+    expect(next).toBe(`# Changelog
+
+## Unreleased
+
+### Changes
+
+- Earliest change (#50). Thanks @alice
+- Later change (#300). Thanks @carol
+
+## 2026.4.5
+`);
+  });
+
+  it("inserts a PR-linked entry with the largest number at the tail of the section", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+- Earlier change (#100). Thanks @alice
+- Later change (#200). Thanks @bob
+
+## 2026.4.5
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "Newest change (#500). Thanks @carol",
+    });
+
+    expect(next).toBe(`# Changelog
+
+## Unreleased
+
+### Changes
+
+- Earlier change (#100). Thanks @alice
+- Later change (#200). Thanks @bob
+- Newest change (#500). Thanks @carol
+
+## 2026.4.5
+`);
+  });
+
+  it("inserts into an empty sub-section while preserving surrounding spacing", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+### Fixes
+
+- Existing fix.
+
+## 2026.4.5
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "First change (#42). Thanks @alice",
+    });
+
+    expect(next).toContain("- First change (#42). Thanks @alice");
+    // 新条目落在空 Changes 里、位于 Fixes 之前
+    const changesIdx = next.indexOf("### Changes");
+    const firstIdx = next.indexOf("- First change");
+    const fixesIdx = next.indexOf("### Fixes");
+    expect(changesIdx).toBeLessThan(firstIdx);
+    expect(firstIdx).toBeLessThan(fixesIdx);
+    // Fixes 下原有条目未被打乱
+    expect(next).toContain(`### Fixes
+
+- Existing fix.`);
+  });
+
+  it("skips historical bullets without PR refs when deciding order", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+- Legacy unlinked entry without a PR ref.
+- Linked change (#300). Thanks @carol
+
+## 2026.4.5
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "Linked change (#150). Thanks @bob",
+    });
+
+    // 150 < 300，新条目应该插在 (#300) 前面；没有 PR 号的历史行不当排序锚
+    expect(next).toBe(`# Changelog
+
+## Unreleased
+
+### Changes
+
+- Legacy unlinked entry without a PR ref.
+- Linked change (#150). Thanks @bob
+- Linked change (#300). Thanks @carol
+
+## 2026.4.5
+`);
   });
 
   it("avoids duplicating an existing entry", () => {
