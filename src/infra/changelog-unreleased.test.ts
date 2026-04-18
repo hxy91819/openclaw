@@ -222,6 +222,81 @@ describe("appendUnreleasedChangelogEntry", () => {
     expect(next).toBe(content);
   });
 
+  it("blocks a merge-stage re-insert even when new text and section differ (PR #67679 regression)", () => {
+    // prepare 阶段：详细条目已经在 ### Fixes 里
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+- macOS/gateway: add screen.snapshot support. (#67954) Thanks @BunsDev.
+
+### Fixes
+
+- Config/redact: add \`browser.cdpUrl\` and \`browser.profiles.*.cdpUrl\` to sensitive URL config paths so embedded credentials are properly redacted. (#67679) Thanks @Ziy1-Tan.
+
+## 2026.4.15
+`;
+
+    // merge 阶段又走一次 ensure，默认 section=Changes，PR title 作为短版本
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "fix: redact credentials in browser.cdpUrl config paths (#67679). Thanks @Ziy1-Tan",
+    });
+
+    // 同一 PR 号在 Unreleased 任意 subsection 已存在 → 不再插入
+    expect(next).toBe(content);
+  });
+
+  it("still inserts a new Unreleased entry when the same PR number exists only in a released block", () => {
+    // 老版本块里碰巧有同号，不应阻止 Unreleased 插入新条目
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+### Fixes
+
+## 2026.4.15
+
+### Fixes
+
+- old released fix (#500). Thanks @alice
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "brand new change (#500). Thanks @alice",
+    });
+
+    expect(next).not.toBe(content);
+    expect(next).toContain("- brand new change (#500). Thanks @alice");
+    expect(next).toContain("- old released fix (#500). Thanks @alice");
+  });
+
+  it("does not treat #67 as a duplicate of #6767 (PR number prefix collision)", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+- longer PR (#6767). Thanks @alice
+
+## 2026.4.15
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "shorter PR (#67). Thanks @bob",
+    });
+
+    expect(next).toContain("- longer PR (#6767)");
+    expect(next).toContain("- shorter PR (#67)");
+  });
+
   it("throws when the unreleased section is missing", () => {
     expect(() =>
       appendUnreleasedChangelogEntry("# Changelog\n", {

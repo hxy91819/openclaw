@@ -122,6 +122,38 @@ function resolveOrderedInsertIndex(
   return bodyEnd;
 }
 
+function findUnreleasedRange(lines: string[]): { start: number; end: number } | undefined {
+  const unreleasedIndex = lines.findIndex((line) => line.trim() === "## Unreleased");
+  if (unreleasedIndex === -1) {
+    return undefined;
+  }
+  let end = lines.length;
+  for (let index = unreleasedIndex + 1; index < lines.length; index += 1) {
+    if (lines[index].startsWith("## ")) {
+      end = index;
+      break;
+    }
+  }
+  return { start: unreleasedIndex, end };
+}
+
+function unreleasedHasPrEntry(lines: string[], prNumber: number): boolean {
+  const range = findUnreleasedRange(lines);
+  if (!range) {
+    return false;
+  }
+  for (let index = range.start + 1; index < range.end; index += 1) {
+    const line = lines[index];
+    if (!line.startsWith("- ")) {
+      continue;
+    }
+    if (extractPrNumber(line) === prNumber) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function appendUnreleasedChangelogEntry(
   content: string,
   params: {
@@ -136,12 +168,20 @@ export function appendUnreleasedChangelogEntry(
 
   const lines = content.split("\n");
   const bullet = entry.startsWith("- ") ? entry : `- ${entry}`;
+
+  // 强去重：同 PR 号在 ## Unreleased 下任意 subsection 已存在 → 跳过
+  // 这避免了 merge 阶段二次 ensure 插入短版本，跟 prepare 阶段的详细条目重复
+  const newPr = extractPrNumber(bullet);
+  if (newPr !== undefined && unreleasedHasPrEntry(lines, newPr)) {
+    return content;
+  }
+
+  // 文本级去重兜底（无 PR 号的手写条目 / 同行完全相等）
   if (lines.some((line) => entriesAreEquivalent(line, bullet))) {
     return content;
   }
 
   const { bodyStart, bodyEnd } = findSectionRange(lines, params.section);
-  const newPr = extractPrNumber(bullet);
   const insertAt = resolveOrderedInsertIndex(lines, bodyStart, bodyEnd, newPr);
 
   // 空 section：插到 heading 之后并补一个空行分隔
