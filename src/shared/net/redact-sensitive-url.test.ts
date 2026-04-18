@@ -48,7 +48,13 @@ describe("sensitive URL config metadata", () => {
   it("recognizes config paths that may embed URL secrets", () => {
     expect(isSensitiveUrlConfigPath("models.providers.*.baseUrl")).toBe(true);
     expect(isSensitiveUrlConfigPath("mcp.servers.remote.url")).toBe(true);
-    expect(isSensitiveUrlConfigPath("gateway.remote.url")).toBe(false);
+    expect(isSensitiveUrlConfigPath("gateway.remote.url")).toBe(true);
+  });
+
+  it("recognizes cdpUrl config paths as sensitive (browser CDP URLs can embed credentials)", () => {
+    expect(isSensitiveUrlConfigPath("browser.cdpUrl")).toBe(true);
+    expect(isSensitiveUrlConfigPath("browser.profiles.remote.cdpUrl")).toBe(true);
+    expect(isSensitiveUrlConfigPath("browser.profiles.staging.cdpUrl")).toBe(true);
   });
 
   it("uses an explicit url-secret hint tag", () => {
