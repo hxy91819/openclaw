@@ -69,7 +69,8 @@ resolve_pr_changelog_entry() {
     return 0
   fi
 
-  if [ ! -t 0 ]; then
+  # Non-interactive contexts (CI, pipe, or explicit opt-in) use the default entry
+  if [ ! -t 0 ] || [ -n "${CI:-}" ] || [ "${OPENCLAW_MERGE_NONINTERACTIVE:-}" = "1" ]; then
     printf '%s\n' "$default_entry"
     return 0
   fi
