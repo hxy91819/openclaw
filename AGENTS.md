@@ -128,9 +128,11 @@ Skills own workflows; root owns hard policy and routing.
 - Use `$openclaw-docs` for docs writing/review. Docs change with behavior/API.
 - Codex harness upgrade (`extensions/codex/package.json` `@openai/codex`): refresh `docs/plugins/codex-harness.md` model snapshot from the new harness `model/list`.
 - Docs final answers: include relevant full `https://docs.openclaw.ai/...` URL(s). If issue/PR work too, GitHub URL last.
-- Changelog entries: active version `### Changes`/`### Fixes`; single-line bullets only.
-- Contributor PR authors should not edit `CHANGELOG.md`; maintainer/AI adds entries during landing/merge.
-- Contributor-facing changelog entries thank credited human `@author`. Never thank bots, `@openclaw`, `@clawsweeper`, or `@steipete`; if unknown, omit thanks.
+- Changelog user-facing only; pure test/internal usually no entry.
+- Changelog entries: active version `### Changes`/`### Fixes`; contributor PR authors should not edit `CHANGELOG.md`; maintainer/AI adds entries during landing flow.
+- Changelog bullets are always single-line. No wrapping/continuation across multiple lines. Long entries stay on one long line so dedupe, PR-ref, and credit-audit tooling work and so the visual style stays uniform.
+- Changelog placement: active version target section (`### Changes`/`### Fixes`); automated insertion sorts new PR-linked entries by PR number while leaving historical unordered entries alone.
+- Contributor-facing changelog entries thank credited human `@author`; at most one contributor mention per line. Never thank bots, `@codex`, `@openclaw`, `@clawsweeper`, or `@steipete`; if no eligible human is known, omit thanks.
 
 ## Git
 
