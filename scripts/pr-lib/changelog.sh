@@ -202,6 +202,38 @@ function sectionTailInsertIndex(arr, subsectionIndex) {
 
 const activeHeading = lines[ensureActiveSection(lines)]?.trim() || "## Unreleased";
 
+function extractPrNumberFromLine(line) {
+  // Align with the TS helper: use only the first PR reference as the sort key.
+  const match = line.match(/(?:\(#(\d+)\)|openclaw#(\d+))/i);
+  const raw = match && (match[1] || match[2]);
+  if (!raw) {
+    return undefined;
+  }
+  const num = Number.parseInt(raw, 10);
+  return Number.isFinite(num) ? num : undefined;
+}
+
+function orderedInsertIndex(arr, subsectionIndex, nextHeading, newPr) {
+  // Entries without a PR reference keep the previous tail-insert behavior.
+  if (newPr === undefined) {
+    return sectionTailInsertIndex(arr, subsectionIndex);
+  }
+  for (let i = subsectionIndex + 1; i < nextHeading; i += 1) {
+    const line = arr[i];
+    if (!/^- /.test(line)) {
+      continue;
+    }
+    const existing = extractPrNumberFromLine(line);
+    if (existing === undefined) {
+      continue;
+    }
+    if (existing > newPr) {
+      return i;
+    }
+  }
+  return sectionTailInsertIndex(arr, subsectionIndex);
+}
+
 const moved = [];
 for (let i = 0; i < lines.length; i += 1) {
   if (!prPattern.test(lines[i])) {
@@ -227,7 +259,6 @@ const nextLines = lines.filter((_, idx) => !removeIndexes.has(idx));
 
 for (const entry of moved) {
   const subsectionIndex = ensureSubsection(nextLines, entry.subsection);
-  const insertAt = sectionTailInsertIndex(nextLines, subsectionIndex);
 
   let nextHeading = nextLines.length;
   for (let i = subsectionIndex + 1; i < nextLines.length; i += 1) {
@@ -243,6 +274,9 @@ for (const entry of moved) {
   if (alreadyPresent) {
     continue;
   }
+
+  const newPr = extractPrNumberFromLine(entry.line);
+  const insertAt = orderedInsertIndex(nextLines, subsectionIndex, nextHeading, newPr);
   nextLines.splice(insertAt, 0, entry.line);
 }
 
@@ -304,6 +338,14 @@ validate_changelog_entry_for_pr() {
   local diff_range
   diff_range=$(resolve_changelog_diff_range)
 
+<<<<<<< HEAD
+=======
+  local pr_pattern
+  pr_pattern="(#$pr|openclaw#$pr)"
+
+  # Validate only the changed PR entry shape. PR-number ordering is an insertion
+  # strategy, not a historical invariant for the whole section.
+>>>>>>> 972ebd90a2 (PR flow: insert changelog entries sorted by PR number)
   local added_lines
   added_lines=$(git diff --unified=0 "$diff_range" -- CHANGELOG.md | awk '
     /^\+\+\+/ { next }
@@ -334,6 +376,7 @@ BEGIN {
   line_no = 0
   file_line_count = 0
   issue_count = 0
+  pr_count = 0
 }
 FNR == NR {
   if ($0 ~ /^@@ /) {
@@ -416,35 +459,10 @@ END {
     if (section_line == 0) {
       printf "CHANGELOG.md entry must be inside a subsection (### ...): line %d: %s\n", entry_line, pr_added_text[entry_line]
       issue_count++
-      continue
-    }
-
-    section_name = changelog[section_line]
-    next_heading = file_line_count + 1
-    for (i = entry_line + 1; i <= file_line_count; i++) {
-      if (changelog[i] ~ /^### / || changelog[i] ~ /^## /) {
-        next_heading = i
-        break
-      }
-    }
-
-    for (i = entry_line + 1; i < next_heading; i++) {
-      line_text = changelog[i]
-      if (line_text ~ /^[[:space:]]*$/) {
-        continue
-      }
-      if (i in added) {
-        continue
-      }
-      printf "CHANGELOG.md PR-linked entry must be appended at the end of section %s: line %d: %s\n", section_name, entry_line, pr_added_text[entry_line]
-      printf "Found existing non-added line below it at line %d: %s\n", i, line_text
-      issue_count++
-      break
     }
   }
 
   if (issue_count > 0) {
-    print "Move this PR changelog entry to the end of its section (just before the next heading)."
     exit 1
   }
 }
@@ -453,7 +471,7 @@ END {
     exit 1
   fi
   rm -f "$diff_file"
-  echo "changelog placement validated: PR-linked entries are appended at section tail"
+  echo "changelog placement validated: PR-linked entry exists under the active Unreleased section in a subsection"
 
   if changelog_thanks_required_for_contributor "$contrib"; then
     local with_pr_and_thanks

@@ -37,12 +37,24 @@ function entriesAreEquivalent(existingLine: string, newBullet: string): boolean 
   return existingWithoutRef === newWithoutRef;
 }
 
+function extractPrNumber(line: string): number | undefined {
+  // 只取行里第一个 PR 引用作为排序键，避免 "(#123, #456)" 取到 456
+  const match = line.match(/(?:\(#(\d+)\)|openclaw#(\d+))/i);
+  const raw = match?.[1] ?? match?.[2];
+  if (!raw) {
+    return undefined;
+  }
+  const num = Number.parseInt(raw, 10);
+  return Number.isFinite(num) ? num : undefined;
+}
+
 function findSectionRange(
   lines: string[],
   section: UnreleasedSection,
 ): {
   start: number;
-  insertAt: number;
+  bodyStart: number;
+  bodyEnd: number;
 } {
   const unreleasedIndex = lines.findIndex((line) => line.trim() === "## Unreleased");
   if (unreleasedIndex === -1) {
@@ -65,20 +77,49 @@ function findSectionRange(
     throw new Error(`CHANGELOG.md is missing the '${sectionHeading}' section under Unreleased.`);
   }
 
-  let insertAt = lines.length;
+  // bodyEnd 指向下一个 heading（### 或 ##），bodyStart 紧跟 section heading
+  let bodyEnd = lines.length;
   for (let index = sectionIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
     if (line.startsWith("### ") || line.startsWith("## ")) {
-      insertAt = index;
+      bodyEnd = index;
       break;
     }
   }
-
-  while (insertAt > sectionIndex + 1 && lines[insertAt - 1]?.trim() === "") {
-    insertAt -= 1;
+  while (bodyEnd > sectionIndex + 1 && lines[bodyEnd - 1]?.trim() === "") {
+    bodyEnd -= 1;
   }
 
-  return { start: sectionIndex, insertAt };
+  return { start: sectionIndex, bodyStart: sectionIndex + 1, bodyEnd };
+}
+
+function resolveOrderedInsertIndex(
+  lines: string[],
+  bodyStart: number,
+  bodyEnd: number,
+  newPr: number | undefined,
+): number {
+  // 无 PR 号（手写条目等）fallback 到尾插，保持旧行为
+  if (newPr === undefined) {
+    return bodyEnd;
+  }
+
+  // 按 PR 号升序找第一个 PR 号大于 newPr 的已有条目，插到它前面
+  // 没有 PR 号的历史行（极少见）当成边界，原地跳过
+  for (let index = bodyStart; index < bodyEnd; index += 1) {
+    const line = lines[index];
+    if (!line.startsWith("- ")) {
+      continue;
+    }
+    const existingPr = extractPrNumber(line);
+    if (existingPr === undefined) {
+      continue;
+    }
+    if (existingPr > newPr) {
+      return index;
+    }
+  }
+  return bodyEnd;
 }
 
 export function appendUnreleasedChangelogEntry(
@@ -99,7 +140,17 @@ export function appendUnreleasedChangelogEntry(
     return content;
   }
 
-  const { insertAt } = findSectionRange(lines, params.section);
-  lines.splice(insertAt, 0, bullet, "");
+  const { bodyStart, bodyEnd } = findSectionRange(lines, params.section);
+  const newPr = extractPrNumber(bullet);
+  const insertAt = resolveOrderedInsertIndex(lines, bodyStart, bodyEnd, newPr);
+
+  // 空 section：插到 heading 之后并补一个空行分隔
+  if (bodyEnd === bodyStart) {
+    lines.splice(insertAt, 0, bullet, "");
+    return lines.join("\n");
+  }
+
+  // 非空 section：单独插一行，复用已有前后空行
+  lines.splice(insertAt, 0, bullet);
   return lines.join("\n");
 }
