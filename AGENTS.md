@@ -119,7 +119,8 @@ Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 
 - Docs change with behavior/API. Use docs list/read_when hints; docs links per `docs/AGENTS.md`.
 - Changelog user-facing only; pure test/internal usually no entry.
-- Changelog placement: active version `### Changes`/`### Fixes`; at most one contributor mention, prefer `Thanks @user`.
+- Changelog placement: active version target section (`### Changes`/`### Fixes`); automated insertion sorts new PR-linked entries by PR number while leaving historical unordered entries alone.
+- Changelog attribution: at most one contributor mention per line; prefer `Thanks @user`.
 
 ## Git
 
