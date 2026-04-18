@@ -237,6 +237,7 @@ normalize_merge_changelog_section() {
 resolve_merge_changelog_section() {
   local pr_json="$1"
 
+  # 1. 环境变量显式覆写（最高优先级）
   if [ -n "${OPENCLAW_PR_CHANGELOG_SECTION:-}" ]; then
     normalize_merge_changelog_section "$OPENCLAW_PR_CHANGELOG_SECTION"
     return 0
@@ -244,16 +245,36 @@ resolve_merge_changelog_section() {
 
   local label_names
   label_names=$(printf '%s\n' "$pr_json" | jq -r '.labels[]?.name // empty' | tr '[:upper:]' '[:lower:]')
+
+  # 2. 标签明确为 bug/fix 系列 → Fixes
   if printf '%s\n' "$label_names" | rg -q '(^|[-_[:space:]])(bug|fix|bugfix|hotfix)([-_[:space:]]|$)'; then
     printf '%s\n' "Fixes"
     return 0
   fi
 
+  # 3. 标签明确为 feature/enhancement → Changes
   if printf '%s\n' "$label_names" | rg -q '(^|[-_[:space:]])(feature|enhancement)([-_[:space:]]|$)'; then
     printf '%s\n' "Changes"
     return 0
   fi
 
+  # 4. 标签没有分类信号时 fallback 到 PR 标题的 Conventional Commits 前缀
+  #    仓库里大量 PR 只打 size: * 一类无关标签、靠标题 `fix:`/`feat:` 表达分类
+  local pr_title_lower
+  pr_title_lower=$(printf '%s\n' "$pr_json" | jq -r '.title // empty' | tr '[:upper:]' '[:lower:]')
+  if [ -n "$pr_title_lower" ]; then
+    # `fix`, `fix:`, `fix(scope):`, `fix!:`, `bugfix(...)`, `hotfix ...` 都视为 Fixes
+    if printf '%s\n' "$pr_title_lower" | rg -q '^(fix|bugfix|hotfix)([[:space:]]*[(:!])'; then
+      printf '%s\n' "Fixes"
+      return 0
+    fi
+    if printf '%s\n' "$pr_title_lower" | rg -q '^(feat|feature|enhance|enhancement)([[:space:]]*[(:!])'; then
+      printf '%s\n' "Changes"
+      return 0
+    fi
+  fi
+
+  # 5. 兜底默认
   printf '%s\n' "Changes"
 }
 
