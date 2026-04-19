@@ -1,5 +1,4 @@
 import Foundation
-import JavaScriptCore
 
 enum ModelCatalogLoader {
     static var defaultPath: String {
@@ -27,22 +26,7 @@ enum ModelCatalogLoader {
         }
         self.logger.debug("model catalog load start file=\(URL(fileURLWithPath: resolved.path).lastPathComponent)")
         let source = try String(contentsOfFile: resolved.path, encoding: .utf8)
-        let sanitized = self.sanitize(source: source)
-
-        let ctx = JSContext()
-        ctx?.exceptionHandler = { _, exception in
-            if let exception {
-                self.logger.warning("model catalog JS exception: \(exception)")
-            }
-        }
-        ctx?.evaluateScript(sanitized)
-        guard let rawModels = ctx?.objectForKeyedSubscript("MODELS")?.toDictionary() as? [String: Any] else {
-            self.logger.error("model catalog parse failed: MODELS missing")
-            throw NSError(
-                domain: "ModelCatalogLoader",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to parse models.generated.ts"])
-        }
+        let rawModels = try self.parseModels(source: source)
 
         var choices: [ModelChoice] = []
         for (provider, value) in rawModels {
@@ -138,15 +122,78 @@ enum ModelCatalogLoader {
         }
     }
 
-    private static func sanitize(source: String) -> String {
+    private static func parseModels(source: String) throws -> [String: Any] {
+        guard let objectLiteral = self.extractModelsObjectLiteral(from: source) else {
+            return [:]
+        }
+        // Keep the loader data-only: normalize the known object-literal subset and let JSON parsing
+        // reject anything expression-like instead of executing user-controlled JavaScript.
+        let normalized = self.normalizeObjectLiteralForJSON(objectLiteral)
+        guard let data = normalized.data(using: .utf8) else {
+            self.logger.error("model catalog parse failed: unsupported syntax")
+            throw self.invalidCatalogError()
+        }
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            self.logger.error("model catalog parse failed: unsupported syntax")
+            throw self.invalidCatalogError()
+        }
+        guard let root = object as? [String: Any] else {
+            self.logger.error("model catalog parse failed: MODELS root is not an object")
+            throw self.invalidCatalogError()
+        }
+        return root
+    }
+
+    private static func extractModelsObjectLiteral(from source: String) -> String? {
         guard let exportRange = source.range(of: "export const MODELS"),
               let firstBrace = source[exportRange.upperBound...].firstIndex(of: "{"),
-              let lastBrace = source.lastIndex(of: "}")
+              let lastBrace = self.findMatchingClosingBrace(in: source, openingBrace: firstBrace)
         else {
-            return "var MODELS = {}"
+            return nil
         }
-        var body = String(source[firstBrace...lastBrace])
-        body = body.replacingOccurrences(
+        return String(source[firstBrace...lastBrace])
+    }
+
+    private static func findMatchingClosingBrace(
+        in source: String,
+        openingBrace: String.Index
+    ) -> String.Index? {
+        var depth = 0
+        var activeQuote: Character?
+        var isEscaping = false
+        var index = openingBrace
+        while index < source.endIndex {
+            let ch = source[index]
+            if let quote = activeQuote {
+                if isEscaping {
+                    isEscaping = false
+                } else if ch == "\\" {
+                    isEscaping = true
+                } else if ch == quote {
+                    activeQuote = nil
+                }
+            } else {
+                if ch == "\"" || ch == "'" {
+                    activeQuote = ch
+                } else if ch == "{" {
+                    depth += 1
+                } else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        return index
+                    }
+                }
+            }
+            index = source.index(after: index)
+        }
+        return nil
+    }
+
+    private static func normalizeObjectLiteralForJSON(_ objectLiteral: String) -> String {
+        var body = objectLiteral.replacingOccurrences(
             of: #"(?m)\bsatisfies\s+[^,}\n]+"#,
             with: "",
             options: .regularExpression)
@@ -154,6 +201,25 @@ enum ModelCatalogLoader {
             of: #"(?m)\bas\s+[^;,\n]+"#,
             with: "",
             options: .regularExpression)
-        return "var MODELS = \(body);"
+        body = body.replacingOccurrences(
+            of: #"(?<=\d)_(?=\d)"#,
+            with: "",
+            options: .regularExpression)
+        body = body.replacingOccurrences(
+            of: #"([,{]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:"#,
+            with: "$1\"$2\":",
+            options: .regularExpression)
+        body = body.replacingOccurrences(
+            of: #",(\s*[}\]])"#,
+            with: "$1",
+            options: .regularExpression)
+        return body
+    }
+
+    private static func invalidCatalogError() -> NSError {
+        NSError(
+            domain: "ModelCatalogLoader",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Failed to parse models.generated.ts"])
     }
 }
