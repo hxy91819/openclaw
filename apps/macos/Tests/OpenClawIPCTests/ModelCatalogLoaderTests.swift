@@ -108,4 +108,28 @@ struct ModelCatalogLoaderTests {
         #expect(choices.first?.id == "amazon.nova-pro-v1:0")
         #expect(choices.first?.contextWindow == 1000000)
     }
+
+    @Test
+    func `load preserves quoted strings that contain type-assertion words and numeric underscores`() async throws {
+        let src = """
+        export const MODELS = {
+          openai: {
+            "qwen3:14b-q8_0": {
+              name: "Model serves as a routing layer",
+              description: "still satisfies the compatibility contract",
+              contextWindow: 128000,
+            } as any,
+          },
+        };
+        """
+        let tmp = FileManager().temporaryDirectory
+            .appendingPathComponent("models-\(UUID().uuidString).ts")
+        defer { try? FileManager().removeItem(at: tmp) }
+        try src.write(to: tmp, atomically: true, encoding: .utf8)
+
+        let choices = try await ModelCatalogLoader.load(from: tmp.path)
+        #expect(choices.count == 1)
+        #expect(choices.first?.id == "qwen3:14b-q8_0")
+        #expect(choices.first?.name == "Model serves as a routing layer")
+    }
 }
