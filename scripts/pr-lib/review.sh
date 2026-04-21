@@ -152,7 +152,7 @@ F) Tests
 
 G) Docs status
 
-H) Changelog
+H) Prepare-stage changelog handoff
 
 I) Follow ups (optional)
 
@@ -188,8 +188,7 @@ EOF_MD
     "gaps": [],
     "result": "pass"
   },
-  "docs": "not_applicable",
-  "changelog": "not_required"
+  "docs": "not_applicable"
 }
 EOF_JSON
   fi
@@ -425,17 +424,6 @@ review_validate_artifacts() {
       ;;
     *)
       echo "Invalid docs status in .local/review.json: $docs_status"
-      exit 1
-      ;;
-  esac
-
-  local changelog_status
-  changelog_status=$(jq -r '.changelog // ""' .local/review.json)
-  case "$changelog_status" in
-    "required"|"not_required")
-      ;;
-    *)
-      echo "Invalid changelog status in .local/review.json: $changelog_status (must be \"required\" or \"not_required\")"
       exit 1
       ;;
   esac

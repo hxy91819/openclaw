@@ -160,6 +160,18 @@ prepare_gates() {
   checkout_prep_branch "$pr"
   bootstrap_deps_if_needed
   require_artifact .local/pr-meta.env
+
+  # Emit a machine-readable (and human-readable) timeout suggestion up-front
+  # so callers know how long to wait before considering a gate stuck.
+  local suggested_timeout_ms
+  if [ "${OPENCLAW_GATES_FULL_TEST:-}" = "1" ]; then
+    suggested_timeout_ms=2700000   # 45 minutes
+  else
+    suggested_timeout_ms=900000   # 15 minutes
+  fi
+  echo "Gate timeout suggestion: ${suggested_timeout_ms} ms"
+  echo "suggested_timeout_ms=${suggested_timeout_ms}"
+
   # shellcheck disable=SC1091
   source .local/pr-meta.env
 
@@ -206,7 +218,7 @@ prepare_gates() {
     validate_changelog_merge_hygiene
     validate_changelog_entry_for_pr "$pr" "$contrib"
   elif [ "$changelog_required" = "true" ]; then
-    echo "Changelog will be required before merge, but prepare no longer blocks on adding it now."
+    echo "Changelog is required for this PR and will be added during prepare if still missing."
   else
     echo "Changelog not required for this changed-file set."
   fi

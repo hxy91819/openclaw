@@ -157,6 +157,40 @@ prepare_push() {
   # shellcheck disable=SC1091
   source .local/gates.env
 
+  local prep_pr_json=""
+  local pr_title=""
+  local contrib="${PR_AUTHOR:-}"
+  if [ "${CHANGELOG_REQUIRED:-false}" = "true" ] || [ -z "$contrib" ]; then
+    prep_pr_json=$(pr_meta_json "$pr")
+    pr_title=$(printf '%s\n' "$prep_pr_json" | jq -r '.title // ""')
+    if [ -z "$contrib" ]; then
+      contrib=$(printf '%s\n' "$prep_pr_json" | jq -r '.author.login // ""')
+    fi
+  fi
+
+  local changelog_status="not_required"
+  if [ "${CHANGELOG_REQUIRED:-false}" = "true" ]; then
+    local resolved_changelog_entry
+    resolved_changelog_entry=$(resolve_pr_changelog_entry "$pr" "$contrib" "$pr_title")
+    local changelog_section
+    changelog_section=$(resolve_pr_changelog_section "$prep_pr_json")
+    local changelog_result
+    if ! changelog_result=$(ensure_pr_changelog_entry "$pr" "$contrib" "$pr_title" "$changelog_section" "$resolved_changelog_entry"); then
+      echo "Changelog validation failed during prepare-push." >&2
+      exit 1
+    fi
+    echo "$changelog_result"
+
+    if printf '%s\n' "$changelog_result" | rg -q '^pr_changelog_changed=true$'; then
+      local commit_msg
+      commit_msg=$(printf '%s' "$pr_title" | sed 's/[[:space:]]\+$//')
+      scripts/committer --fast "$commit_msg" CHANGELOG.md
+      changelog_status="added_and_committed"
+    else
+      changelog_status="already_present"
+    fi
+  fi
+
   local prep_head_sha
   prep_head_sha=$(git rev-parse HEAD)
 
@@ -173,7 +207,6 @@ prepare_push() {
   local pr_head_sha_after="$PR_HEAD_SHA_AFTER_PUSH"
   local push_main_status="${PUSH_MAIN_STATUS:-up_to_date}"
 
-  local contrib="${PR_AUTHOR:-}"
   if [ -z "$contrib" ]; then
     contrib=$(gh pr view "$pr" --json author --jq .author.login)
   fi
@@ -182,6 +215,7 @@ prepare_push() {
   local coauthor_email="${contrib_id}+${contrib}@users.noreply.github.com"
 
   cat >> .local/prep.md <<EOF_PREP
+- Prepare-stage changelog status: $changelog_status.
 - Gates passed and push succeeded to branch $PR_HEAD.
 - Gate mode: ${GATES_MODE:-unknown}.
 - Gate statuses: build=${BUILD_GATE_STATUS:-unknown}, check=${CHECK_GATE_STATUS:-unknown}, test=${TEST_GATE_STATUS:-unknown}.

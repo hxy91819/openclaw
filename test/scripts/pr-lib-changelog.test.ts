@@ -121,4 +121,33 @@ describe("scripts/pr-lib/changelog.sh", () => {
     expect(output).toContain("changelog placement validated");
     expect(output).toContain("changelog validated: found PR #67082 + thanks @alice");
   });
+
+  it("maps bug-fix labels to the Fixes section", () => {
+    const output = evaluateShell(
+      process.cwd(),
+      `printf '%s\\n' "$(resolve_pr_changelog_section '{"labels":[{"name":"bug"}]}')"`,
+    );
+
+    expect(output).toBe("Fixes");
+  });
+
+  it("lets an explicit override choose the changelog section", () => {
+    const output = run(
+      process.cwd(),
+      "bash",
+      [
+        "-lc",
+        `
+source "$OPENCLAW_PR_CHANGELOG_SH"
+printf '%s\\n' "$(resolve_pr_changelog_section '{"labels":[{"name":"bug"}]}')"
+`,
+      ],
+      {
+        OPENCLAW_PR_CHANGELOG_SH: changelogScriptPath,
+        OPENCLAW_PR_CHANGELOG_SECTION: "changes",
+      },
+    );
+
+    expect(output).toBe("Changes");
+  });
 });

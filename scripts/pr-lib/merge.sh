@@ -215,69 +215,6 @@ run_merge_changelog_with_diagnostics() {
   printf '%s\n' "$changelog_result"
 }
 
-normalize_merge_changelog_section() {
-  local raw_section="${1:-Changes}"
-  local normalized
-  normalized=$(printf '%s' "$raw_section" | tr '[:upper:]' '[:lower:]')
-
-  case "$normalized" in
-    fixes|fix)
-      printf '%s\n' "Fixes"
-      ;;
-    changes|change|enhancement|feature)
-      printf '%s\n' "Changes"
-      ;;
-    *)
-      echo "Unsupported changelog section override: $raw_section"
-      exit 1
-      ;;
-  esac
-}
-
-resolve_merge_changelog_section() {
-  local pr_json="$1"
-
-  # 1. 环境变量显式覆写（最高优先级）
-  if [ -n "${OPENCLAW_PR_CHANGELOG_SECTION:-}" ]; then
-    normalize_merge_changelog_section "$OPENCLAW_PR_CHANGELOG_SECTION"
-    return 0
-  fi
-
-  local label_names
-  label_names=$(printf '%s\n' "$pr_json" | jq -r '.labels[]?.name // empty' | tr '[:upper:]' '[:lower:]')
-
-  # 2. 标签明确为 bug/fix 系列 → Fixes
-  if printf '%s\n' "$label_names" | rg -q '(^|[-_[:space:]])(bug|fix|bugfix|hotfix)([-_[:space:]]|$)'; then
-    printf '%s\n' "Fixes"
-    return 0
-  fi
-
-  # 3. 标签明确为 feature/enhancement → Changes
-  if printf '%s\n' "$label_names" | rg -q '(^|[-_[:space:]])(feature|enhancement)([-_[:space:]]|$)'; then
-    printf '%s\n' "Changes"
-    return 0
-  fi
-
-  # 4. 标签没有分类信号时 fallback 到 PR 标题的 Conventional Commits 前缀
-  #    仓库里大量 PR 只打 size: * 一类无关标签、靠标题 `fix:`/`feat:` 表达分类
-  local pr_title_lower
-  pr_title_lower=$(printf '%s\n' "$pr_json" | jq -r '.title // empty' | tr '[:upper:]' '[:lower:]')
-  if [ -n "$pr_title_lower" ]; then
-    # `fix`, `fix:`, `fix(scope):`, `fix!:`, `bugfix(...)`, `hotfix ...` 都视为 Fixes
-    if printf '%s\n' "$pr_title_lower" | rg -q '^(fix|bugfix|hotfix)([[:space:]]*[(:!])'; then
-      printf '%s\n' "Fixes"
-      return 0
-    fi
-    if printf '%s\n' "$pr_title_lower" | rg -q '^(feat|feature|enhance|enhancement)([[:space:]]*[(:!])'; then
-      printf '%s\n' "Changes"
-      return 0
-    fi
-  fi
-
-  # 5. 兜底默认
-  printf '%s\n' "Changes"
-}
-
 write_merge_prep_log_entry() {
   local changelog_status="$1"
   cat >> .local/prep.md <<EOF_PREP
@@ -291,7 +228,7 @@ merge_run() {
   enter_worktree "$pr" false
 
   local required
-  for required in .local/review.md .local/review.json .local/prep.md .local/prep.env; do
+  for required in .local/review.md .local/review.json .local/prep.md .local/prep.env .local/gates.env; do
     require_artifact "$required"
   done
 
@@ -339,53 +276,13 @@ merge_run() {
 
   local reviewer_email="${reviewer_email_candidates[0]}"
   local reviewer_coauthor_email="${reviewer_id}+${reviewer}@users.noreply.github.com"
-  local changelog_preview=""
-
   local changelog_status="not_required"
-  if [ -s .local/gates.env ]; then
-    # shellcheck disable=SC1091
-    source .local/gates.env
-    if [ "${CHANGELOG_REQUIRED:-false}" = "true" ]; then
-      changelog_status="required_pending"
-    fi
-  fi
-
-  if [ "$changelog_status" = "required_pending" ]; then
-    checkout_prep_branch "$pr"
-    local resolved_changelog_entry
-    resolved_changelog_entry=$(resolve_pr_changelog_entry "$pr" "$contrib" "$pr_title")
-    local changelog_section
-    changelog_section=$(resolve_merge_changelog_section "$pr_meta_json")
-    changelog_preview=$(printf '%s' "$resolved_changelog_entry" | tr '\n' ' ' | sed 's/[[:space:]]\+$//')
-    local changelog_result
-    if ! changelog_result=$(run_merge_changelog_with_diagnostics "$pr" "$contrib" "$pr_title" "$changelog_section" "$resolved_changelog_entry"); then
-      echo "Changelog validation failed during merge-run." >&2
-      exit 1
-    fi
-    echo "$changelog_result"
-
-    if printf '%s\n' "$changelog_result" | rg -q '^pr_changelog_changed=true$'; then
-      local commit_msg
-      commit_msg=$(printf '%s' "$pr_title" | sed 's/[[:space:]]\+$//')
-      scripts/committer --fast "$commit_msg" CHANGELOG.md
-
-      local prep_head_sha_before_push
-      prep_head_sha_before_push=$(git rev-parse HEAD)
-      local lease_sha
-      lease_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
-      local push_result_env=".local/merge-changelog-push-result.env"
-      push_prep_head_to_pr_branch "$pr" "$PR_HEAD" "$prep_head_sha_before_push" "$lease_sha" false false "$push_result_env"
-      # shellcheck disable=SC1090
-      source "$push_result_env"
-      PREP_HEAD_SHA="$PUSH_PREP_HEAD_SHA"
-      refresh_merge_prep_metadata "$pr" "$PREP_HEAD_SHA" "$PUSHED_FROM_SHA" "$contrib"
-      merge_verify "$pr"
-      # shellcheck disable=SC1091
-      source .local/prep.env
-      changelog_status="added_and_pushed"
-    else
-      changelog_status="already_present"
-    fi
+  # Prepare owns the authoritative changelog-required decision.
+  # shellcheck disable=SC1091
+  source .local/gates.env
+  if [ "${CHANGELOG_REQUIRED:-false}" = "true" ]; then
+    validate_changelog_entry_for_pr "$pr" "$contrib"
+    changelog_status="prepared"
   fi
 
   write_merge_prep_log_entry "$changelog_status"

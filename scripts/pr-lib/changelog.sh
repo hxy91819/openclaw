@@ -89,6 +89,62 @@ resolve_pr_changelog_entry() {
   printf '%s\n' "$default_entry"
 }
 
+normalize_pr_changelog_section() {
+  local raw_section="${1:-Changes}"
+  local normalized
+  normalized=$(printf '%s' "$raw_section" | tr '[:upper:]' '[:lower:]')
+
+  case "$normalized" in
+    fixes|fix)
+      printf '%s\n' "Fixes"
+      ;;
+    changes|change|enhancement|feature)
+      printf '%s\n' "Changes"
+      ;;
+    *)
+      echo "Unsupported changelog section override: $raw_section"
+      exit 1
+      ;;
+  esac
+}
+
+resolve_pr_changelog_section() {
+  local pr_json="$1"
+
+  if [ -n "${OPENCLAW_PR_CHANGELOG_SECTION:-}" ]; then
+    normalize_pr_changelog_section "$OPENCLAW_PR_CHANGELOG_SECTION"
+    return 0
+  fi
+
+  local label_names
+  label_names=$(printf '%s\n' "$pr_json" | jq -r '.labels[]?.name // empty' | tr '[:upper:]' '[:lower:]')
+
+  if printf '%s\n' "$label_names" | rg -q '(^|[-_[:space:]])(bug|fix|bugfix|hotfix)([-_[:space:]]|$)'; then
+    printf '%s\n' "Fixes"
+    return 0
+  fi
+
+  if printf '%s\n' "$label_names" | rg -q '(^|[-_[:space:]])(feature|enhancement)([-_[:space:]]|$)'; then
+    printf '%s\n' "Changes"
+    return 0
+  fi
+
+  local pr_title_lower
+  pr_title_lower=$(printf '%s\n' "$pr_json" | jq -r '.title // empty' | tr '[:upper:]' '[:lower:]')
+  if [ -n "$pr_title_lower" ]; then
+    if printf '%s\n' "$pr_title_lower" | rg -q '^(fix|bugfix|hotfix)([[:space:]]*[(:!])'; then
+      printf '%s\n' "Fixes"
+      return 0
+    fi
+    if printf '%s\n' "$pr_title_lower" | rg -q '^(feat|feature|enhance|enhancement)([[:space:]]*[(:!])'; then
+      printf '%s\n' "Changes"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "Changes"
+}
+
 normalize_pr_changelog_entries() {
   local pr="$1"
   local changelog_path="CHANGELOG.md"

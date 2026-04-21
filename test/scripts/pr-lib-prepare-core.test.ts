@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createScriptTestHarness } from "./test-helpers.js";
@@ -110,6 +110,94 @@ prepare_init 123 false
         'if prepare_sync_rebase_allowed 1 true; then printf "allowed"; else printf "blocked"; fi',
       ),
     ).toBe("allowed");
+  });
+
+  it("adds and commits a required changelog entry during prepare-push", () => {
+    const repo = createTempDir("openclaw-pr-lib-prepare-push-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    mkdirSync(path.join(repo, "scripts"), { recursive: true });
+    writeFileSync(
+      path.join(repo, ".local", "pr-meta.env"),
+      "PR_HEAD=feature\nPR_AUTHOR=alice\nPR_URL=https://example.test/pr/123\nPR_NUMBER=123\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(repo, ".local", "prep-context.env"),
+      "PREP_BRANCH=pr-123-prep\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "CHANGELOG_REQUIRED=true\nDOCS_ONLY=false\nGATES_MODE=changed\nBUILD_GATE_STATUS=passed\nCHECK_GATE_STATUS=passed\nTEST_GATE_STATUS=passed\n",
+      "utf8",
+    );
+    writeFileSync(path.join(repo, ".local", "prep.md"), "# prep\n", "utf8");
+    writeFileSync(
+      path.join(repo, "scripts", "committer"),
+      "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > .local/committer.log\n",
+      "utf8",
+    );
+    chmodSync(path.join(repo, "scripts", "committer"), 0o755);
+
+    runPrepareCoreShell(
+      repo,
+      `
+enter_worktree() { :; }
+require_artifact() { [ -s "$1" ] || { echo "missing $1" >&2; exit 1; }; }
+checkout_prep_branch() { :; }
+verify_pr_head_branch_matches_expected() { :; }
+resolve_pr_changelog_entry() { printf '%s\\n' 'Config: accept truncateAfterCompaction (#123). Thanks @alice'; }
+resolve_pr_changelog_section() { printf 'Fixes\\n'; }
+ensure_pr_changelog_entry() { printf 'Updated CHANGELOG.md (Fixes).\\npr_changelog_changed=true\\n'; }
+pr_meta_json() { printf '%s\\n' '{"title":"Config: accept truncateAfterCompaction","author":{"login":"alice"},"labels":[{"name":"bug"}]}'; }
+push_prep_head_to_pr_branch() {
+  cat > "$7" <<'EOF_PUSH'
+PUSH_PREP_HEAD_SHA=prep-after
+PUSHED_FROM_SHA=remote-before
+PR_HEAD_SHA_AFTER_PUSH=prep-after
+PUSH_MAIN_STATUS=up_to_date
+EOF_PUSH
+}
+gh() {
+  if [ "$1" = "api" ] && [ "$2" = "users/alice" ] && [ "$3" = "--jq" ] && [ "$4" = ".id" ]; then
+    printf '42\\n'
+    return 0
+  fi
+  if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "123" ] && [ "$4" = "--json" ] && [ "$5" = "headRefOid" ] && [ "$6" = "--jq" ] && [ "$7" = ".headRefOid" ]; then
+    printf 'prep-after\\n'
+    return 0
+  fi
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+}
+git() {
+  case "$1" in
+    rev-parse)
+      if [ "$2" = "HEAD" ]; then
+        printf 'prep-after\\n'
+        return 0
+      fi
+      ;;
+    branch)
+      if [ "$2" = "--show-current" ]; then
+        printf 'pr-123-prep\\n'
+        return 0
+      fi
+      ;;
+  esac
+  return 0
+}
+prepare_push 123
+`,
+    );
+
+    const commitLog = readFileSync(path.join(repo, ".local", "committer.log"), "utf8");
+    expect(commitLog).toContain("--fast");
+    expect(commitLog).toContain("Config: accept truncateAfterCompaction");
+    expect(commitLog).toContain("CHANGELOG.md");
+
+    const prepLog = readFileSync(path.join(repo, ".local", "prep.md"), "utf8");
+    expect(prepLog).toContain("Prepare-stage changelog status: added_and_committed.");
   });
 });
 
