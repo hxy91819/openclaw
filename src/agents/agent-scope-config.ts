@@ -4,6 +4,7 @@ import type {
   AgentContextLimitsConfig,
   AgentDefaultsConfig,
 } from "../config/types.agent-defaults.js";
+import type { AgentRuntimeConfig } from "../config/types.agents.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { DEFAULT_AGENT_ID, normalizeAgentId } from "../routing/session-key.js";
 import { readStringValue } from "../shared/string-coerce.js";
@@ -34,6 +35,10 @@ export type ResolvedAgentConfig = {
   embeddedPi?: AgentEntry["embeddedPi"];
   sandbox?: AgentEntry["sandbox"];
   tools?: AgentEntry["tools"];
+  runtime?: AgentRuntimeConfig;
+  skipBootstrap?: AgentDefaultsConfig["skipBootstrap"];
+  models?: AgentDefaultsConfig["models"];
+  contextTokens?: AgentDefaultsConfig["contextTokens"];
 };
 
 let defaultAgentWarned = false;
@@ -137,6 +142,10 @@ export function resolveAgentConfig(
       typeof entry.embeddedPi === "object" && entry.embeddedPi ? entry.embeddedPi : undefined,
     sandbox: entry.sandbox,
     tools: entry.tools,
+    runtime: entry.runtime,
+    skipBootstrap: agentDefaults?.skipBootstrap,
+    models: agentDefaults?.models,
+    contextTokens: agentDefaults?.contextTokens,
   };
 }
 
