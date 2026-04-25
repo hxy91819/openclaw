@@ -295,7 +295,7 @@ export function buildFeishuAgentBody(params: {
 
   if (ctx.mentionTargets && ctx.mentionTargets.length > 0) {
     const targetNames = ctx.mentionTargets.map((t) => t.name).join(", ");
-    messageBody += `\n\n[System: Your reply will automatically @mention: ${targetNames}. Do not write @xxx yourself.]`;
+    messageBody += `\n\n[System: These users were mentioned in the incoming message: ${targetNames}. They will only receive your reply if you @mention them.]`;
   }
 
   // Keep message_id on its own line so shared message-id hint stripping can parse it reliably.
@@ -1280,7 +1280,6 @@ export async function handleFeishuMessage(params: {
             replyInThread,
             rootId: ctx.rootId,
             threadReply,
-            mentionTargets: ctx.mentionTargets,
             accountId: account.accountId,
             identity,
             messageCreateTimeMs,
@@ -1389,7 +1388,6 @@ export async function handleFeishuMessage(params: {
         replyInThread,
         rootId: ctx.rootId,
         threadReply,
-        mentionTargets: ctx.mentionTargets,
         accountId: account.accountId,
         identity,
         messageCreateTimeMs,
