@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createScriptTestHarness } from "./test-helpers.js";
@@ -120,6 +120,87 @@ describe("scripts/pr-lib/changelog.sh", () => {
 
     expect(output).toContain("changelog placement validated");
     expect(output).toContain("changelog validated: found PR #67082 + thanks @alice");
+  });
+
+  it("validates PR-linked changelog entries in a dated Unreleased block", () => {
+    const repo = createTempDir("openclaw-pr-lib-changelog-entry-dated-");
+    writeFileSync(
+      path.join(repo, "CHANGELOG.md"),
+      [
+        "# Changelog",
+        "",
+        "## 2026.4.24 (Unreleased)",
+        "",
+        "### Fixes",
+        "",
+        "Fix bug in merge flow (#67082). Thanks @alice",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const output = evaluateShell(repo, "validate_changelog_entry_for_pr 67082 alice");
+
+    expect(output).toContain("changelog placement validated");
+    expect(output).toContain("changelog validated: found PR #67082 + thanks @alice");
+  });
+
+  it("detects existing PR entries in a dated Unreleased block", () => {
+    const repo = createTempDir("openclaw-pr-lib-changelog-exists-dated-");
+    writeFileSync(
+      path.join(repo, "CHANGELOG.md"),
+      [
+        "# Changelog",
+        "",
+        "## 2026.4.24 (Unreleased)",
+        "",
+        "### Fixes",
+        "",
+        "Fix bug in merge flow (#67082). Thanks @alice",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const output = evaluateShell(
+      repo,
+      "if changelog_entry_for_pr_exists 67082; then printf exists; else printf missing; fi",
+    );
+
+    expect(output).toBe("exists");
+  });
+
+  it("normalizes PR entries into a dated Unreleased block without creating a duplicate heading", () => {
+    const repo = createTempDir("openclaw-pr-lib-changelog-normalize-dated-");
+    writeFileSync(
+      path.join(repo, "CHANGELOG.md"),
+      [
+        "# Changelog",
+        "",
+        "## 2026.4.24 (Unreleased)",
+        "",
+        "### Changes",
+        "",
+        "### Fixes",
+        "",
+        "## 2026.4.23",
+        "",
+        "### Fixes",
+        "",
+        "- Fix release checks (#66884). Thanks @alexlomt",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    evaluateShell(repo, "normalize_pr_changelog_entries 66884");
+
+    const changelog = readFileSync(path.join(repo, "CHANGELOG.md"), "utf8");
+    expect(changelog).not.toContain("## Unreleased\n\n### Changes");
+    expect(changelog).toContain("## 2026.4.24 (Unreleased)");
+    expect(changelog.indexOf("- Fix release checks (#66884). Thanks @alexlomt")).toBeLessThan(
+      changelog.indexOf("## 2026.4.23"),
+    );
   });
 
   it("maps bug-fix labels to the Fixes section", () => {

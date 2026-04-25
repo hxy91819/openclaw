@@ -66,6 +66,32 @@ describe("appendUnreleasedChangelogEntry", () => {
 `);
   });
 
+  it("uses a dated Unreleased release block as the active section", () => {
+    const content = `# Changelog
+
+## 2026.4.24 (Unreleased)
+
+### Changes
+
+- Earlier change (#100). Thanks @alice
+
+### Fixes
+
+## 2026.4.23
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Fixes",
+      entry: "Fix release check inputs (#66884). Thanks @alexlomt",
+    });
+
+    expect(next).toContain("## 2026.4.24 (Unreleased)");
+    expect(next).not.toContain("## Unreleased\n\n### Changes");
+    expect(next.indexOf("- Fix release check inputs (#66884). Thanks @alexlomt")).toBeLessThan(
+      next.indexOf("## 2026.4.23"),
+    );
+  });
+
   it("inserts a PR-linked entry with the smallest number at the top of the section", () => {
     const content = `# Changelog
 
@@ -249,6 +275,28 @@ describe("appendUnreleasedChangelogEntry", () => {
     expect(next).toBe(content);
   });
 
+  it("blocks a merge-stage re-insert when the active section is date-stamped", () => {
+    const content = `# Changelog
+
+## 2026.4.24 (Unreleased)
+
+### Changes
+
+### Fixes
+
+- CI/release-checks: harden workflow inputs. (#66884) Thanks @alexlomt.
+
+## 2026.4.23
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Fixes",
+      entry: "fix(ci): harden release checks workflow inputs (#66884). Thanks @alexlomt",
+    });
+
+    expect(next).toBe(content);
+  });
+
   it("still inserts a new Unreleased entry when the same PR number exists only in a released block", () => {
     // 老版本块里碰巧有同号，不应阻止 Unreleased 插入新条目
     const content = `# Changelog
@@ -303,6 +351,6 @@ describe("appendUnreleasedChangelogEntry", () => {
         section: "Fixes",
         entry: "New fix entry.",
       }),
-    ).toThrow("## Unreleased");
+    ).toThrow("Unreleased heading");
   });
 });

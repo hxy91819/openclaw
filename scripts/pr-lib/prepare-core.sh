@@ -170,24 +170,29 @@ prepare_push() {
 
   local changelog_status="not_required"
   if [ "${CHANGELOG_REQUIRED:-false}" = "true" ]; then
-    local resolved_changelog_entry
-    resolved_changelog_entry=$(resolve_pr_changelog_entry "$pr" "$contrib" "$pr_title")
-    local changelog_section
-    changelog_section=$(resolve_pr_changelog_section "$prep_pr_json")
-    local changelog_result
-    if ! changelog_result=$(ensure_pr_changelog_entry "$pr" "$contrib" "$pr_title" "$changelog_section" "$resolved_changelog_entry"); then
-      echo "Changelog validation failed during prepare-push." >&2
-      exit 1
-    fi
-    echo "$changelog_result"
-
-    if printf '%s\n' "$changelog_result" | rg -q '^pr_changelog_changed=true$'; then
-      local commit_msg
-      commit_msg=$(printf '%s' "$pr_title" | sed 's/[[:space:]]\+$//')
-      scripts/committer --fast "$commit_msg" CHANGELOG.md
-      changelog_status="added_and_committed"
-    else
+    if changelog_entry_for_pr_exists "$pr"; then
+      validate_changelog_entry_for_pr "$pr" "$contrib"
       changelog_status="already_present"
+    else
+      local resolved_changelog_entry
+      resolved_changelog_entry=$(resolve_pr_changelog_entry "$pr" "$contrib" "$pr_title")
+      local changelog_section
+      changelog_section=$(resolve_pr_changelog_section "$prep_pr_json")
+      local changelog_result
+      if ! changelog_result=$(ensure_pr_changelog_entry "$pr" "$contrib" "$pr_title" "$changelog_section" "$resolved_changelog_entry"); then
+        echo "Changelog validation failed during prepare-push." >&2
+        exit 1
+      fi
+      echo "$changelog_result"
+
+      if printf '%s\n' "$changelog_result" | rg -q '^pr_changelog_changed=true$'; then
+        local commit_msg
+        commit_msg=$(printf '%s' "$pr_title" | sed 's/[[:space:]]\+$//')
+        scripts/committer --fast "$commit_msg" CHANGELOG.md
+        changelog_status="added_and_committed"
+      else
+        changelog_status="already_present"
+      fi
     fi
   fi
 

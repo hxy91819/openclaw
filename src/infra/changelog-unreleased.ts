@@ -48,6 +48,14 @@ function extractPrNumber(line: string): number | undefined {
   return Number.isFinite(num) ? num : undefined;
 }
 
+function isUnreleasedHeading(line: string): boolean {
+  return /^##\s+(?:Unreleased|.+\s+\(Unreleased\))\s*$/.test(line.trim());
+}
+
+function findUnreleasedHeadingIndex(lines: string[]): number {
+  return lines.findIndex((line) => isUnreleasedHeading(line));
+}
+
 function findSectionRange(
   lines: string[],
   section: UnreleasedSection,
@@ -56,9 +64,9 @@ function findSectionRange(
   bodyStart: number;
   bodyEnd: number;
 } {
-  const unreleasedIndex = lines.findIndex((line) => line.trim() === "## Unreleased");
+  const unreleasedIndex = findUnreleasedHeadingIndex(lines);
   if (unreleasedIndex === -1) {
-    throw new Error("CHANGELOG.md is missing the '## Unreleased' heading.");
+    throw new Error("CHANGELOG.md is missing an Unreleased heading.");
   }
 
   const sectionHeading = `### ${section}`;
@@ -123,7 +131,7 @@ function resolveOrderedInsertIndex(
 }
 
 function findUnreleasedRange(lines: string[]): { start: number; end: number } | undefined {
-  const unreleasedIndex = lines.findIndex((line) => line.trim() === "## Unreleased");
+  const unreleasedIndex = findUnreleasedHeadingIndex(lines);
   if (unreleasedIndex === -1) {
     return undefined;
   }
