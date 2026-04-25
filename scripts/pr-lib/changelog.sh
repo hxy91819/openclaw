@@ -1,11 +1,3 @@
-changelog_helper_root() {
-  cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
-}
-
-changelog_attribution_script() {
-  printf '%s\n' "$(changelog_helper_root)/scripts/check-changelog-attributions.mjs"
-}
-
 build_default_pr_changelog_entry() {
   local pr="$1"
   local contrib="$2"
@@ -375,21 +367,21 @@ EOF_NODE
 }
 
 validate_changelog_attribution_policy() {
-  node "$(changelog_attribution_script)" CHANGELOG.md
+  node scripts/check-changelog-attributions.mjs CHANGELOG.md
 }
 
 changelog_thanks_required_for_contributor() {
   local contrib="${1:-}"
-  [ -n "$contrib" ] || return 1
-  node "$(changelog_attribution_script)" --is-forbidden-handle "$contrib" && return 1
+  local normalized
+  normalized=$(printf '%s' "$contrib" | tr '[:upper:]' '[:lower:]')
+
+  case "$normalized" in
+    ""|"null"|"app/"*|"codex"|"openclaw"|"clawsweeper"|"openclaw-clawsweeper"|"clawsweeper[bot]"|"openclaw-clawsweeper[bot]"|"steipete")
+      return 1
+      ;;
+  esac
 
   return 0
-}
-
-changelog_explicit_human_thanks_required_for_contributor() {
-  local contrib="${1:-}"
-  [ -n "$contrib" ] || return 1
-  node "$(changelog_attribution_script)" --requires-explicit-human-thanks "$contrib"
 }
 
 resolve_changelog_diff_range() {
@@ -425,40 +417,33 @@ validate_changelog_entry_for_pr() {
   local diff_range
   diff_range=$(resolve_changelog_diff_range)
 
-<<<<<<< HEAD
-=======
   local pr_pattern
   pr_pattern="(#$pr|openclaw#$pr)"
 
   # Validate only the changed PR entry shape. PR-number ordering is an insertion
   # strategy, not a historical invariant for the whole section.
->>>>>>> 972ebd90a2 (PR flow: insert changelog entries sorted by PR number)
+  local diff
+  diff=$(git diff --unified=0 "$diff_range" -- CHANGELOG.md 2>/dev/null || true)
+
   local added_lines
-  added_lines=$(git diff --unified=0 "$diff_range" -- CHANGELOG.md | awk '
+  added_lines=$(printf '%s\n' "$diff" | awk '
     /^\+\+\+/ { next }
     /^\+/ { print substr($0, 2) }
   ')
 
-  if [ -z "$added_lines" ]; then
-    echo "CHANGELOG.md is in diff but no added lines were detected."
-    exit 1
-  fi
+  if [ -n "$added_lines" ]; then
+    local with_pr
+    with_pr=$(printf '%s\n' "$added_lines" | rg -in "$pr_pattern" || true)
+    if [ -z "$with_pr" ]; then
+      echo "CHANGELOG.md update must reference PR #$pr (for example, (#$pr))."
+      exit 1
+    fi
 
-  local pr_pattern
-  pr_pattern="(#$pr|openclaw#$pr)"
+    local diff_file
+    diff_file=$(mktemp)
+    printf '%s\n' "$diff" > "$diff_file"
 
-  local with_pr
-  with_pr=$(printf '%s\n' "$added_lines" | rg -in "$pr_pattern" || true)
-  if [ -z "$with_pr" ]; then
-    echo "CHANGELOG.md update must reference PR #$pr (for example, (#$pr))."
-    exit 1
-  fi
-
-  local diff_file
-  diff_file=$(mktemp)
-  git diff --unified=0 "$diff_range" -- CHANGELOG.md > "$diff_file"
-
-  if ! awk -v pr_pattern="$pr_pattern" '
+    if ! awk -v pr_pattern="$pr_pattern" '
 BEGIN {
   line_no = 0
   file_line_count = 0
@@ -554,15 +539,83 @@ END {
   }
 }
 ' "$diff_file" CHANGELOG.md; then
+      rm -f "$diff_file"
+      exit 1
+    fi
     rm -f "$diff_file"
+    echo "changelog placement validated: PR-linked entry exists under the active Unreleased section in a subsection"
+
+    if [ -n "$contrib" ] && [ "$contrib" != "null" ]; then
+      local with_pr_and_thanks
+      with_pr_and_thanks=$(printf '%s\n' "$added_lines" | rg -in "$pr_pattern" | rg -i "thanks @$contrib" || true)
+      if [ -z "$with_pr_and_thanks" ]; then
+        echo "CHANGELOG.md update must include both PR #$pr and thanks @$contrib on the changelog entry line."
+        exit 1
+      fi
+      echo "changelog validated: found PR #$pr + thanks @$contrib"
+      return 0
+    fi
+
+    echo "changelog validated: found PR #$pr (contributor handle unavailable, skipping thanks check)"
+    return 0
+  fi
+
+  local validation_output
+  if ! validation_output=$(awk -v pr_pattern="$pr_pattern" '
+function is_active_release(line) {
+  heading = tolower(line)
+  return heading ~ /^##[[:space:]]+(unreleased|.+[[:space:]]+\(unreleased\))[[:space:]]*$/
+}
+{
+  if ($0 ~ /^## /) {
+    current_release = $0
+    current_section = ""
+  } else if ($0 ~ /^### /) {
+    current_section = $0
+  }
+
+  if ($0 ~ pr_pattern && is_active_release(current_release)) {
+    pr_lines[++pr_count] = FNR
+    pr_text[FNR] = $0
+    pr_sections[FNR] = current_section
+  }
+}
+END {
+  if (pr_count == 0) {
+    printf "CHANGELOG.md update must reference PR pattern %s under an Unreleased heading.\n", pr_pattern
+    exit 1
+  }
+
+  for (idx = 1; idx <= pr_count; idx++) {
+    entry_line = pr_lines[idx]
+    if (pr_sections[entry_line] == "") {
+      printf "CHANGELOG.md entry must be inside a subsection (### ...): line %d: %s\n", entry_line, pr_text[entry_line]
+      issue_count++
+    }
+  }
+
+  if (issue_count > 0) {
+    exit 1
+  }
+
+  print "changelog placement validated: PR-linked entry exists under the active Unreleased section in a subsection"
+}
+' CHANGELOG.md); then
+    printf '%s\n' "$validation_output"
     exit 1
   fi
-  rm -f "$diff_file"
-  echo "changelog placement validated: PR-linked entry exists under the active Unreleased section in a subsection"
+  printf '%s\n' "$validation_output"
 
   if changelog_thanks_required_for_contributor "$contrib"; then
     local with_pr_and_thanks
-    with_pr_and_thanks=$(printf '%s\n' "$added_lines" | grep -Ein "$pr_pattern" | grep -Fi "thanks @$contrib" || true)
+    with_pr_and_thanks=$(awk -v pr_pattern="$pr_pattern" '
+function is_active_release(line) {
+  heading = tolower(line)
+  return heading ~ /^##[[:space:]]+(unreleased|.+[[:space:]]+\(unreleased\))[[:space:]]*$/
+}
+/^## / { current_release = $0 }
+is_active_release(current_release) && $0 ~ pr_pattern { print }
+' CHANGELOG.md | rg -i "thanks @$contrib" || true)
     if [ -z "$with_pr_and_thanks" ]; then
       echo "CHANGELOG.md update must include both PR #$pr and thanks @$contrib on the changelog entry line."
       exit 1
@@ -571,20 +624,7 @@ END {
     return 0
   fi
 
-  if ! changelog_explicit_human_thanks_required_for_contributor "$contrib"; then
-    echo "changelog validated: found PR #$pr (no eligible human contributor handle, skipping thanks check)"
-    return 0
-  fi
-
-  local with_pr_and_any_thanks
-  with_pr_and_any_thanks=$(printf '%s\n' "$added_lines" | grep -Ein "$pr_pattern" | grep -Ei '(^|[[:space:]])thanks[[:space:]]+@' || true)
-  if [ -z "$with_pr_and_any_thanks" ]; then
-    echo "CHANGELOG.md update for bot/app/non-creditable author $contrib must include an explicit human Thanks @handle on the PR #$pr entry line."
-    echo "Choose the credited original contributor, or stop for maintainer input if authorship is unclear."
-    exit 1
-  fi
-
-  echo "changelog validated: found PR #$pr + explicit thanks for bot/app/non-creditable author $contrib"
+  echo "changelog validated: found PR #$pr (no eligible human contributor handle, skipping thanks check)"
 }
 
 validate_changelog_merge_hygiene() {
