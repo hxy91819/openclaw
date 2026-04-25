@@ -145,6 +145,36 @@ resolve_pr_changelog_section() {
   printf '%s\n' "Changes"
 }
 
+changelog_entry_for_pr_exists() {
+  local pr="$1"
+
+  [ -f CHANGELOG.md ] || return 1
+
+  local pr_pattern
+  pr_pattern="(#$pr|openclaw#$pr)"
+
+  awk -v pr_pattern="$pr_pattern" '
+function is_active_release(line) {
+  return line ~ /^##[[:space:]]+(Unreleased|.+[[:space:]]+\(Unreleased\))[[:space:]]*$/
+}
+{
+  if ($0 ~ /^## /) {
+    current_release = $0
+    current_section = ""
+  } else if ($0 ~ /^### /) {
+    current_section = $0
+  }
+
+  if ($0 ~ pr_pattern && is_active_release(current_release) && current_section != "") {
+    found = 1
+  }
+}
+END {
+  exit found ? 0 : 1
+}
+' CHANGELOG.md
+}
+
 normalize_pr_changelog_entries() {
   local pr="$1"
   local changelog_path="CHANGELOG.md"

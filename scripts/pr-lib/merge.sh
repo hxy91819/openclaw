@@ -203,18 +203,6 @@ refresh_merge_prep_metadata() {
     > .local/prep.env
 }
 
-run_merge_changelog_with_diagnostics() {
-  local changelog_result=""
-  if ! changelog_result=$(ensure_pr_changelog_entry "$@"); then
-    if [ -n "$changelog_result" ]; then
-      printf '%s\n' "$changelog_result" >&2
-    fi
-    return 1
-  fi
-
-  printf '%s\n' "$changelog_result"
-}
-
 write_merge_prep_log_entry() {
   local changelog_status="$1"
   cat >> .local/prep.md <<EOF_PREP

@@ -51,33 +51,13 @@ merge_run 123
     expect(result.stdout).toContain("Missing required artifact: .local/gates.env");
   });
 
-  it("prints captured changelog diagnostics to stderr on failure", () => {
+  it("does not expose a merge-stage changelog writer", () => {
     const result = runMergeShell(`
-ensure_pr_changelog_entry() {
-  printf 'first diagnostic\\nsecond diagnostic\\n'
-  return 1
-}
-
-run_merge_changelog_with_diagnostics 67082 contributor "PR title" Changes "Entry text"
+type run_merge_changelog_with_diagnostics >/dev/null 2>&1
 `);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("first diagnostic");
-    expect(result.stderr).toContain("second diagnostic");
-  });
-
-  it("returns changelog output on success", () => {
-    const result = runMergeShell(`
-ensure_pr_changelog_entry() {
-  printf 'pr_changelog_changed=true\\n'
-}
-
-run_merge_changelog_with_diagnostics 67082 contributor "PR title" Changes "Entry text"
-`);
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("pr_changelog_changed=true");
     expect(result.stderr).toBe("");
   });
 });
