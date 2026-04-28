@@ -8,6 +8,10 @@ import {
   createSessionsListResult,
   DEFAULT_CHAT_MODEL_CATALOG,
 } from "../chat-model.test-helpers.ts";
+import {
+  getChatAttachmentDataUrl,
+  resetChatAttachmentPayloadStoreForTest,
+} from "../chat/attachment-payload-store.ts";
 import { renderChatQueue } from "../chat/chat-queue.ts";
 import { buildRawSidebarContent } from "../chat/chat-sidebar-raw.ts";
 import { renderWelcomeState } from "../chat/chat-welcome.ts";
@@ -180,6 +184,8 @@ function createChatHeaderState(
     model?: string | null;
     modelProvider?: string | null;
     models?: ModelCatalogEntry[];
+    defaultsThinkingDefault?: string;
+    thinkingDefault?: string;
     omitSessionFromList?: boolean;
   } = {},
 ): { state: AppViewState; request: ReturnType<typeof vi.fn> } {
@@ -218,6 +224,8 @@ function createChatHeaderState(
       return createSessionsListResult({
         model: currentModel,
         modelProvider: currentModelProvider,
+        defaultsThinkingDefault: overrides.defaultsThinkingDefault,
+        thinkingDefault: overrides.thinkingDefault,
         omitSessionFromList,
       });
     }
@@ -240,6 +248,8 @@ function createChatHeaderState(
     sessionsResult: createSessionsListResult({
       model: currentModel,
       modelProvider: currentModelProvider,
+      defaultsThinkingDefault: overrides.defaultsThinkingDefault,
+      thinkingDefault: overrides.thinkingDefault,
       omitSessionFromList,
     }),
     chatModelOverrides: {},
@@ -382,6 +392,7 @@ function renderChatView(overrides: Partial<Parameters<typeof renderChat>[0]> = {
 afterEach(() => {
   loadSessionsMock.mockClear();
   refreshVisibleToolsEffectiveForCurrentSessionMock.mockClear();
+  resetChatAttachmentPayloadStoreForTest();
   vi.unstubAllGlobals();
 });
 
@@ -432,6 +443,15 @@ describe("chat loading skeleton", () => {
   });
 });
 
+describe("chat voice controls", () => {
+  it("keeps Talk visible without the stale browser dictation button", () => {
+    const container = renderChatView();
+
+    expect(container.querySelector('[aria-label="Start Talk"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Voice input"]')).toBeNull();
+  });
+});
+
 describe("chat attachment picker", () => {
   it("accepts and previews non-video file attachments", async () => {
     const onAttachmentsChange = vi.fn();
@@ -449,14 +469,15 @@ describe("chat attachment picker", () => {
     await vi.waitFor(() => {
       expect(onAttachmentsChange).toHaveBeenCalledWith([
         expect.objectContaining({
-          dataUrl: expect.stringMatching(/^data:application\/pdf;base64,/),
           fileName: "brief.pdf",
           mimeType: "application/pdf",
+          sizeBytes: file.size,
         }),
       ]);
     });
 
     const nextAttachments = onAttachmentsChange.mock.calls[0]?.[0] ?? [];
+    expect(getChatAttachmentDataUrl(nextAttachments[0])).toMatch(/^data:application\/pdf;base64,/);
     const preview = renderChatView({ attachments: nextAttachments });
     expect(preview.querySelector(".chat-attachment-thumb--file")).not.toBeNull();
     expect(preview.textContent).toContain("brief.pdf");
@@ -703,5 +724,40 @@ describe("chat session controls", () => {
         .find((option) => option.value === "max")
         ?.textContent?.trim(),
     ).toBe("maximum");
+  });
+
+  it("labels chat thinking default from the active session row", () => {
+    const { state } = createChatHeaderState({
+      model: "gemma4:hermes-e4b",
+      modelProvider: "ollama",
+      thinkingDefault: "adaptive",
+    });
+    const container = document.createElement("div");
+    render(renderChatSessionSelect(state), container);
+
+    const thinkingSelect = container.querySelector<HTMLSelectElement>(
+      'select[data-chat-thinking-select="true"]',
+    );
+
+    expect(thinkingSelect?.value).toBe("");
+    expect(thinkingSelect?.options[0]?.textContent?.trim()).toBe("Default (adaptive)");
+    expect(thinkingSelect?.title).toBe("Default (adaptive)");
+  });
+
+  it("labels chat thinking default from session defaults when the row is absent", () => {
+    const { state } = createChatHeaderState({
+      defaultsThinkingDefault: "adaptive",
+      omitSessionFromList: true,
+    });
+    const container = document.createElement("div");
+    render(renderChatSessionSelect(state), container);
+
+    const thinkingSelect = container.querySelector<HTMLSelectElement>(
+      'select[data-chat-thinking-select="true"]',
+    );
+
+    expect(thinkingSelect?.value).toBe("");
+    expect(thinkingSelect?.options[0]?.textContent?.trim()).toBe("Default (adaptive)");
+    expect(thinkingSelect?.title).toBe("Default (adaptive)");
   });
 });
