@@ -34,7 +34,39 @@ describe("appendUnreleasedChangelogEntry", () => {
     expect(next).toContain("## 2026.4.5");
   });
 
-  it("inserts a PR-linked entry ordered by PR number in the middle", () => {
+  it("inserts a PR-linked entry into the numeric gap between neighboring PRs", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Changes
+
+- Later change (#300). Thanks @carol
+- Earlier change (#100). Thanks @alice
+
+## 2026.4.5
+`;
+
+    const next = appendUnreleasedChangelogEntry(content, {
+      section: "Changes",
+      entry: "Middle change (#200). Thanks @bob",
+    });
+
+    expect(next).toBe(`# Changelog
+
+## Unreleased
+
+### Changes
+
+- Later change (#300). Thanks @carol
+- Middle change (#200). Thanks @bob
+- Earlier change (#100). Thanks @alice
+
+## 2026.4.5
+`);
+  });
+
+  it("inserts into a numeric gap even when nearby entries are ascending", () => {
     const content = `# Changelog
 
 ## Unreleased
@@ -92,21 +124,21 @@ describe("appendUnreleasedChangelogEntry", () => {
     );
   });
 
-  it("inserts a PR-linked entry with the smallest number at the top of the section", () => {
+  it("inserts a PR-linked entry with the largest number at the top of the section", () => {
     const content = `# Changelog
 
 ## Unreleased
 
 ### Changes
 
-- Later change (#300). Thanks @carol
+- Earlier change (#50). Thanks @alice
 
 ## 2026.4.5
 `;
 
     const next = appendUnreleasedChangelogEntry(content, {
       section: "Changes",
-      entry: "Earliest change (#50). Thanks @alice",
+      entry: "Later change (#300). Thanks @carol",
     });
 
     expect(next).toBe(`# Changelog
@@ -115,21 +147,21 @@ describe("appendUnreleasedChangelogEntry", () => {
 
 ### Changes
 
-- Earliest change (#50). Thanks @alice
 - Later change (#300). Thanks @carol
+- Earlier change (#50). Thanks @alice
 
 ## 2026.4.5
 `);
   });
 
-  it("inserts a PR-linked entry with the largest number at the tail of the section", () => {
+  it("inserts a PR-linked entry with the smallest number at the tail of the section", () => {
     const content = `# Changelog
 
 ## Unreleased
 
 ### Changes
 
-- Earlier change (#100). Thanks @alice
+- Newest change (#500). Thanks @carol
 - Later change (#200). Thanks @bob
 
 ## 2026.4.5
@@ -137,7 +169,7 @@ describe("appendUnreleasedChangelogEntry", () => {
 
     const next = appendUnreleasedChangelogEntry(content, {
       section: "Changes",
-      entry: "Newest change (#500). Thanks @carol",
+      entry: "Earlier change (#100). Thanks @alice",
     });
 
     expect(next).toBe(`# Changelog
@@ -146,9 +178,9 @@ describe("appendUnreleasedChangelogEntry", () => {
 
 ### Changes
 
-- Earlier change (#100). Thanks @alice
-- Later change (#200). Thanks @bob
 - Newest change (#500). Thanks @carol
+- Later change (#200). Thanks @bob
+- Earlier change (#100). Thanks @alice
 
 ## 2026.4.5
 `);
@@ -174,13 +206,13 @@ describe("appendUnreleasedChangelogEntry", () => {
     });
 
     expect(next).toContain("- First change (#42). Thanks @alice");
-    // 新条目落在空 Changes 里、位于 Fixes 之前
+    // The new bullet stays inside the empty Changes block before Fixes.
     const changesIdx = next.indexOf("### Changes");
     const firstIdx = next.indexOf("- First change");
     const fixesIdx = next.indexOf("### Fixes");
     expect(changesIdx).toBeLessThan(firstIdx);
     expect(firstIdx).toBeLessThan(fixesIdx);
-    // Fixes 下原有条目未被打乱
+    // Existing Fixes bullets remain untouched.
     expect(next).toContain(`### Fixes
 
 - Existing fix.`);
@@ -194,17 +226,17 @@ describe("appendUnreleasedChangelogEntry", () => {
 ### Changes
 
 - Legacy unlinked entry without a PR ref.
-- Linked change (#300). Thanks @carol
+- Linked change (#150). Thanks @bob
 
 ## 2026.4.5
 `;
 
     const next = appendUnreleasedChangelogEntry(content, {
       section: "Changes",
-      entry: "Linked change (#150). Thanks @bob",
+      entry: "Linked change (#300). Thanks @carol",
     });
 
-    // 150 < 300，新条目应该插在 (#300) 前面；没有 PR 号的历史行不当排序锚
+    // PR-less historical bullets do not become ordering anchors.
     expect(next).toBe(`# Changelog
 
 ## Unreleased
@@ -212,8 +244,8 @@ describe("appendUnreleasedChangelogEntry", () => {
 ### Changes
 
 - Legacy unlinked entry without a PR ref.
-- Linked change (#150). Thanks @bob
 - Linked change (#300). Thanks @carol
+- Linked change (#150). Thanks @bob
 
 ## 2026.4.5
 `);
@@ -249,7 +281,7 @@ describe("appendUnreleasedChangelogEntry", () => {
   });
 
   it("blocks a merge-stage re-insert even when new text and section differ (PR #67679 regression)", () => {
-    // prepare 阶段：详细条目已经在 ### Fixes 里
+    // The detailed entry already exists in ### Fixes from prepare time.
     const content = `# Changelog
 
 ## Unreleased
@@ -265,13 +297,13 @@ describe("appendUnreleasedChangelogEntry", () => {
 ## 2026.4.15
 `;
 
-    // merge 阶段又走一次 ensure，默认 section=Changes，PR title 作为短版本
+    // Merge-time ensure runs again with the PR title in ### Changes.
     const next = appendUnreleasedChangelogEntry(content, {
       section: "Changes",
       entry: "fix: redact credentials in browser.cdpUrl config paths (#67679). Thanks @Ziy1-Tan",
     });
 
-    // 同一 PR 号在 Unreleased 任意 subsection 已存在 → 不再插入
+    // The same PR must not be inserted twice under Unreleased.
     expect(next).toBe(content);
   });
 
@@ -298,7 +330,7 @@ describe("appendUnreleasedChangelogEntry", () => {
   });
 
   it("still inserts a new Unreleased entry when the same PR number exists only in a released block", () => {
-    // 老版本块里碰巧有同号，不应阻止 Unreleased 插入新条目
+    // A released block with the same PR number must not block a new Unreleased entry.
     const content = `# Changelog
 
 ## Unreleased

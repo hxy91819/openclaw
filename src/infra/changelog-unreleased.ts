@@ -38,7 +38,8 @@ function entriesAreEquivalent(existingLine: string, newBullet: string): boolean 
 }
 
 function extractPrNumber(line: string): number | undefined {
-  // 只取行里第一个 PR 引用作为排序键，避免 "(#123, #456)" 取到 456
+  // Use the first PR reference on the line as the sort key so "(#123, #456)"
+  // is anchored by #123 instead of the later reference.
   const match = line.match(/(?:\(#(\d+)\)|openclaw#(\d+))/i);
   const raw = match?.[1] ?? match?.[2];
   if (!raw) {
@@ -85,7 +86,8 @@ function findSectionRange(
     throw new Error(`CHANGELOG.md is missing the '${sectionHeading}' section under Unreleased.`);
   }
 
-  // bodyEnd 指向下一个 heading（### 或 ##），bodyStart 紧跟 section heading
+  // bodyEnd points at the next heading (### or ##); bodyStart is the line
+  // immediately after the subsection heading.
   let bodyEnd = lines.length;
   for (let index = sectionIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
@@ -107,13 +109,17 @@ function resolveOrderedInsertIndex(
   bodyEnd: number,
   newPr: number | undefined,
 ): number {
-  // 无 PR 号（手写条目等）fallback 到尾插，保持旧行为
+  // Keep the existing append behavior for handwritten entries without a PR ref.
   if (newPr === undefined) {
     return bodyEnd;
   }
 
-  // 按 PR 号升序找第一个 PR 号大于 newPr 的已有条目，插到它前面
-  // 没有 PR 号的历史行（极少见）当成边界，原地跳过
+  // Prefer inserting into the first local numeric gap that brackets the new PR,
+  // regardless of whether nearby history is ascending or descending. That lets a
+  // new entry land between neighboring PRs without reordering existing bullets.
+  let firstLinkedIndex: number | undefined;
+  let firstLinkedPr: number | undefined;
+  let previousLinkedPr: number | undefined;
   for (let index = bodyStart; index < bodyEnd; index += 1) {
     const line = lines[index];
     if (!line.startsWith("- ")) {
@@ -123,9 +129,26 @@ function resolveOrderedInsertIndex(
     if (existingPr === undefined) {
       continue;
     }
-    if (existingPr > newPr) {
+
+    if (firstLinkedIndex === undefined) {
+      firstLinkedIndex = index;
+      firstLinkedPr = existingPr;
+    }
+
+    if (
+      previousLinkedPr !== undefined &&
+      ((previousLinkedPr >= newPr && newPr >= existingPr) ||
+        (previousLinkedPr <= newPr && newPr <= existingPr))
+    ) {
       return index;
     }
+
+    previousLinkedPr = existingPr;
+  }
+
+  // If no local gap brackets the new PR, only then fall back to top or tail.
+  if (firstLinkedIndex !== undefined && firstLinkedPr !== undefined && newPr > firstLinkedPr) {
+    return firstLinkedIndex;
   }
   return bodyEnd;
 }
@@ -177,14 +200,15 @@ export function appendUnreleasedChangelogEntry(
   const lines = content.split("\n");
   const bullet = entry.startsWith("- ") ? entry : `- ${entry}`;
 
-  // 强去重：同 PR 号在 ## Unreleased 下任意 subsection 已存在 → 跳过
-  // 这避免了 merge 阶段二次 ensure 插入短版本，跟 prepare 阶段的详细条目重复
+  // De-duplicate by PR number across all Unreleased subsections so merge-time
+  // ensure calls do not add a second short-form entry for the same PR.
   const newPr = extractPrNumber(bullet);
   if (newPr !== undefined && unreleasedHasPrEntry(lines, newPr)) {
     return content;
   }
 
-  // 文本级去重兜底（无 PR 号的手写条目 / 同行完全相等）
+  // Keep a text-level duplicate guard for handwritten entries without PR refs
+  // and for exact line matches.
   if (lines.some((line) => entriesAreEquivalent(line, bullet))) {
     return content;
   }
@@ -192,13 +216,13 @@ export function appendUnreleasedChangelogEntry(
   const { bodyStart, bodyEnd } = findSectionRange(lines, params.section);
   const insertAt = resolveOrderedInsertIndex(lines, bodyStart, bodyEnd, newPr);
 
-  // 空 section：插到 heading 之后并补一个空行分隔
+  // Preserve the existing blank-line shape for empty subsections.
   if (bodyEnd === bodyStart) {
     lines.splice(insertAt, 0, bullet, "");
     return lines.join("\n");
   }
 
-  // 非空 section：单独插一行，复用已有前后空行
+  // Non-empty subsections only need the new bullet line.
   lines.splice(insertAt, 0, bullet);
   return lines.join("\n");
 }
