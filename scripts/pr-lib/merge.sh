@@ -8,6 +8,43 @@ is_mainline_drift_critical_path_for_merge() {
   return 1
 }
 
+pr_touches_changelog() {
+  local pr_files_file="$1"
+  rg -q '^CHANGELOG\.md$' "$pr_files_file"
+}
+
+changelog_is_only_overlapping_pr_file() {
+  local overlap_file="$1"
+  local overlap_count
+  overlap_count=$(wc -l < "$overlap_file" | tr -d ' ')
+  [ "$overlap_count" -eq 1 ] && rg -q '^CHANGELOG\.md$' "$overlap_file"
+}
+
+github_changelog_patch_is_scoped_to_pr() {
+  local pr="$1"
+  local pr_pattern="(\\(#${pr}\\)|openclaw#${pr}\\b)"
+  local patch
+  patch=$(gh api "repos/{owner}/{repo}/pulls/$pr/files" --paginate --jq '.[] | select(.filename=="CHANGELOG.md") | .patch // ""' 2>/dev/null || true)
+
+  if [ -z "$patch" ]; then
+    return 1
+  fi
+
+  local added_bullets
+  added_bullets=$(printf '%s\n' "$patch" | awk '
+    /^\+\+\+/ { next }
+    /^\+- / { sub(/^\+/, ""); print }
+  ')
+
+  if [ -z "$added_bullets" ]; then
+    return 1
+  fi
+
+  local unscoped_added_bullets
+  unscoped_added_bullets=$(printf '%s\n' "$added_bullets" | rg -iv "$pr_pattern" || true)
+  [ -z "$unscoped_added_bullets" ]
+}
+
 print_file_list_with_limit() {
   local label="$1"
   local file_path="$2"
@@ -28,6 +65,7 @@ print_file_list_with_limit() {
 
 mainline_drift_requires_sync() {
   local prep_head_sha="$1"
+  local pr="${2:-}"
 
   require_artifact .local/pr-meta.json
 
@@ -76,6 +114,20 @@ mainline_drift_requires_sync() {
   if [ "$overlap_count" -gt 0 ] || [ "$critical_count" -gt 0 ]; then
     local merge_base
     merge_base=$(git merge-base "$prep_head_sha" origin/main 2>/dev/null || true)
+    if changelog_is_only_overlapping_pr_file "$overlap_file" && pr_touches_changelog "$pr_files_file"; then
+      if [ -n "$pr" ] && github_changelog_patch_is_scoped_to_pr "$pr"; then
+        echo "Mainline drift relevance: PR touches CHANGELOG.md, but the GitHub changelog patch is scoped to PR #$pr; safe to merge without sync."
+        print_file_list_with_limit "Mainline files overlapping PR touched files" "$overlap_file"
+        print_file_list_with_limit "Mainline files touching merge-critical infrastructure" "$critical_file"
+        rm -f "$delta_file" "$pr_files_file" "$overlap_file" "$critical_file"
+        return 1
+      fi
+      echo "Mainline drift relevance: PR touches CHANGELOG.md and main advanced; sync required before merge to keep the GitHub PR changelog patch scoped."
+      print_file_list_with_limit "Mainline files overlapping PR touched files" "$overlap_file"
+      print_file_list_with_limit "Mainline files touching merge-critical infrastructure" "$critical_file"
+      rm -f "$delta_file" "$pr_files_file" "$overlap_file" "$critical_file"
+      return 0
+    fi
     if [ -n "$merge_base" ]; then
       local conflict_count
       conflict_count=$(git merge-tree "$merge_base" "$prep_head_sha" origin/main 2>/dev/null | grep -c "^<<<<<<<" || true)
@@ -172,7 +224,7 @@ merge_verify() {
   git fetch origin "pull/$pr/head:pr-$pr" --force
   if ! git merge-base --is-ancestor origin/main "pr-$pr"; then
     echo "PR branch is behind main."
-    if mainline_drift_requires_sync "$PREP_HEAD_SHA"; then
+    if mainline_drift_requires_sync "$PREP_HEAD_SHA" "$pr"; then
       echo "Merge verify failed: mainline drift is relevant to this PR; run scripts/pr prepare-sync-head $pr before merge."
       exit 1
     fi
