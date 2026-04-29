@@ -153,6 +153,17 @@ run_prepare_push_retry_gates() {
   fi
 }
 
+prepare_should_reuse_gates_for_docsish_delta() {
+  local previous_last_verified_head="$1"
+
+  [ -n "$previous_last_verified_head" ] || return 1
+  git merge-base --is-ancestor "$previous_last_verified_head" HEAD 2>/dev/null || return 1
+
+  local delta_since_verified
+  delta_since_verified=$(git diff --name-only "$previous_last_verified_head"..HEAD)
+  [ -z "$delta_since_verified" ] || file_list_is_docsish_only "$delta_since_verified"
+}
+
 prepare_gates() {
   local pr="$1"
   enter_worktree "$pr" false
@@ -246,12 +257,8 @@ prepare_gates() {
   local build_gate_status=""
   local check_gate_status=""
   local test_gate_status=""
-  if [ "$docs_only" = "true" ] && [ -n "$previous_last_verified_head" ] && git merge-base --is-ancestor "$previous_last_verified_head" HEAD 2>/dev/null; then
-    local delta_since_verified
-    delta_since_verified=$(git diff --name-only "$previous_last_verified_head"..HEAD)
-    if [ -z "$delta_since_verified" ] || file_list_is_docsish_only "$delta_since_verified"; then
-      reuse_gates=true
-    fi
+  if prepare_should_reuse_gates_for_docsish_delta "$previous_last_verified_head"; then
+    reuse_gates=true
   fi
 
   if [ "$reuse_gates" = "true" ]; then
