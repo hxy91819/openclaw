@@ -18,6 +18,34 @@ build_default_pr_changelog_entry() {
   printf '%s (#%s).\n' "$trimmed_title" "$pr"
 }
 
+changelog_file_hash() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  else
+    shasum -a 256 "$path" | awk '{print $1}'
+  fi
+}
+
+normalize_changelog_section_arg() {
+  local section="$1"
+  case "$section" in
+    [Bb]reaking)
+      printf 'breaking\n'
+      ;;
+    [Cc]hanges)
+      printf 'changes\n'
+      ;;
+    [Ff]ixes)
+      printf 'fixes\n'
+      ;;
+    *)
+      echo "Unsupported changelog section: $section"
+      exit 1
+      ;;
+  esac
+}
+
 ensure_pr_changelog_entry() {
   local pr="$1"
   local contrib="$2"
@@ -37,10 +65,12 @@ ensure_pr_changelog_entry() {
     entry=$(build_default_pr_changelog_entry "$pr" "$contrib" "$title")
   fi
   local before_hash
-  before_hash=$(sha256sum CHANGELOG.md | awk '{print $1}')
+  before_hash=$(changelog_file_hash CHANGELOG.md)
 
   local changelog_output
-  changelog_output=$(bun scripts/changelog-add-unreleased.ts --section "${section,,}" "$entry")
+  local section_arg
+  section_arg=$(normalize_changelog_section_arg "$section")
+  changelog_output=$(node --import tsx scripts/changelog-add-unreleased.ts --section "$section_arg" "$entry")
   echo "$changelog_output"
 
   normalize_pr_changelog_entries "$pr"
@@ -48,7 +78,7 @@ ensure_pr_changelog_entry() {
   validate_changelog_entry_for_pr "$pr" "$contrib"
 
   local after_hash
-  after_hash=$(sha256sum CHANGELOG.md | awk '{print $1}')
+  after_hash=$(changelog_file_hash CHANGELOG.md)
   if [ "$before_hash" = "$after_hash" ]; then
     echo "pr_changelog_changed=false"
   else

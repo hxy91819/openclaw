@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createScriptTestHarness } from "./test-helpers.js";
@@ -19,7 +19,7 @@ function git(cwd: string, ...args: string[]): string {
   return run(cwd, "git", args);
 }
 
-function evaluateShell(cwd: string, body: string): string {
+function evaluateShell(cwd: string, body: string, env?: NodeJS.ProcessEnv): string {
   return run(
     cwd,
     "bash",
@@ -32,6 +32,7 @@ ${body}
     ],
     {
       OPENCLAW_PR_CHANGELOG_SH: changelogScriptPath,
+      ...env,
     },
   );
 }
@@ -230,5 +231,62 @@ printf '%s\\n' "$(resolve_pr_changelog_section '{"labels":[{"name":"bug"}]}')"
     );
 
     expect(output).toBe("Changes");
+  });
+
+  it("inserts changelog entries without requiring Bun or Bash lowercase expansion", () => {
+    const repo = createTempDir("openclaw-pr-lib-changelog-ensure-entry-");
+    mkdirSync(path.join(repo, "fake-bin"), { recursive: true });
+    writeFileSync(path.join(repo, "CHANGELOG.md"), "# Changelog\n\n## Unreleased\n\n", "utf8");
+
+    const nodeLog = path.join(repo, "node.log");
+    const fakeNode = path.join(repo, "fake-bin", "node");
+    writeFileSync(
+      fakeNode,
+      `#!/usr/bin/env sh
+printf '%s\\n' "$*" >> "${nodeLog}"
+printf '\\n### Fixes\\n\\n- Fix PR workflow (#123). Thanks @alice\\n' >> CHANGELOG.md
+echo "Updated CHANGELOG.md (Fixes)."
+`,
+      "utf8",
+    );
+    chmodSync(fakeNode, 0o755);
+
+    const output = evaluateShell(
+      repo,
+      `
+normalize_pr_changelog_entries() { :; }
+validate_changelog_merge_hygiene() { :; }
+validate_changelog_entry_for_pr() { :; }
+ensure_pr_changelog_entry 123 alice "Fix PR workflow" Fixes
+`,
+      {
+        PATH: `${path.join(repo, "fake-bin")}:${process.env.PATH ?? ""}`,
+      },
+    );
+
+    expect(readFileSync(nodeLog, "utf8")).toContain(
+      "--import tsx scripts/changelog-add-unreleased.ts --section fixes",
+    );
+    expect(output).toContain("pr_changelog_changed=true");
+  });
+
+  it("hashes changelog files when sha256sum is unavailable", () => {
+    const repo = createTempDir("openclaw-pr-lib-changelog-hash-");
+    writeFileSync(path.join(repo, "CHANGELOG.md"), "# Changelog\n", "utf8");
+
+    const output = evaluateShell(
+      repo,
+      `
+command() {
+  if [ "$1" = "-v" ] && [ "$2" = "sha256sum" ]; then
+    return 1
+  fi
+  builtin command "$@"
+}
+changelog_file_hash CHANGELOG.md
+`,
+    );
+
+    expect(output).toMatch(/^[a-f0-9]{64}$/);
   });
 });

@@ -157,10 +157,87 @@ run_quiet_logged() {
   return 1
 }
 
-bootstrap_deps_if_needed() {
-  if [ ! -x node_modules/.bin/vitest ]; then
-    run_quiet_logged "pnpm install --frozen-lockfile" ".local/bootstrap-install.log" pnpm install --frozen-lockfile
+require_supported_node_for_pr_workflow() {
+  local node_version
+  node_version=$(node -p 'process.versions.node' 2>/dev/null || true)
+  local node_path
+  node_path=$(command -v node 2>/dev/null || true)
+
+  if node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 14) ? 0 : 1);' >/dev/null 2>&1; then
+    return 0
   fi
+
+  echo "Active Node.js must be >=22.14.0 for PR workflow gates."
+  echo "found_node=v${node_version:-unknown}"
+  if [ -n "$node_path" ]; then
+    echo "node_path=$node_path"
+  fi
+  echo "Use a supported Node 22+ shell, then rerun the PR workflow command."
+  exit 1
+}
+
+sha256_text() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
+sha256_file_line() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path"
+  else
+    shasum -a 256 "$path"
+  fi
+}
+
+bootstrap_deps_fingerprint() {
+  {
+    node --version
+    pnpm --version
+    local path
+    for path in package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc; do
+      if [ -f "$path" ]; then
+        sha256_file_line "$path"
+      fi
+    done
+    if [ -d patches ]; then
+      git ls-files -co --exclude-standard -- 'patches/*.patch' 2>/dev/null | sort -u | while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        if [ -f "$path" ]; then
+          sha256_file_line "$path"
+        fi
+      done
+    fi
+  } | sha256_text
+}
+
+bootstrap_deps_if_needed() {
+  require_supported_node_for_pr_workflow
+
+  local stamp_file=".local/bootstrap-deps.stamp"
+  local fingerprint
+  fingerprint=$(bootstrap_deps_fingerprint)
+  local stamped_fingerprint=""
+  if [ -s "$stamp_file" ]; then
+    stamped_fingerprint=$(cat "$stamp_file")
+  fi
+
+  if \
+    [ "$stamped_fingerprint" = "$fingerprint" ] && \
+    [ -x node_modules/.bin/vitest ] && \
+    [ -x node_modules/.bin/oxlint ]
+  then
+    return 0
+  fi
+
+  if ! run_quiet_logged "pnpm install --frozen-lockfile" ".local/bootstrap-install.log" pnpm install --frozen-lockfile; then
+    return 1
+  fi
+  mkdir -p .local
+  printf '%s\n' "$fingerprint" > "$stamp_file"
 }
 
 wait_for_pr_head_sha() {
@@ -329,6 +406,7 @@ remove_worktree_if_present() {
   fi
 
   if [ ! -e "$path" ]; then
+    git worktree prune >/dev/null 2>&1 || true
     return 0
   fi
 
@@ -357,6 +435,8 @@ remove_worktree_if_present() {
 delete_local_branch_if_safe() {
   local branch="$1"
   local ref="refs/heads/$branch"
+
+  git worktree prune >/dev/null 2>&1 || true
 
   if ! git show-ref --verify --quiet "$ref"; then
     return 0
