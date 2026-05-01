@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { createScriptTestHarness } from "./test-helpers.js";
 
 const mergeScriptPath = path.join(process.cwd(), "scripts", "pr-lib", "merge.sh");
+const commonScriptPath = path.join(process.cwd(), "scripts", "pr-lib", "common.sh");
+const gatesScriptPath = path.join(process.cwd(), "scripts", "pr-lib", "gates.sh");
 const { createTempDir } = createScriptTestHarness();
 
 function runMergeShell(body: string, env?: NodeJS.ProcessEnv) {
@@ -13,6 +15,8 @@ function runMergeShell(body: string, env?: NodeJS.ProcessEnv) {
     [
       "-lc",
       `
+source "$OPENCLAW_PR_COMMON_SH"
+source "$OPENCLAW_PR_GATES_SH"
 source "$OPENCLAW_PR_MERGE_SH"
 ${body}
 `,
@@ -22,6 +26,8 @@ ${body}
       encoding: "utf8",
       env: {
         ...process.env,
+        OPENCLAW_PR_COMMON_SH: commonScriptPath,
+        OPENCLAW_PR_GATES_SH: gatesScriptPath,
         OPENCLAW_PR_MERGE_SH: mergeScriptPath,
         ...env,
       },
@@ -59,6 +65,82 @@ type run_merge_changelog_with_diagnostics >/dev/null 2>&1
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
+  });
+
+  it("requires gates coverage for the prepared head during merge verify", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-coverage-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-before\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { printf 'non_docs_delta\\n'; return 1; }
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+merge_verify 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("prepare gates do not cover the current PR head");
+    expect(result.stdout).toContain("status=non_docs_delta");
+  });
+
+  it("continues merge verify when gates cover the prepared head", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-covered-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-after\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { printf 'same_head\\n'; return 0; }
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+gh() {
+  if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+    if [ "$5" = "--json" ]; then
+      printf '[]\\n'
+    fi
+    return 0
+  fi
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+}
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    merge-base)
+      return 0
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+merge_verify 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("prepare gates cover PR head (same_head)");
+    expect(result.stdout).toContain("merge-verify passed for PR #123");
   });
 
   it("requires sync when a changelog PR is behind main even without merge conflicts", () => {

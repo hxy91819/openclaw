@@ -41,6 +41,84 @@ ${body}
 }
 
 describe("scripts/pr-lib/gates.sh", () => {
+  it("reports same-head coverage without reading the diff", () => {
+    expect(
+      runGatesShell(
+        process.cwd(),
+        'prepare_gates_coverage_status "$OPENCLAW_VERIFIED_HEAD" "$OPENCLAW_VERIFIED_HEAD"',
+        {
+          OPENCLAW_VERIFIED_HEAD: "abc123",
+        },
+      ),
+    ).toBe("same_head");
+  });
+
+  it("covers the current head when only docs/changelog files were added after verification", () => {
+    const repo = createTempDir("openclaw-pr-lib-gates-coverage-docs-");
+    git(repo, "init", "-q", "--initial-branch=main");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "config", "user.name", "Test User");
+
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 1;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "add code");
+    const verifiedHead = git(repo, "rev-parse", "HEAD");
+
+    writeFileSync(
+      path.join(repo, "CHANGELOG.md"),
+      "## Unreleased\n\n### Fixes\n\n- Fix behavior.\n",
+      "utf8",
+    );
+    git(repo, "add", "CHANGELOG.md");
+    git(repo, "commit", "-qm", "add changelog");
+    const currentHead = git(repo, "rev-parse", "HEAD");
+
+    expect(
+      runGatesShell(
+        repo,
+        'prepare_gates_coverage_status "$OPENCLAW_VERIFIED_HEAD" "$OPENCLAW_CURRENT_HEAD"',
+        {
+          OPENCLAW_VERIFIED_HEAD: verifiedHead,
+          OPENCLAW_CURRENT_HEAD: currentHead,
+        },
+      ),
+    ).toBe("docsish_delta");
+  });
+
+  it("does not cover the current head when code changed after verification", () => {
+    const repo = createTempDir("openclaw-pr-lib-gates-coverage-code-");
+    git(repo, "init", "-q", "--initial-branch=main");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "config", "user.name", "Test User");
+
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 1;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "add code");
+    const verifiedHead = git(repo, "rev-parse", "HEAD");
+
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 2;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "change code");
+    const currentHead = git(repo, "rev-parse", "HEAD");
+
+    expect(
+      runGatesShell(
+        repo,
+        `
+if prepare_gates_coverage_status "$OPENCLAW_VERIFIED_HEAD" "$OPENCLAW_CURRENT_HEAD"; then
+  printf covered
+else
+  printf not_covered
+fi
+`,
+        {
+          OPENCLAW_VERIFIED_HEAD: verifiedHead,
+          OPENCLAW_CURRENT_HEAD: currentHead,
+        },
+      ),
+    ).toBe("non_docs_delta\nnot_covered");
+  });
+
   it("reuses prior gates when a code PR only adds changelog after verification", () => {
     const repo = createTempDir("openclaw-pr-lib-gates-");
     git(repo, "init", "-q", "--initial-branch=main");

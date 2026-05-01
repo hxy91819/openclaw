@@ -185,7 +185,7 @@ prepare_push() {
       fi
       echo "$changelog_result"
 
-      if printf '%s\n' "$changelog_result" | rg -q '^pr_changelog_changed=true$'; then
+      if [[ "$changelog_result" == *$'\npr_changelog_changed=true'* || "$changelog_result" == "pr_changelog_changed=true"* ]]; then
         local commit_msg
         commit_msg=$(printf '%s' "$pr_title" | sed 's/[[:space:]]\+$//')
         scripts/committer --fast "$commit_msg" CHANGELOG.md
@@ -198,6 +198,19 @@ prepare_push() {
 
   local prep_head_sha
   prep_head_sha=$(git rev-parse HEAD)
+  local gates_coverage_status
+  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$prep_head_sha"); then
+    echo "Prepare gates do not cover the current prep head (status=$gates_coverage_status)."
+    echo "Run scripts/pr prepare-gates $pr before prepare-push."
+    exit 1
+  fi
+
+  local current_changed_files
+  current_changed_files=$(git diff --name-only origin/main...HEAD)
+  if printf '%s\n' "$current_changed_files" | rg -q '^CHANGELOG\.md$'; then
+    validate_changelog_merge_hygiene
+    validate_changelog_entry_for_pr "$pr" "$contrib"
+  fi
 
   local lease_sha
   lease_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
@@ -227,6 +240,7 @@ prepare_push() {
 - Gates passed and push succeeded to branch $PR_HEAD.
 - Gate mode: ${GATES_MODE:-unknown}.
 - Gate statuses: build=${BUILD_GATE_STATUS:-unknown}, check=${CHECK_GATE_STATUS:-unknown}, test=${TEST_GATE_STATUS:-unknown}.
+- Gate coverage for pushed head: $gates_coverage_status.
 - Verified PR head SHA matches local prep HEAD.
 EOF_PREP
 
@@ -259,6 +273,7 @@ EOF_PREP
   echo "prep_branch=$(git branch --show-current)"
   echo "prep_head_sha=$prep_head_sha"
   echo "pr_head_sha=$pr_head_sha_after"
+  echo "gates_coverage=$gates_coverage_status"
   echo "post_push_main_status=$push_main_status"
   echo "artifacts=.local/prep.md .local/prep.env"
 }
@@ -270,6 +285,7 @@ prepare_sync_head() {
 
   require_artifact .local/pr-meta.env
   require_artifact .local/prep-context.env
+  require_artifact .local/gates.env
 
   checkout_prep_branch "$pr"
 
@@ -277,6 +293,8 @@ prepare_sync_head() {
   source .local/pr-meta.env
   # shellcheck disable=SC1091
   source .local/prep-context.env
+  # shellcheck disable=SC1091
+  source .local/gates.env
 
   local rebased=false
   git fetch origin main
@@ -303,10 +321,18 @@ prepare_sync_head() {
       > .local/prep-context.env
     prepare_gates "$pr"
     checkout_prep_branch "$pr"
+    # shellcheck disable=SC1091
+    source .local/gates.env
   fi
 
   local prep_head_sha
   prep_head_sha=$(git rev-parse HEAD)
+  local gates_coverage_status
+  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$prep_head_sha"); then
+    echo "Prepare gates do not cover the current synced prep head (status=$gates_coverage_status)."
+    echo "Run scripts/pr prepare-gates $pr before pushing the sync result."
+    exit 1
+  fi
 
   local lease_sha
   lease_sha=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
@@ -338,6 +364,7 @@ prepare_sync_head() {
 - Prepare sync rebase count: ${PREP_REBASE_COUNT:-0}.
 - Verified PR head SHA matches local prep HEAD.
 - Prepare gates reran automatically when the sync rebase changed the prep head.
+- Gate coverage for pushed head: $gates_coverage_status.
 EOF_PREP
 
   if [ "$push_main_status" = "main_advanced_after_push" ]; then
@@ -369,6 +396,7 @@ EOF_PREP
   echo "prep_branch=$(git branch --show-current)"
   echo "prep_head_sha=$prep_head_sha"
   echo "pr_head_sha=$pr_head_sha_after"
+  echo "gates_coverage=$gates_coverage_status"
   echo "post_push_main_status=$push_main_status"
   echo "artifacts=.local/prep.md .local/prep.env"
 }

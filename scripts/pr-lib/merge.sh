@@ -159,8 +159,11 @@ merge_verify() {
   enter_worktree "$pr" false
 
   require_artifact .local/prep.env
+  require_artifact .local/gates.env
   # shellcheck disable=SC1091
   source .local/prep.env
+  # shellcheck disable=SC1091
+  source .local/gates.env
   verify_prep_branch_matches_prepared_head "$pr" "$PREP_HEAD_SHA"
 
   local json
@@ -188,6 +191,15 @@ merge_verify() {
     fi
     exit 1
   fi
+
+  local gates_coverage_status
+  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$PREP_HEAD_SHA"); then
+    echo "Merge verify failed: prepare gates do not cover the current PR head (status=$gates_coverage_status)."
+    echo "If the delta is not limited to docs/changelog files, run scripts/pr prepare-gates $pr before merge."
+    echo "If only prepare metadata is stale, refresh it with scripts/pr prepare-sync-head $pr."
+    exit 1
+  fi
+  echo "Merge verify: prepare gates cover PR head ($gates_coverage_status)."
 
   gh pr checks "$pr" --required --watch --fail-fast >.local/merge-checks-watch.log 2>&1 || true
   local checks_json

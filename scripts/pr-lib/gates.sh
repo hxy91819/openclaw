@@ -157,11 +157,55 @@ prepare_should_reuse_gates_for_docsish_delta() {
   local previous_last_verified_head="$1"
 
   [ -n "$previous_last_verified_head" ] || return 1
-  git merge-base --is-ancestor "$previous_last_verified_head" HEAD 2>/dev/null || return 1
+  prepare_gates_coverage_status "$previous_last_verified_head" HEAD >/dev/null
+}
+
+prepare_gates_coverage_status() {
+  local verified_head="$1"
+  local current_head="$2"
+
+  if [ -z "$verified_head" ]; then
+    printf 'missing_verified_head\n'
+    return 1
+  fi
+  if [ -z "$current_head" ]; then
+    printf 'missing_current_head\n'
+    return 1
+  fi
+
+  if [ "$verified_head" = "$current_head" ]; then
+    printf 'same_head\n'
+    return 0
+  fi
+
+  if ! git cat-file -e "${verified_head}^{commit}" 2>/dev/null; then
+    printf 'unresolvable_verified_head\n'
+    return 1
+  fi
+  if ! git cat-file -e "${current_head}^{commit}" 2>/dev/null; then
+    printf 'unresolvable_current_head\n'
+    return 1
+  fi
+
+  git merge-base --is-ancestor "$verified_head" "$current_head" 2>/dev/null || {
+    printf 'verified_head_not_ancestor\n'
+    return 1
+  }
 
   local delta_since_verified
-  delta_since_verified=$(git diff --name-only "$previous_last_verified_head"..HEAD)
-  [ -z "$delta_since_verified" ] || file_list_is_docsish_only "$delta_since_verified"
+  delta_since_verified=$(git diff --name-only "$verified_head".."$current_head" | sort -u)
+  if [ -z "$delta_since_verified" ]; then
+    printf 'empty_delta\n'
+    return 0
+  fi
+
+  if file_list_is_docsish_only "$delta_since_verified"; then
+    printf 'docsish_delta\n'
+    return 0
+  fi
+
+  printf 'non_docs_delta\n'
+  return 1
 }
 
 prepare_gates() {

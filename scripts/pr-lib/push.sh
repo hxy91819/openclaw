@@ -297,8 +297,8 @@ push_prep_head_to_pr_branch() {
         if [ "$rerun_gates_on_lease_retry" = "true" ]; then
           git fetch origin "pull/$pr/head:pr-$pr-latest" --force
           git rebase "pr-$pr-latest"
+          prepare_gates "$pr"
           prep_head_sha=$(git rev-parse HEAD)
-          run_prepare_push_retry_gates "$docs_only"
         fi
 
         if ! push_output=$(push_prep_head_once "$pr_head" "$lease_sha" "$prep_head_sha" 2>&1); then
