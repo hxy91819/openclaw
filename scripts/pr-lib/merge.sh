@@ -192,8 +192,16 @@ merge_verify() {
     exit 1
   fi
 
+  git fetch origin main
+  git fetch origin "pull/$pr/head:pr-$pr" --force
+  if ! git merge-base --is-ancestor origin/main "pr-$pr"; then
+    echo "PR branch is behind main."
+    echo "Merge verify failed: sync the prepared head before merge: scripts/pr prepare-sync-head $pr"
+    exit 1
+  fi
+
   local gates_coverage_status
-  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$PREP_HEAD_SHA"); then
+  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$PREP_HEAD_SHA" "${GATES_BASE_SHA:-}" origin/main); then
     echo "Merge verify failed: prepare gates do not cover the current PR head (status=$gates_coverage_status)."
     echo "If the delta is not limited to docs/changelog files, run scripts/pr prepare-gates $pr before merge."
     echo "If only prepare metadata is stale, refresh it with scripts/pr prepare-sync-head $pr."
@@ -230,17 +238,6 @@ merge_verify() {
   if [ "$pending_required" -gt 0 ]; then
     echo "Required checks are still pending."
     exit 1
-  fi
-
-  git fetch origin main
-  git fetch origin "pull/$pr/head:pr-$pr" --force
-  if ! git merge-base --is-ancestor origin/main "pr-$pr"; then
-    echo "PR branch is behind main."
-    if mainline_drift_requires_sync "$PREP_HEAD_SHA" "$pr"; then
-      echo "Merge verify failed: mainline drift is relevant to this PR; run scripts/pr prepare-sync-head $pr before merge."
-      exit 1
-    fi
-    echo "Merge verify: continuing without prep-head sync because behind-main drift is unrelated."
   fi
 
   echo "merge-verify passed for PR #$pr"

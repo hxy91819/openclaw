@@ -84,6 +84,18 @@ require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit
 verify_prep_branch_matches_prepared_head() { :; }
 prepare_gates_coverage_status() { printf 'non_docs_delta\\n'; return 1; }
 pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    merge-base)
+      return 0
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
 merge_verify 123
 `,
       { OPENCLAW_TEST_REPO: repo },
@@ -92,6 +104,46 @@ merge_verify 123
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("prepare gates do not cover the current PR head");
     expect(result.stdout).toContain("status=non_docs_delta");
+  });
+
+  it("requires prepare-sync-head before checking gates when the PR is behind main", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-behind-main-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-after\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { echo "coverage should not run" >&2; exit 42; }
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    merge-base)
+      return 1
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+merge_verify 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("PR branch is behind main.");
+    expect(result.stdout).toContain("scripts/pr prepare-sync-head 123");
+    expect(result.stderr).not.toContain("coverage should not run");
   });
 
   it("continues merge verify when gates cover the prepared head", () => {

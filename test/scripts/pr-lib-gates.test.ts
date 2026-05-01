@@ -119,6 +119,104 @@ fi
     ).toBe("non_docs_delta\nnot_covered");
   });
 
+  it("covers a rebased head when non-docs file content matches the verified head", () => {
+    const repo = createTempDir("openclaw-pr-lib-gates-rebased-docs-");
+    git(repo, "init", "-q", "--initial-branch=main");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "config", "user.name", "Test User");
+
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 1;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "seed");
+    const verifiedBase = git(repo, "rev-parse", "HEAD");
+
+    git(repo, "checkout", "-qb", "feature");
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 2;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "feature code");
+    const verifiedHead = git(repo, "rev-parse", "HEAD");
+
+    git(repo, "checkout", "-q", "main");
+    writeFileSync(
+      path.join(repo, "CHANGELOG.md"),
+      "## Unreleased\n\n### Fixes\n\n- Main changelog entry.\n",
+      "utf8",
+    );
+    git(repo, "add", "CHANGELOG.md");
+    git(repo, "commit", "-qm", "main changelog");
+    const currentBase = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-ref", "refs/remotes/origin/main", currentBase);
+
+    git(repo, "checkout", "-qb", "rebased");
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 2;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "rebased feature code");
+    const currentHead = git(repo, "rev-parse", "HEAD");
+
+    expect(
+      runGatesShell(
+        repo,
+        'prepare_gates_coverage_status "$OPENCLAW_VERIFIED_HEAD" "$OPENCLAW_CURRENT_HEAD" "$OPENCLAW_VERIFIED_BASE" "$OPENCLAW_CURRENT_BASE"',
+        {
+          OPENCLAW_VERIFIED_BASE: verifiedBase,
+          OPENCLAW_VERIFIED_HEAD: verifiedHead,
+          OPENCLAW_CURRENT_BASE: currentBase,
+          OPENCLAW_CURRENT_HEAD: currentHead,
+        },
+      ),
+    ).toBe("rebased_docsish_delta");
+  });
+
+  it("does not cover a rebased head when non-docs file content changed", () => {
+    const repo = createTempDir("openclaw-pr-lib-gates-rebased-code-");
+    git(repo, "init", "-q", "--initial-branch=main");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "config", "user.name", "Test User");
+
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 1;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "seed");
+    const verifiedBase = git(repo, "rev-parse", "HEAD");
+
+    git(repo, "checkout", "-qb", "feature");
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 2;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "feature code");
+    const verifiedHead = git(repo, "rev-parse", "HEAD");
+
+    git(repo, "checkout", "-q", "main");
+    writeFileSync(path.join(repo, "docs.md"), "main docs\n", "utf8");
+    git(repo, "add", "docs.md");
+    git(repo, "commit", "-qm", "main docs");
+    const currentBase = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-ref", "refs/remotes/origin/main", currentBase);
+
+    git(repo, "checkout", "-qb", "rebased");
+    writeFileSync(path.join(repo, "src.ts"), "export const value = 3;\n", "utf8");
+    git(repo, "add", "src.ts");
+    git(repo, "commit", "-qm", "rebased changed code");
+    const currentHead = git(repo, "rev-parse", "HEAD");
+
+    expect(
+      runGatesShell(
+        repo,
+        `
+if prepare_gates_coverage_status "$OPENCLAW_VERIFIED_HEAD" "$OPENCLAW_CURRENT_HEAD" "$OPENCLAW_VERIFIED_BASE" "$OPENCLAW_CURRENT_BASE"; then
+  printf covered
+else
+  printf not_covered
+fi
+`,
+        {
+          OPENCLAW_VERIFIED_BASE: verifiedBase,
+          OPENCLAW_VERIFIED_HEAD: verifiedHead,
+          OPENCLAW_CURRENT_BASE: currentBase,
+          OPENCLAW_CURRENT_HEAD: currentHead,
+        },
+      ),
+    ).toBe("verified_head_not_ancestor\nnot_covered");
+  });
+
   it("reuses prior gates when a code PR only adds changelog after verification", () => {
     const repo = createTempDir("openclaw-pr-lib-gates-");
     git(repo, "init", "-q", "--initial-branch=main");

@@ -155,14 +155,67 @@ run_prepare_push_retry_gates() {
 
 prepare_should_reuse_gates_for_docsish_delta() {
   local previous_last_verified_head="$1"
+  local previous_gates_base_sha="${2:-${GATES_BASE_SHA:-}}"
 
   [ -n "$previous_last_verified_head" ] || return 1
-  prepare_gates_coverage_status "$previous_last_verified_head" HEAD >/dev/null
+  prepare_gates_coverage_status "$previous_last_verified_head" HEAD "$previous_gates_base_sha" origin/main >/dev/null
+}
+
+prepare_non_docs_changed_paths_for_range() {
+  local base="$1"
+  local head="$2"
+
+  git diff --name-only "$base...$head" | while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if ! path_is_docsish "$path"; then
+      printf '%s\n' "$path"
+    fi
+  done
+}
+
+prepare_rebased_non_docs_content_matches() {
+  local verified_base="$1"
+  local verified_head="$2"
+  local current_base="$3"
+  local current_head="$4"
+
+  [ -n "$verified_base" ] || return 1
+  [ -n "$current_base" ] || return 1
+  git cat-file -e "${verified_base}^{commit}" 2>/dev/null || return 1
+  git cat-file -e "${current_base}^{commit}" 2>/dev/null || return 1
+
+  local changed_paths
+  changed_paths=$(
+    {
+      prepare_non_docs_changed_paths_for_range "$verified_base" "$verified_head"
+      prepare_non_docs_changed_paths_for_range "$current_base" "$current_head"
+    } | sort -u
+  )
+
+  if [ -z "$changed_paths" ]; then
+    return 0
+  fi
+
+  local changed_path
+  while IFS= read -r changed_path; do
+    [ -n "$changed_path" ] || continue
+    local verified_blob
+    local current_blob
+    verified_blob=$(git rev-parse "${verified_head}:${changed_path}" 2>/dev/null || printf '__missing__')
+    current_blob=$(git rev-parse "${current_head}:${changed_path}" 2>/dev/null || printf '__missing__')
+    if [ "$verified_blob" != "$current_blob" ]; then
+      return 1
+    fi
+  done <<<"$changed_paths"
+
+  return 0
 }
 
 prepare_gates_coverage_status() {
   local verified_head="$1"
   local current_head="$2"
+  local verified_base="${3:-}"
+  local current_base="${4:-origin/main}"
 
   if [ -z "$verified_head" ]; then
     printf 'missing_verified_head\n'
@@ -187,10 +240,14 @@ prepare_gates_coverage_status() {
     return 1
   fi
 
-  git merge-base --is-ancestor "$verified_head" "$current_head" 2>/dev/null || {
+  if ! git merge-base --is-ancestor "$verified_head" "$current_head" 2>/dev/null; then
+    if prepare_rebased_non_docs_content_matches "$verified_base" "$verified_head" "$current_base" "$current_head"; then
+      printf 'rebased_docsish_delta\n'
+      return 0
+    fi
     printf 'verified_head_not_ancestor\n'
     return 1
-  }
+  fi
 
   local delta_since_verified
   delta_since_verified=$(git diff --name-only "$verified_head".."$current_head" | sort -u)
@@ -282,6 +339,7 @@ prepare_gates() {
   local current_head
   current_head=$(git rev-parse HEAD)
   local previous_last_verified_head=""
+  local previous_gates_base_sha=""
   local previous_full_gates_head=""
   local previous_build_gate_status=""
   local previous_check_gate_status=""
@@ -290,6 +348,7 @@ prepare_gates() {
     # shellcheck disable=SC1091
     source .local/gates.env
     previous_last_verified_head="${LAST_VERIFIED_HEAD_SHA:-}"
+    previous_gates_base_sha="${GATES_BASE_SHA:-}"
     previous_full_gates_head="${FULL_GATES_HEAD_SHA:-}"
     previous_build_gate_status="${BUILD_GATE_STATUS:-}"
     previous_check_gate_status="${CHECK_GATE_STATUS:-}"
@@ -301,7 +360,7 @@ prepare_gates() {
   local build_gate_status=""
   local check_gate_status=""
   local test_gate_status=""
-  if prepare_should_reuse_gates_for_docsish_delta "$previous_last_verified_head"; then
+  if prepare_should_reuse_gates_for_docsish_delta "$previous_last_verified_head" "$previous_gates_base_sha"; then
     reuse_gates=true
   fi
 
@@ -368,6 +427,7 @@ prepare_gates() {
     CHECK_GATE_STATUS "$check_gate_status" \
     TEST_GATE_STATUS "$test_gate_status" \
     LAST_VERIFIED_HEAD_SHA "$current_head" \
+    GATES_BASE_SHA "$(git rev-parse origin/main 2>/dev/null || true)" \
     FULL_GATES_HEAD_SHA "${previous_full_gates_head:-}" \
     GATES_PASSED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     > .local/gates.env

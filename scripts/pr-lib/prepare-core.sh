@@ -199,7 +199,7 @@ prepare_push() {
   local prep_head_sha
   prep_head_sha=$(git rev-parse HEAD)
   local gates_coverage_status
-  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$prep_head_sha"); then
+  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$prep_head_sha" "${GATES_BASE_SHA:-}" origin/main); then
     echo "Prepare gates do not cover the current prep head (status=$gates_coverage_status)."
     echo "Run scripts/pr prepare-gates $pr before prepare-push."
     exit 1
@@ -328,7 +328,7 @@ prepare_sync_head() {
   local prep_head_sha
   prep_head_sha=$(git rev-parse HEAD)
   local gates_coverage_status
-  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$prep_head_sha"); then
+  if ! gates_coverage_status=$(prepare_gates_coverage_status "${LAST_VERIFIED_HEAD_SHA:-}" "$prep_head_sha" "${GATES_BASE_SHA:-}" origin/main); then
     echo "Prepare gates do not cover the current synced prep head (status=$gates_coverage_status)."
     echo "Run scripts/pr prepare-gates $pr before pushing the sync result."
     exit 1
