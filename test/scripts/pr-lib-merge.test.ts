@@ -106,13 +106,13 @@ merge_verify 123
     expect(result.stdout).toContain("status=non_docs_delta");
   });
 
-  it("requires prepare-sync-head before checking gates when the PR is behind main", () => {
-    const repo = createTempDir("openclaw-pr-lib-merge-behind-main-");
+  it("requires an exact prepared head before behind-main drift checks", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-head-changed-");
     mkdirSync(path.join(repo, ".local"), { recursive: true });
-    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-before\n", "utf8");
     writeFileSync(
       path.join(repo, ".local", "gates.env"),
-      "LAST_VERIFIED_HEAD_SHA=prep-after\n",
+      "LAST_VERIFIED_HEAD_SHA=prep-before\n",
       "utf8",
     );
 
@@ -122,6 +122,49 @@ enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
 require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
 verify_prep_branch_matches_prepared_head() { :; }
 prepare_gates_coverage_status() { echo "coverage should not run" >&2; exit 42; }
+mainline_drift_requires_sync() { echo "drift relevance should not run" >&2; exit 42; }
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    cat-file)
+      return 1
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+merge_verify 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("PR head changed after prepare");
+    expect(result.stdout).toContain("expected prep-before, got prep-after");
+    expect(result.stderr).not.toContain("coverage should not run");
+    expect(result.stderr).not.toContain("drift relevance should not run");
+  });
+
+  it("requires gates coverage before relaxing a behind-main PR", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-behind-main-coverage-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-before\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { printf 'non_docs_delta\\n'; return 1; }
+mainline_drift_requires_sync() { echo "drift relevance should not run" >&2; exit 42; }
 pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
 git() {
   case "$1" in
@@ -141,9 +184,114 @@ merge_verify 123
     );
 
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain("PR branch is behind main.");
+    expect(result.stdout).toContain(
+      "PR branch is behind main; checking whether mainline drift is merge-relevant.",
+    );
+    expect(result.stdout).toContain("prepare gates do not cover the current PR head");
+    expect(result.stdout).toContain("status=non_docs_delta");
+    expect(result.stderr).not.toContain("drift relevance should not run");
+  });
+
+  it("allows a behind-main PR when covered gates and drift relevance are safe", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-behind-main-safe-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-after\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { printf 'same_head\\n'; return 0; }
+mainline_drift_requires_sync() { echo "Mainline drift relevance: no overlap with PR files and no critical infra drift."; return 1; }
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+gh() {
+  if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+    if [ "$5" = "--json" ]; then
+      printf '[]\\n'
+    fi
+    return 0
+  fi
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+}
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    merge-base)
+      return 1
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+merge_verify 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "PR branch is behind main; checking whether mainline drift is merge-relevant.",
+    );
+    expect(result.stdout).toContain("prepare gates cover PR head (same_head)");
+    expect(result.stdout).toContain(
+      "mainline drift is not merge-relevant; continuing merge verify",
+    );
+    expect(result.stdout).toContain("merge-verify passed for PR #123");
+  });
+
+  it("requires sync when a behind-main PR has merge-relevant drift", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-behind-main-relevant-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-after\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { printf 'same_head\\n'; return 0; }
+mainline_drift_requires_sync() { echo "Mainline drift relevance: merge conflicts detected; sync required before merge."; return 0; }
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+gh() { echo "required checks should not run" >&2; exit 42; }
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    merge-base)
+      return 1
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+merge_verify 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "PR branch is behind main; checking whether mainline drift is merge-relevant.",
+    );
+    expect(result.stdout).toContain("prepare gates cover PR head (same_head)");
+    expect(result.stdout).toContain("mainline drift requires sync before merge");
     expect(result.stdout).toContain("scripts/pr prepare-sync-head 123");
-    expect(result.stderr).not.toContain("coverage should not run");
+    expect(result.stderr).not.toContain("required checks should not run");
   });
 
   it("continues merge verify when gates cover the prepared head", () => {

@@ -192,12 +192,16 @@ merge_verify() {
     exit 1
   fi
 
+  # Refresh PR metadata snapshot after the head match guard so drift relevance
+  # uses the current reviewed file list (including prepare-stage additions).
+  write_pr_meta_files "$json"
+
   git fetch origin main
   git fetch origin "pull/$pr/head:pr-$pr" --force
+  local pr_is_behind_main=false
   if ! git merge-base --is-ancestor origin/main "pr-$pr"; then
-    echo "PR branch is behind main."
-    echo "Merge verify failed: sync the prepared head before merge: scripts/pr prepare-sync-head $pr"
-    exit 1
+    pr_is_behind_main=true
+    echo "PR branch is behind main; checking whether mainline drift is merge-relevant."
   fi
 
   local gates_coverage_status
@@ -208,6 +212,14 @@ merge_verify() {
     exit 1
   fi
   echo "Merge verify: prepare gates cover PR head ($gates_coverage_status)."
+
+  if [ "$pr_is_behind_main" = "true" ]; then
+    if mainline_drift_requires_sync "$PREP_HEAD_SHA" "$pr"; then
+      echo "Merge verify failed: mainline drift requires sync before merge: scripts/pr prepare-sync-head $pr"
+      exit 1
+    fi
+    echo "Warning: origin/main advanced after prepare, but mainline drift is not merge-relevant; continuing merge verify."
+  fi
 
   gh pr checks "$pr" --required --watch --fail-fast >.local/merge-checks-watch.log 2>&1 || true
   local checks_json
