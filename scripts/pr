@@ -36,6 +36,7 @@ Usage:
   scripts/pr prepare-run <PR>
   scripts/pr merge-verify <PR>
   scripts/pr merge-run <PR>
+  scripts/pr merge-run-auto-sync <PR>
 USAGE
 }
 
@@ -211,6 +212,11 @@ main() {
       local pr="${1-}"
       [ -n "$pr" ] || { usage; exit 2; }
       merge_run "$pr"
+      ;;
+    merge-run-auto-sync)
+      local pr="${1-}"
+      [ -n "$pr" ] || { usage; exit 2; }
+      merge_run_auto_sync "$pr"
       ;;
     *)
       usage

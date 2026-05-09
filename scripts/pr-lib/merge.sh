@@ -1,3 +1,22 @@
+emit_fork_push_warning() {
+  if [ ! -s .local/pr-meta.env ]; then
+    return 0
+  fi
+  # shellcheck disable=SC1091
+  source .local/pr-meta.env
+
+  local base_owner
+  base_owner=$(gh repo view --json owner --jq .owner.login 2>/dev/null || true)
+  if [ -z "$base_owner" ]; then
+    return 0
+  fi
+
+  if [ -n "${PR_HEAD_OWNER:-}" ] && [ "$PR_HEAD_OWNER" != "$base_owner" ]; then
+    echo "Note: this is a fork PR (push target: $PR_HEAD_OWNER/$PR_HEAD_REPO_NAME:$PR_HEAD)."
+    echo "Do NOT push directly to origin; use the scripted flow which pushes to the fork."
+  fi
+}
+
 is_mainline_drift_critical_path_for_merge() {
   local path="$1"
   case "$path" in
@@ -209,6 +228,7 @@ merge_verify() {
     echo "Merge verify failed: prepare gates do not cover the current PR head (status=$gates_coverage_status)."
     echo "If the delta is not limited to docs/changelog files, run scripts/pr prepare-gates $pr before merge."
     echo "If only prepare metadata is stale, refresh it with scripts/pr prepare-sync-head $pr."
+    emit_fork_push_warning
     exit 1
   fi
   echo "Merge verify: prepare gates cover PR head ($gates_coverage_status)."
@@ -216,6 +236,7 @@ merge_verify() {
   if [ "$pr_is_behind_main" = "true" ]; then
     if mainline_drift_requires_sync "$PREP_HEAD_SHA" "$pr"; then
       echo "Merge verify failed: mainline drift requires sync before merge: scripts/pr prepare-sync-head $pr"
+      emit_fork_push_warning
       exit 1
     fi
     echo "Warning: origin/main advanced after prepare, but mainline drift is not merge-relevant; continuing merge verify."
@@ -539,4 +560,34 @@ merge_run() {
   echo "merge author email: $selected_merge_author_email"
   echo "completion comment: $comment_url"
   echo "$pr_url"
+}
+
+merge_run_auto_sync() {
+  local pr="$1"
+  enter_worktree "$pr" false
+
+  # Try merge_verify in a subshell to capture output without exiting on failure.
+  local verify_output verify_rc
+  verify_output=$(merge_verify "$pr" 2>&1) && verify_rc=$? || verify_rc=$?
+
+  if [ "$verify_rc" -eq 0 ]; then
+    # Verify passed — proceed with the full merge_run (which re-runs verify internally).
+    merge_run "$pr"
+    return
+  fi
+
+  # Check if the failure is a drift-requires-sync case (auto-recoverable).
+  if printf '%s\n' "$verify_output" | grep -q "mainline drift requires sync before merge"; then
+    printf '%s\n' "$verify_output"
+    echo ""
+    echo "Auto-sync: running prepare-sync-head --force to resolve mainline drift..."
+    prepare_sync_head "$pr" "true"
+    echo "Auto-sync complete; retrying merge..."
+    merge_run "$pr"
+    return
+  fi
+
+  # Non-recoverable failure — print output and exit.
+  printf '%s\n' "$verify_output"
+  exit "$verify_rc"
 }

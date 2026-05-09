@@ -592,4 +592,214 @@ fi
     expect(result.stdout).toContain("no_sync");
     expect(result.stdout).not.toContain("GitHub changelog patch is scoped");
   });
+
+  it("emits fork push warning when merge_verify fails on a cross-repo PR", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-fork-warn-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-after\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(repo, ".local", "pr-meta.env"),
+      [
+        "PR_HEAD_OWNER=external-user",
+        "PR_HEAD_REPO_NAME=openclaw",
+        "PR_HEAD=fix-branch",
+        "PR_HEAD_REPO=external-user/openclaw",
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { printf 'same_head\\n'; return 0; }
+mainline_drift_requires_sync() { echo "Mainline drift relevance: merge conflicts detected; sync required before merge."; return 0; }
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+gh() {
+  if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+    printf 'openclaw\\n'
+    return 0
+  fi
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+}
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    merge-base)
+      return 1
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+merge_verify 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("mainline drift requires sync before merge");
+    expect(result.stdout).toContain(
+      "Note: this is a fork PR (push target: external-user/openclaw:fix-branch)",
+    );
+    expect(result.stdout).toContain("Do NOT push directly to origin");
+  });
+
+  it("does not emit fork push warning for same-repo PRs", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-same-repo-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-after\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(repo, ".local", "pr-meta.env"),
+      [
+        "PR_HEAD_OWNER=openclaw",
+        "PR_HEAD_REPO_NAME=openclaw",
+        "PR_HEAD=fix-branch",
+        "PR_HEAD_REPO=openclaw/openclaw",
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { printf 'same_head\\n'; return 0; }
+mainline_drift_requires_sync() { echo "Mainline drift relevance: merge conflicts detected; sync required before merge."; return 0; }
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+gh() {
+  if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+    printf 'openclaw\\n'
+    return 0
+  fi
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+}
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    merge-base)
+      return 1
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+merge_verify 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("mainline drift requires sync before merge");
+    expect(result.stdout).not.toContain("fork PR");
+    expect(result.stdout).not.toContain("Do NOT push directly to origin");
+  });
+
+  it("merge_run_auto_sync invokes prepare_sync_head on drift failure then retries", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-auto-sync-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(path.join(repo, ".local", "review.md"), "review\n", "utf8");
+    writeFileSync(path.join(repo, ".local", "review.json"), "{}\n", "utf8");
+    writeFileSync(path.join(repo, ".local", "prep.md"), "prep\n", "utf8");
+    writeFileSync(path.join(repo, ".local", "prep.env"), "PREP_HEAD_SHA=prep-after\n", "utf8");
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "LAST_VERIFIED_HEAD_SHA=prep-after\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(repo, ".local", "pr-meta.env"),
+      [
+        "PR_HEAD_OWNER=external-user",
+        "PR_HEAD_REPO_NAME=openclaw",
+        "PR_HEAD=fix-branch",
+        "PR_HEAD_REPO=external-user/openclaw",
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const result = runMergeShell(
+      `
+SYNC_CALLED=""
+MERGE_RETRY_COUNT=0
+enter_worktree() { cd "$OPENCLAW_TEST_REPO"; }
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+verify_prep_branch_matches_prepared_head() { :; }
+prepare_gates_coverage_status() { printf 'same_head\\n'; return 0; }
+mainline_drift_requires_sync() {
+  if [ -n "$SYNC_CALLED" ]; then
+    return 1
+  fi
+  echo "Mainline drift relevance: merge conflicts detected; sync required before merge."
+  return 0
+}
+prepare_sync_head() {
+  SYNC_CALLED=yes
+  echo "prepare_sync_head called with pr=$1 force=$2"
+}
+pr_meta_json() { printf '%s\\n' '{"isDraft":false,"headRefOid":"prep-after"}'; }
+gh() {
+  if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+    printf 'openclaw\\n'
+    return 0
+  fi
+  if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
+    if [[ "\${5:-}" = "--json" ]]; then
+      printf '[]\\n'
+    fi
+    return 0
+  fi
+  if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+    printf '{"number":123,"title":"test","state":"MERGED","isDraft":false,"author":{"login":"alice"},"labels":[],"mergeCommit":{"oid":"abc123"},"headRefOid":"prep-after","headRefName":"fix-branch","url":"https://github.com/openclaw/openclaw/pull/123"}\\n' | jq -r ".\${5#.}" 2>/dev/null || printf '{"number":123,"title":"test","state":"MERGED","isDraft":false,"author":{"login":"alice"},"labels":[],"mergeCommit":{"oid":"abc123"},"headRefOid":"prep-after","headRefName":"fix-branch","url":"https://github.com/openclaw/openclaw/pull/123"}\\n'
+    return 0
+  fi
+  return 0
+}
+git() {
+  case "$1" in
+    fetch)
+      return 0
+      ;;
+    merge-base)
+      if [ -n "$SYNC_CALLED" ]; then
+        return 0
+      fi
+      return 1
+      ;;
+  esac
+  return 0
+}
+# Override merge_run to avoid the full merge flow; just verify auto-sync was called.
+merge_run() {
+  MERGE_RETRY_COUNT=$((MERGE_RETRY_COUNT + 1))
+  echo "merge_run called (attempt=$MERGE_RETRY_COUNT sync_called=$SYNC_CALLED)"
+}
+merge_run_auto_sync 123
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Auto-sync: running prepare-sync-head --force");
+    expect(result.stdout).toContain("prepare_sync_head called with pr=123 force=true");
+    expect(result.stdout).toContain("merge_run called (attempt=1 sync_called=yes)");
+  });
 });
