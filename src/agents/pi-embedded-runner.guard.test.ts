@@ -73,9 +73,10 @@ describe("guardSessionManager integration", () => {
     expect(serialized).not.toContain("the email is peter@dc.io");
     expect(serialized).not.toContain("contact peter@dc.io");
     expect(serialized).not.toContain("peter@dc.io\\n");
+    expect(serialized).not.toContain('"/tmp/peter@dc.io"');
     expect(serialized).toContain('"thinking":"the email is peter@d***.io"');
     expect(serialized).toContain('"text":"contact peter@d***.io"');
     expect(serialized).toContain('"text":"peter@d***.io\\n"');
-    expect(serialized).toContain('"/tmp/peter@dc.io"');
+    expect(serialized).toContain('"/tmp/peter@d***.io"');
   });
 });
