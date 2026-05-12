@@ -248,7 +248,7 @@ push_prep_head_once() {
     return 2
   fi
 
-  git push --force-with-lease=refs/heads/$pr_head:$lease_sha prhead HEAD:$pr_head >&2
+  git push --force-with-lease=refs/heads/$pr_head:$lease_sha prhead HEAD:$pr_head >&2 || return $?
   printf '%s\n' "$prep_head_sha"
 }
 

@@ -199,6 +199,7 @@ PR_HEAD_SHA_AFTER_PUSH=prep-after
 PUSH_MAIN_STATUS=up_to_date
 EOF_PUSH
 }
+resolve_contributor_coauthor_email() { printf '42+alice@users.noreply.github.com\\n'; }
 gh() {
   if [ "$1" = "api" ] && [ "$2" = "users/alice" ] && [ "$3" = "--jq" ] && [ "$4" = ".id" ]; then
     printf '42\\n'
@@ -286,6 +287,7 @@ PR_HEAD_SHA_AFTER_PUSH=prep-after
 PUSH_MAIN_STATUS=up_to_date
 EOF_PUSH
 }
+resolve_contributor_coauthor_email() { printf '42+alice@users.noreply.github.com\\n'; }
 gh() {
   if [ "$1" = "api" ] && [ "$2" = "users/alice" ] && [ "$3" = "--jq" ] && [ "$4" = ".id" ]; then
     printf '42\\n'
@@ -452,6 +454,7 @@ git() {
   echo "unexpected git invocation: $*" >&2
   exit 1
 }
+OPENCLAW_ALLOW_UNSIGNED_GIT_PUSH=1
 push_prep_head_to_pr_branch 123 feature initial-head stale-remote true false .local/push-result.env
 `,
     );
