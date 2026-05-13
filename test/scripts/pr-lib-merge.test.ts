@@ -358,6 +358,10 @@ cat > CHANGELOG.md <<'EOF_CHANGELOG'
 
 ## Unreleased
 
+### Changes
+
+- Existing change.
+
 ### Fixes
 
 - Existing fix.
@@ -374,7 +378,7 @@ prep=$(git rev-parse HEAD)
 
 git checkout -q "$base"
 git checkout -qb main
-perl -0pi -e 's/- Existing fix\\./- Main fix.\\n- Existing fix./' CHANGELOG.md
+perl -0pi -e 's/- Existing change\\./- Main change.\\n- Existing change./' CHANGELOG.md
 git add CHANGELOG.md
 git commit -qm "main changelog drift"
 git update-ref refs/remotes/origin/main HEAD
@@ -398,7 +402,7 @@ fi
     expect(result.stdout).toContain("requires_sync");
   });
 
-  it("allows changelog drift when the GitHub patch is scoped to the PR entry", () => {
+  it("requires sync when a scoped changelog patch still has merge conflicts", () => {
     const repo = createTempDir("openclaw-pr-lib-merge-changelog-scoped-");
     const result = runMergeShell(
       `
@@ -413,6 +417,10 @@ cat > CHANGELOG.md <<'EOF_CHANGELOG'
 
 ## Unreleased
 
+### Changes
+
+- Existing change.
+
 ### Fixes
 
 - Existing fix.
@@ -422,14 +430,14 @@ git commit -qm "seed changelog"
 base=$(git rev-parse HEAD)
 
 git checkout -qb pr
-perl -0pi -e 's/- Existing fix\\./- PR fix. (#123) Thanks @alice.\\n- Existing fix./' CHANGELOG.md
+perl -0pi -e 's/- Existing fix\\./- PR fix. (#123) Thanks @alice./' CHANGELOG.md
 git add CHANGELOG.md
 git commit -qm "add pr changelog"
 prep=$(git rev-parse HEAD)
 
 git checkout -q "$base"
 git checkout -qb main
-perl -0pi -e 's/- Existing fix\\./- Main fix.\\n- Existing fix./' CHANGELOG.md
+perl -0pi -e 's/- Existing fix\\./- Main fix./' CHANGELOG.md
 git add CHANGELOG.md
 git commit -qm "main changelog drift"
 git update-ref refs/remotes/origin/main HEAD
@@ -458,7 +466,76 @@ fi
     );
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain("merge conflict(s) detected");
+    expect(result.stdout).toContain("requires_sync");
+  });
+
+  it("allows changelog drift when the scoped PR entry has no merge conflicts", () => {
+    const repo = createTempDir("openclaw-pr-lib-merge-changelog-scoped-clean-");
+    const result = runMergeShell(
+      `
+set -euo pipefail
+cd "$OPENCLAW_TEST_REPO"
+git init -q
+git config user.email test@example.com
+git config user.name "Test User"
+mkdir -p .local
+cat > CHANGELOG.md <<'EOF_CHANGELOG'
+# Changelog
+
+## Unreleased
+
+### Changes
+
+- Existing change.
+
+### Fixes
+
+- Existing fix.
+EOF_CHANGELOG
+git add CHANGELOG.md
+git commit -qm "seed changelog"
+base=$(git rev-parse HEAD)
+
+git checkout -qb pr
+perl -0pi -e 's/- Existing fix\\./- PR fix. (#123) Thanks @alice.\\n- Existing fix./' CHANGELOG.md
+git add CHANGELOG.md
+git commit -qm "add pr changelog"
+prep=$(git rev-parse HEAD)
+
+git checkout -q "$base"
+git checkout -qb main
+perl -0pi -e 's/- Existing change\\./- Main change.\\n- Existing change./' CHANGELOG.md
+git add CHANGELOG.md
+git commit -qm "main changelog drift"
+git update-ref refs/remotes/origin/main HEAD
+
+git checkout -q pr
+cat > .local/pr-meta.json <<'EOF_META'
+{"files":[{"path":"CHANGELOG.md"}]}
+EOF_META
+require_artifact() { [ -s "$1" ] || { echo "Missing required artifact: $1"; exit 1; }; }
+gh() {
+  cat <<'EOF_GH'
+@@ -7,5 +7,6 @@
+ ### Fixes
+
++- PR fix. (#123) Thanks @alice.
+ - Existing fix.
+EOF_GH
+}
+if mainline_drift_requires_sync "$prep" 123; then
+  echo "requires_sync"
+else
+  echo "no_sync"
+fi
+`,
+      { OPENCLAW_TEST_REPO: repo },
+    );
+
+    expect(result.status).toBe(0);
     expect(result.stdout).toContain("GitHub changelog patch is scoped to PR #123");
+    expect(result.stdout).toContain("no merge conflicts were detected");
     expect(result.stdout).toContain("no_sync");
   });
 
@@ -477,6 +554,10 @@ cat > CHANGELOG.md <<'EOF_CHANGELOG'
 
 ## Unreleased
 
+### Changes
+
+- Existing change.
+
 ### Fixes
 
 - Existing fix.
@@ -493,7 +574,7 @@ prep=$(git rev-parse HEAD)
 
 git checkout -q "$base"
 git checkout -qb main
-perl -0pi -e 's/- Existing fix\\./- Main fix.\\n- Existing fix./' CHANGELOG.md
+perl -0pi -e 's/- Existing change\\./- Main change.\\n- Existing change./' CHANGELOG.md
 git add CHANGELOG.md
 git commit -qm "main changelog drift"
 git update-ref refs/remotes/origin/main HEAD
@@ -545,21 +626,21 @@ cat > CHANGELOG.md <<'EOF_CHANGELOG'
 
 - Existing fix.
 EOF_CHANGELOG
-printf 'base\\n' > app.txt
+printf 'base one\\nkeep a\\nkeep b\\nkeep c\\nbase two\\n' > app.txt
 git add CHANGELOG.md app.txt
 git commit -qm "seed"
 base=$(git rev-parse HEAD)
 
 git checkout -qb pr
 perl -0pi -e 's/- Existing fix\\./- PR fix. (#123) Thanks @alice.\\n- Existing fix./' CHANGELOG.md
-printf 'pr change\\n' > app.txt
+perl -0pi -e 's/base one/pr change/' app.txt
 git add CHANGELOG.md app.txt
 git commit -qm "pr changes"
 prep=$(git rev-parse HEAD)
 
 git checkout -q "$base"
 git checkout -qb main
-printf 'main change\\n' > app.txt
+perl -0pi -e 's/base two/main change/' app.txt
 git add app.txt
 git commit -qm "main app drift"
 git update-ref refs/remotes/origin/main HEAD

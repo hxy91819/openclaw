@@ -140,6 +140,62 @@ prepare_validate_commit() {
   echo "prep commit subject validated: $subject"
 }
 
+prepare_resolve_contributor_metadata() {
+  local pr="$1"
+  local contrib="$2"
+
+  if [ -z "$contrib" ]; then
+    contrib=$(gh pr view "$pr" --json author --jq .author.login)
+  fi
+
+  local coauthor_email=""
+  if coauthor_email=$(resolve_contributor_coauthor_email "$contrib"); then
+    :
+  else
+    coauthor_email=""
+  fi
+
+  PREPARE_RESOLVED_CONTRIB="$contrib"
+  PREPARE_RESOLVED_COAUTHOR_EMAIL="$coauthor_email"
+}
+
+prepare_write_pushed_head_env() {
+  local pr="$1"
+  local contrib="$2"
+  local pr_head="$3"
+  local pushed_from_sha="$4"
+  local prep_head_sha="$5"
+  local coauthor_email="$6"
+
+  # Security: shell-escape values to prevent command injection via propagated PR_HEAD.
+  printf '%s=%q\n' \
+    PR_NUMBER "${PR_NUMBER:-$pr}" \
+    PR_AUTHOR "$contrib" \
+    PR_URL "${PR_URL:-}" \
+    PR_HEAD "$pr_head" \
+    PR_HEAD_SHA_BEFORE "$pushed_from_sha" \
+    PREP_HEAD_SHA "$prep_head_sha" \
+    COAUTHOR_EMAIL "$coauthor_email" \
+    > .local/prep.env
+}
+
+prepare_append_push_freshness_log() {
+  local pr="$1"
+  local push_main_status="$2"
+  local advanced_guidance="$3"
+
+  if [ "$push_main_status" = "main_advanced_after_push" ]; then
+    cat >> .local/prep.md <<EOF_PREP
+- Push succeeded, but origin/main advanced again before post-push freshness verification.
+- $advanced_guidance
+EOF_PREP
+  else
+    cat >> .local/prep.md <<'EOF_PREP'
+- Verified PR head contains origin/main.
+EOF_PREP
+  fi
+}
+
 prepare_push() {
   local pr="$1"
   enter_worktree "$pr" false
@@ -225,15 +281,9 @@ prepare_push() {
   local pr_head_sha_after="$PR_HEAD_SHA_AFTER_PUSH"
   local push_main_status="${PUSH_MAIN_STATUS:-up_to_date}"
 
-  if [ -z "$contrib" ]; then
-    contrib=$(gh pr view "$pr" --json author --jq .author.login)
-  fi
-  local coauthor_email=""
-  if coauthor_email=$(resolve_contributor_coauthor_email "$contrib"); then
-    :
-  else
-    coauthor_email=""
-  fi
+  prepare_resolve_contributor_metadata "$pr" "$contrib"
+  contrib="$PREPARE_RESOLVED_CONTRIB"
+  local coauthor_email="$PREPARE_RESOLVED_COAUTHOR_EMAIL"
 
   cat >> .local/prep.md <<EOF_PREP
 - Prepare-stage changelog status: $changelog_status.
@@ -244,27 +294,8 @@ prepare_push() {
 - Verified PR head SHA matches local prep HEAD.
 EOF_PREP
 
-  if [ "$push_main_status" = "main_advanced_after_push" ]; then
-    cat >> .local/prep.md <<EOF_PREP
-- Push succeeded, but origin/main advanced again before post-push freshness verification.
-- Use scripts/pr prepare-sync-head $pr for the next lightweight sync/push cycle if the new mainline drift is relevant.
-EOF_PREP
-  else
-    cat >> .local/prep.md <<'EOF_PREP'
-- Verified PR head contains origin/main.
-EOF_PREP
-  fi
-
-  # Security: shell-escape values to prevent command injection via propagated PR_HEAD.
-  printf '%s=%q\n' \
-    PR_NUMBER "$PR_NUMBER" \
-    PR_AUTHOR "$contrib" \
-    PR_URL "${PR_URL:-}" \
-    PR_HEAD "$PR_HEAD" \
-    PR_HEAD_SHA_BEFORE "$pushed_from_sha" \
-    PREP_HEAD_SHA "$prep_head_sha" \
-    COAUTHOR_EMAIL "$coauthor_email" \
-    > .local/prep.env
+  prepare_append_push_freshness_log "$pr" "$push_main_status" "Use scripts/pr prepare-sync-head $pr for the next lightweight sync/push cycle if the new mainline drift is relevant."
+  prepare_write_pushed_head_env "$pr" "$contrib" "$PR_HEAD" "$pushed_from_sha" "$prep_head_sha" "$coauthor_email"
 
   ls -la .local/prep.md .local/prep.env >/dev/null
 
@@ -297,9 +328,9 @@ prepare_sync_head() {
   source .local/gates.env
 
   local rebased=false
+  local rebase_count="${PREP_REBASE_COUNT:-0}"
   git fetch origin main
   if ! git merge-base --is-ancestor origin/main HEAD; then
-    local rebase_count="${PREP_REBASE_COUNT:-0}"
     if ! prepare_sync_rebase_allowed "$rebase_count" "$force_rebase"; then
       echo "prepare-sync-head already rebased this prep branch once; stop here and merge from the current prepared head, or re-run with --force if another rebase is intentional."
       exit 1
@@ -347,47 +378,21 @@ prepare_sync_head() {
   local pr_head_sha_after="$PR_HEAD_SHA_AFTER_PUSH"
   local push_main_status="${PUSH_MAIN_STATUS:-up_to_date}"
 
-  local contrib="${PR_AUTHOR:-}"
-  if [ -z "$contrib" ]; then
-    contrib=$(gh pr view "$pr" --json author --jq .author.login)
-  fi
-  local coauthor_email=""
-  if coauthor_email=$(resolve_contributor_coauthor_email "$contrib"); then
-    :
-  else
-    coauthor_email=""
-  fi
+  prepare_resolve_contributor_metadata "$pr" "${PR_AUTHOR:-}"
+  local contrib="$PREPARE_RESOLVED_CONTRIB"
+  local coauthor_email="$PREPARE_RESOLVED_COAUTHOR_EMAIL"
 
   cat >> .local/prep.md <<EOF_PREP
 - Prep head sync completed to branch $PR_HEAD.
 - Rebased onto origin/main: $rebased.
-- Prepare sync rebase count: ${PREP_REBASE_COUNT:-0}.
+- Prepare sync rebase count: $rebase_count.
 - Verified PR head SHA matches local prep HEAD.
 - Prepare gates reran automatically when the sync rebase changed the prep head.
 - Gate coverage for pushed head: $gates_coverage_status.
 EOF_PREP
 
-  if [ "$push_main_status" = "main_advanced_after_push" ]; then
-    cat >> .local/prep.md <<EOF_PREP
-- Push succeeded, but origin/main advanced again before post-push freshness verification.
-- Another full prepare rerun is not required; use scripts/pr prepare-sync-head $pr again only if that drift is relevant.
-EOF_PREP
-  else
-    cat >> .local/prep.md <<'EOF_PREP'
-- Verified PR head contains origin/main.
-EOF_PREP
-  fi
-
-  # Security: shell-escape values to prevent command injection via propagated PR_HEAD.
-  printf '%s=%q\n' \
-    PR_NUMBER "$PR_NUMBER" \
-    PR_AUTHOR "$contrib" \
-    PR_URL "${PR_URL:-}" \
-    PR_HEAD "$PR_HEAD" \
-    PR_HEAD_SHA_BEFORE "$pushed_from_sha" \
-    PREP_HEAD_SHA "$prep_head_sha" \
-    COAUTHOR_EMAIL "$coauthor_email" \
-    > .local/prep.env
+  prepare_append_push_freshness_log "$pr" "$push_main_status" "Another full prepare rerun is not required; use scripts/pr prepare-sync-head $pr again only if that drift is relevant."
+  prepare_write_pushed_head_env "$pr" "$contrib" "$PR_HEAD" "$pushed_from_sha" "$prep_head_sha" "$coauthor_email"
 
   ls -la .local/prep.md .local/prep.env >/dev/null
 

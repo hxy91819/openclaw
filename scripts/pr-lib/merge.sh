@@ -133,9 +133,27 @@ mainline_drift_requires_sync() {
   if [ "$overlap_count" -gt 0 ] || [ "$critical_count" -gt 0 ]; then
     local merge_base
     merge_base=$(git merge-base "$prep_head_sha" origin/main 2>/dev/null || true)
+    if [ -z "$merge_base" ]; then
+      echo "Mainline drift relevance: unable to compute merge base; sync required before merge."
+      print_file_list_with_limit "Mainline files overlapping PR touched files" "$overlap_file"
+      print_file_list_with_limit "Mainline files touching merge-critical infrastructure" "$critical_file"
+      rm -f "$delta_file" "$pr_files_file" "$overlap_file" "$critical_file"
+      return 0
+    fi
+
+    local conflict_count
+    conflict_count=$(git merge-tree "$merge_base" "$prep_head_sha" origin/main 2>/dev/null | grep -c '^[+[:space:]]*<<<<<<<' || true)
+    if [ "$conflict_count" -gt 0 ]; then
+      echo "Mainline drift relevance: $conflict_count merge conflict(s) detected; sync required before merge."
+      print_file_list_with_limit "Mainline files overlapping PR touched files" "$overlap_file"
+      print_file_list_with_limit "Mainline files touching merge-critical infrastructure" "$critical_file"
+      rm -f "$delta_file" "$pr_files_file" "$overlap_file" "$critical_file"
+      return 0
+    fi
+
     if changelog_is_only_overlapping_pr_file "$overlap_file" && pr_touches_changelog "$pr_files_file"; then
       if [ -n "$pr" ] && github_changelog_patch_is_scoped_to_pr "$pr"; then
-        echo "Mainline drift relevance: PR touches CHANGELOG.md, but the GitHub changelog patch is scoped to PR #$pr; safe to merge without sync."
+        echo "Mainline drift relevance: PR touches CHANGELOG.md, the GitHub changelog patch is scoped to PR #$pr, and no merge conflicts were detected; safe to merge without sync."
         print_file_list_with_limit "Mainline files overlapping PR touched files" "$overlap_file"
         print_file_list_with_limit "Mainline files touching merge-critical infrastructure" "$critical_file"
         rm -f "$delta_file" "$pr_files_file" "$overlap_file" "$critical_file"
@@ -147,24 +165,11 @@ mainline_drift_requires_sync() {
       rm -f "$delta_file" "$pr_files_file" "$overlap_file" "$critical_file"
       return 0
     fi
-    if [ -n "$merge_base" ]; then
-      local conflict_count
-      conflict_count=$(git merge-tree "$merge_base" "$prep_head_sha" origin/main 2>/dev/null | grep -c "^<<<<<<<" || true)
-      if [ "$conflict_count" -eq 0 ]; then
-        echo "Mainline drift relevance: overlapping files detected but no merge conflicts; safe to merge without sync."
-        print_file_list_with_limit "Mainline files overlapping PR touched files" "$overlap_file"
-        print_file_list_with_limit "Mainline files touching merge-critical infrastructure" "$critical_file"
-        rm -f "$delta_file" "$pr_files_file" "$overlap_file" "$critical_file"
-        return 1
-      fi
-      echo "Mainline drift relevance: $conflict_count merge conflict(s) detected; sync required before merge."
-    else
-      echo "Mainline drift relevance: unable to compute merge base; sync required before merge."
-    fi
+    echo "Mainline drift relevance: overlapping files detected but no merge conflicts; safe to merge without sync."
     print_file_list_with_limit "Mainline files overlapping PR touched files" "$overlap_file"
     print_file_list_with_limit "Mainline files touching merge-critical infrastructure" "$critical_file"
     rm -f "$delta_file" "$pr_files_file" "$overlap_file" "$critical_file"
-    return 0
+    return 1
   fi
 
   echo "Mainline drift relevance: no overlap with PR files and no critical infra drift."
@@ -274,27 +279,6 @@ merge_verify() {
   fi
 
   echo "merge-verify passed for PR #$pr"
-}
-
-refresh_merge_prep_metadata() {
-  local pr="$1"
-  local prep_head_sha="$2"
-  local pushed_from_sha="$3"
-  local contrib="$4"
-
-  local contrib_id
-  contrib_id=$(gh api "users/$contrib" --jq .id)
-  local coauthor_email="${contrib_id}+${contrib}@users.noreply.github.com"
-
-  printf '%s=%q\n' \
-    PR_NUMBER "$pr" \
-    PR_AUTHOR "$contrib" \
-    PR_URL "${PR_URL:-}" \
-    PR_HEAD "$PR_HEAD" \
-    PR_HEAD_SHA_BEFORE "$pushed_from_sha" \
-    PREP_HEAD_SHA "$prep_head_sha" \
-    COAUTHOR_EMAIL "$coauthor_email" \
-    > .local/prep.env
 }
 
 write_merge_prep_log_entry() {

@@ -369,6 +369,108 @@ prepare_push 123
     expect(result.stdout).toContain("Prepare gates do not cover the current prep head");
     expect(result.stdout).toContain("Run scripts/pr prepare-gates 123 before prepare-push.");
   });
+
+  it("pushes a synced rebase result and refreshes PREP_HEAD_SHA", () => {
+    const repo = createTempDir("openclaw-pr-lib-prepare-sync-head-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+    writeFileSync(
+      path.join(repo, ".local", "pr-meta.env"),
+      "PR_HEAD=feature\nPR_AUTHOR=alice\nPR_URL=https://example.test/pr/123\nPR_NUMBER=123\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(repo, ".local", "prep-context.env"),
+      [
+        "PR_NUMBER=123",
+        "PR_HEAD=feature",
+        "PR_HEAD_SHA_BEFORE=remote-before",
+        "PREP_BRANCH=pr-123-prep",
+        "PREP_REBASE_COUNT=0",
+        "PREP_STARTED_AT=2026-05-13T00:00:00Z",
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(repo, ".local", "gates.env"),
+      "CHANGELOG_REQUIRED=false\nDOCS_ONLY=false\nLAST_VERIFIED_HEAD_SHA=old-prep\n",
+      "utf8",
+    );
+    writeFileSync(path.join(repo, ".local", "prep.md"), "# prep\n", "utf8");
+
+    const output = runPrepareCoreShell(
+      repo,
+      `
+enter_worktree() { :; }
+require_artifact() { [ -s "$1" ] || { echo "missing $1" >&2; exit 1; }; }
+checkout_prep_branch() { :; }
+verify_pr_head_branch_matches_expected() { :; }
+prepare_gates() {
+  cat > .local/gates.env <<'EOF_GATES'
+CHANGELOG_REQUIRED=false
+DOCS_ONLY=false
+LAST_VERIFIED_HEAD_SHA=synced-head
+EOF_GATES
+}
+prepare_gates_coverage_status() { printf 'same_head\\n'; return 0; }
+push_prep_head_to_pr_branch() {
+  cat > "$7" <<'EOF_PUSH'
+PUSH_PREP_HEAD_SHA=synced-head
+PUSHED_FROM_SHA=remote-before
+PR_HEAD_SHA_AFTER_PUSH=synced-head
+PUSH_MAIN_STATUS=up_to_date
+EOF_PUSH
+}
+resolve_contributor_coauthor_email() { printf '42+alice@users.noreply.github.com\\n'; }
+gh() {
+  if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "123" ] && [ "$4" = "--json" ] && [ "$5" = "headRefOid" ] && [ "$6" = "--jq" ] && [ "$7" = ".headRefOid" ]; then
+    printf 'remote-before\\n'
+    return 0
+  fi
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+}
+git() {
+  case "$1" in
+    fetch|rebase)
+      return 0
+      ;;
+    merge-base)
+      return 1
+      ;;
+    rev-parse)
+      if [ "$2" = "HEAD" ]; then
+        printf 'synced-head\\n'
+        return 0
+      fi
+      ;;
+    branch)
+      if [ "$2" = "--show-current" ]; then
+        printf 'pr-123-prep\\n'
+        return 0
+      fi
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+prepare_sync_head 123 false
+`,
+    );
+
+    expect(output).toContain("prepare-sync-head complete");
+    expect(output).toContain("prep_head_sha=synced-head");
+    expect(output).toContain("pr_head_sha=synced-head");
+
+    const prepContext = readFileSync(path.join(repo, ".local", "prep-context.env"), "utf8");
+    expect(prepContext).toContain("PREP_REBASE_COUNT=1");
+
+    const prepLog = readFileSync(path.join(repo, ".local", "prep.md"), "utf8");
+    expect(prepLog).toContain("Prepare sync rebase count: 1.");
+
+    const prepEnv = readFileSync(path.join(repo, ".local", "prep.env"), "utf8");
+    expect(prepEnv).toContain("PREP_HEAD_SHA=synced-head");
+    expect(prepEnv).toContain("PR_HEAD_SHA_BEFORE=remote-before");
+  });
 });
 
 describe("scripts/pr-lib/worktree.sh", () => {
