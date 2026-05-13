@@ -69,4 +69,97 @@ describe("buildEmbeddedExtensionFactories", () => {
     expect(seenToolCallIds[1]).toMatch(/^pi-/);
     expect(seenToolCallIds[0]).not.toBe(seenToolCallIds[1]);
   });
+
+  it("marks status-error tool results as model-visible failures", async () => {
+    setActivePluginRegistry(createEmptyPluginRegistry());
+
+    const factories = buildEmbeddedExtensionFactories({
+      cfg: undefined,
+      sessionManager: SessionManager.inMemory(),
+      provider: "openai",
+      modelId: "gpt-5.4",
+      model: undefined,
+    });
+
+    const handlers = new Map<string, Function>();
+    await factories[0]?.({
+      on(event: string, handler: Function) {
+        handlers.set(event, handler);
+      },
+    } as never);
+    const handler = handlers.get("tool_result");
+    const content = [{ type: "text", text: "oldText must be unique" }];
+    const details = {
+      status: "error",
+      tool: "edit",
+      error: "oldText must be unique",
+    };
+
+    const result = await handler?.(
+      {
+        toolName: "edit",
+        toolCallId: "call-edit",
+        content,
+        details,
+        isError: false,
+      },
+      { cwd: "/tmp" },
+    );
+
+    expect(result).toEqual({
+      content,
+      details,
+      isError: true,
+    });
+  });
+
+  it("preserves model-visible failures when middleware rewrites details", async () => {
+    const registry = createEmptyPluginRegistry();
+    registry.agentToolResultMiddlewares.push({
+      pluginId: "redactor",
+      pluginName: "redactor",
+      rawHandler: () => undefined,
+      handler: (event) => {
+        event.result.content = [{ type: "text", text: "redacted error" }];
+        event.result.details = { redacted: true };
+        return undefined;
+      },
+      runtimes: ["pi"],
+      source: "test",
+    });
+    setActivePluginRegistry(registry);
+
+    const factories = buildEmbeddedExtensionFactories({
+      cfg: undefined,
+      sessionManager: SessionManager.inMemory(),
+      provider: "openai",
+      modelId: "gpt-5.4",
+      model: undefined,
+    });
+
+    const handlers = new Map<string, Function>();
+    await factories[0]?.({
+      on(event: string, handler: Function) {
+        handlers.set(event, handler);
+      },
+    } as never);
+    const handler = handlers.get("tool_result");
+
+    const result = await handler?.(
+      {
+        toolName: "edit",
+        toolCallId: "call-edit",
+        content: [{ type: "text", text: "oldText must be unique" }],
+        details: { status: "error", tool: "edit", error: "oldText must be unique" },
+        isError: false,
+      },
+      { cwd: "/tmp" },
+    );
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: "redacted error" }],
+      details: { redacted: true },
+      isError: true,
+    });
+  });
 });
