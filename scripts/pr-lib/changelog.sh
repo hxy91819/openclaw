@@ -211,187 +211,32 @@ normalize_pr_changelog_entries() {
 
   [ -f "$changelog_path" ] || return 0
 
-  PR_NUMBER_FOR_CHANGELOG="$pr" node <<'EOF_NODE'
-const fs = require("node:fs");
+  local changelog_helper_root
+  changelog_helper_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+  local tsx_import
+  tsx_import="$changelog_helper_root/node_modules/tsx/dist/esm/index.mjs"
 
-const pr = process.env.PR_NUMBER_FOR_CHANGELOG;
+  PR_NUMBER_FOR_CHANGELOG="$pr" OPENCLAW_CHANGELOG_HELPER_ROOT="$changelog_helper_root" node --import "$tsx_import" --input-type=module <<'EOF_NODE'
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const helperRoot = process.env.OPENCLAW_CHANGELOG_HELPER_ROOT;
+if (!helperRoot) {
+  throw new Error("Missing OPENCLAW_CHANGELOG_HELPER_ROOT.");
+}
+const helperUrl = pathToFileURL(`${helperRoot}/src/infra/changelog-unreleased.ts`).href;
+const { normalizeUnreleasedChangelogPrEntry } = await import(helperUrl);
+
+const prNumber = Number.parseInt(process.env.PR_NUMBER_FOR_CHANGELOG ?? "", 10);
+if (!Number.isFinite(prNumber)) {
+  throw new Error(`Invalid PR number for changelog normalization: ${process.env.PR_NUMBER_FOR_CHANGELOG ?? ""}`);
+}
+
 const path = "CHANGELOG.md";
-const original = fs.readFileSync(path, "utf8");
-const lines = original.split("\n");
-const prPattern = new RegExp(`(?:\\(#${pr}\\)|openclaw#${pr})`, "i");
-
-function findActiveSectionIndex(arr) {
-  const versionUnreleasedIndex = arr.findIndex((line) =>
-    /^##\s+.+\(\s*unreleased\s*\)\s*$/i.test(line.trim()),
-  );
-  if (versionUnreleasedIndex !== -1) {
-    return versionUnreleasedIndex;
-  }
-  return arr.findIndex((line) => line.trim().toLowerCase() === "## unreleased");
-}
-
-function findSectionEnd(arr, start) {
-  for (let i = start + 1; i < arr.length; i += 1) {
-    if (/^## /.test(arr[i])) {
-      return i;
-    }
-  }
-  return arr.length;
-}
-
-function ensureActiveSection(arr) {
-  let activeIndex = findActiveSectionIndex(arr);
-  if (activeIndex !== -1) {
-    return activeIndex;
-  }
-
-  let insertAt = arr.findIndex((line, idx) => idx > 0 && /^## /.test(line));
-  if (insertAt === -1) {
-    insertAt = arr.length;
-  }
-
-  const block = ["## Unreleased", "", "### Changes", ""];
-  if (insertAt > 0 && arr[insertAt - 1] !== "") {
-    block.unshift("");
-  }
-  arr.splice(insertAt, 0, ...block);
-  return findActiveSectionIndex(arr);
-}
-
-function contextFor(arr, index) {
-  let major = "";
-  let minor = "";
-  for (let i = index; i >= 0; i -= 1) {
-    const line = arr[i];
-    if (!minor && /^### /.test(line)) {
-      minor = line.trim();
-    }
-    if (/^## /.test(line)) {
-      major = line.trim();
-      break;
-    }
-  }
-  return { major, minor };
-}
-
-function ensureSubsection(arr, subsection) {
-  const activeIndex = ensureActiveSection(arr);
-  const activeEnd = findSectionEnd(arr, activeIndex);
-  const desired = subsection && /^### /.test(subsection) ? subsection : "### Changes";
-  for (let i = activeIndex + 1; i < activeEnd; i += 1) {
-    if (arr[i].trim() === desired) {
-      return i;
-    }
-  }
-
-  let insertAt = activeEnd;
-  while (insertAt > activeIndex + 1 && arr[insertAt - 1] === "") {
-    insertAt -= 1;
-  }
-  const block = ["", desired, ""];
-  arr.splice(insertAt, 0, ...block);
-  return insertAt + 1;
-}
-
-function sectionTailInsertIndex(arr, subsectionIndex) {
-  let nextHeading = arr.length;
-  for (let i = subsectionIndex + 1; i < arr.length; i += 1) {
-    if (/^### /.test(arr[i]) || /^## /.test(arr[i])) {
-      nextHeading = i;
-      break;
-    }
-  }
-
-  let insertAt = nextHeading;
-  while (insertAt > subsectionIndex + 1 && arr[insertAt - 1] === "") {
-    insertAt -= 1;
-  }
-  return insertAt;
-}
-
-const activeHeading = lines[ensureActiveSection(lines)]?.trim() || "## Unreleased";
-
-function extractPrNumberFromLine(line) {
-  // Align with the TS helper: use only the first PR reference as the sort key.
-  const match = line.match(/(?:\(#(\d+)\)|openclaw#(\d+))/i);
-  const raw = match && (match[1] || match[2]);
-  if (!raw) {
-    return undefined;
-  }
-  const num = Number.parseInt(raw, 10);
-  return Number.isFinite(num) ? num : undefined;
-}
-
-function orderedInsertIndex(arr, subsectionIndex, nextHeading, newPr) {
-  // Entries without a PR reference keep the previous tail-insert behavior.
-  if (newPr === undefined) {
-    return sectionTailInsertIndex(arr, subsectionIndex);
-  }
-  for (let i = subsectionIndex + 1; i < nextHeading; i += 1) {
-    const line = arr[i];
-    if (!/^- /.test(line)) {
-      continue;
-    }
-    const existing = extractPrNumberFromLine(line);
-    if (existing === undefined) {
-      continue;
-    }
-    if (existing > newPr) {
-      return i;
-    }
-  }
-  return sectionTailInsertIndex(arr, subsectionIndex);
-}
-
-const moved = [];
-for (let i = 0; i < lines.length; i += 1) {
-  if (!prPattern.test(lines[i])) {
-    continue;
-  }
-  const ctx = contextFor(lines, i);
-  if (ctx.major === activeHeading) {
-    continue;
-  }
-  moved.push({
-    line: lines[i],
-    subsection: ctx.minor || "### Changes",
-    index: i,
-  });
-}
-
-if (moved.length === 0) {
-  process.exit(0);
-}
-
-const removeIndexes = new Set(moved.map((entry) => entry.index));
-const nextLines = lines.filter((_, idx) => !removeIndexes.has(idx));
-
-for (const entry of moved) {
-  const subsectionIndex = ensureSubsection(nextLines, entry.subsection);
-
-  let nextHeading = nextLines.length;
-  for (let i = subsectionIndex + 1; i < nextLines.length; i += 1) {
-    if (/^### /.test(nextLines[i]) || /^## /.test(nextLines[i])) {
-      nextHeading = i;
-      break;
-    }
-  }
-
-  const alreadyPresent = nextLines
-    .slice(subsectionIndex + 1, nextHeading)
-    .some((line) => line === entry.line);
-  if (alreadyPresent) {
-    continue;
-  }
-
-  const newPr = extractPrNumberFromLine(entry.line);
-  const insertAt = orderedInsertIndex(nextLines, subsectionIndex, nextHeading, newPr);
-  nextLines.splice(insertAt, 0, entry.line);
-}
-
-const updated = nextLines.join("\n");
+const original = readFileSync(path, "utf8");
+const updated = normalizeUnreleasedChangelogPrEntry(original, { prNumber });
 if (updated !== original) {
-  fs.writeFileSync(path, updated);
+  writeFileSync(path, updated);
 }
 EOF_NODE
 }

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { appendUnreleasedChangelogEntry } from "./changelog-unreleased.js";
+import {
+  appendUnreleasedChangelogEntry,
+  normalizeUnreleasedChangelogPrEntry,
+} from "./changelog-unreleased.js";
 
 const baseChangelog = `# Changelog
 
@@ -375,6 +378,63 @@ describe("appendUnreleasedChangelogEntry", () => {
 
     expect(next).toContain("- longer PR (#6767)");
     expect(next).toContain("- shorter PR (#67)");
+  });
+
+  it("repositions an active PR entry into the local numeric changelog gap", () => {
+    const content = `# Changelog
+
+## Unreleased
+
+### Fixes
+
+- Later fix (#80876). Thanks @kinjitakabe.
+- Older fix (#77820). Thanks @KrasimirKralev.
+- Much older fix (#74057). Thanks @brokemac79.
+- Config: reject auto-managed meta paths (#80856). Thanks @ai-hpc.
+
+## 2026.4.5
+`;
+
+    const next = normalizeUnreleasedChangelogPrEntry(content, { prNumber: 80856 });
+
+    expect(next).toBe(`# Changelog
+
+## Unreleased
+
+### Fixes
+
+- Later fix (#80876). Thanks @kinjitakabe.
+- Config: reject auto-managed meta paths (#80856). Thanks @ai-hpc.
+- Older fix (#77820). Thanks @KrasimirKralev.
+- Much older fix (#74057). Thanks @brokemac79.
+
+## 2026.4.5
+`);
+  });
+
+  it("moves a released PR entry back into the active Unreleased block", () => {
+    const content = `# Changelog
+
+## 2026.4.24 (Unreleased)
+
+### Changes
+
+### Fixes
+
+## 2026.4.23
+
+### Fixes
+
+- Fix release checks (#66884). Thanks @alexlomt.
+`;
+
+    const next = normalizeUnreleasedChangelogPrEntry(content, { prNumber: 66884 });
+
+    expect(next).toContain("## 2026.4.24 (Unreleased)");
+    expect(next).not.toContain("## Unreleased\n\n### Changes");
+    expect(next.indexOf("- Fix release checks (#66884). Thanks @alexlomt.")).toBeLessThan(
+      next.indexOf("## 2026.4.23"),
+    );
   });
 
   it("throws when the unreleased section is missing", () => {

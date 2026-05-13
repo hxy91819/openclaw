@@ -103,6 +103,80 @@ function findSectionRange(
   return { start: sectionIndex, bodyStart: sectionIndex + 1, bodyEnd };
 }
 
+function findSectionBodyEnd(lines: string[], subsectionIndex: number): number {
+  let bodyEnd = lines.length;
+  for (let index = subsectionIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.startsWith("### ") || line.startsWith("## ")) {
+      bodyEnd = index;
+      break;
+    }
+  }
+  while (bodyEnd > subsectionIndex + 1 && lines[bodyEnd - 1]?.trim() === "") {
+    bodyEnd -= 1;
+  }
+  return bodyEnd;
+}
+
+function ensureUnreleasedHeadingIndex(lines: string[]): number {
+  const existingIndex = findUnreleasedHeadingIndex(lines);
+  if (existingIndex !== -1) {
+    return existingIndex;
+  }
+
+  let insertAt = lines.findIndex((line, index) => index > 0 && line.startsWith("## "));
+  if (insertAt === -1) {
+    insertAt = lines.length;
+  }
+
+  const block = ["## Unreleased", "", "### Changes", ""];
+  if (insertAt > 0 && lines[insertAt - 1] !== "") {
+    block.unshift("");
+  }
+  lines.splice(insertAt, 0, ...block);
+  return findUnreleasedHeadingIndex(lines);
+}
+
+function ensureSubsectionIndex(lines: string[], subsection: string): number {
+  const unreleasedIndex = ensureUnreleasedHeadingIndex(lines);
+  const unreleasedEnd = findUnreleasedRange(lines)?.end ?? lines.length;
+  const desired = subsection.startsWith("### ") ? subsection : "### Changes";
+
+  for (let index = unreleasedIndex + 1; index < unreleasedEnd; index += 1) {
+    if (lines[index]?.trim() === desired) {
+      return index;
+    }
+  }
+
+  let insertAt = unreleasedEnd;
+  while (insertAt > unreleasedIndex + 1 && lines[insertAt - 1] === "") {
+    insertAt -= 1;
+  }
+  const block = ["", desired, ""];
+  lines.splice(insertAt, 0, ...block);
+  return insertAt + 1;
+}
+
+function headingContextForLine(
+  lines: string[],
+  index: number,
+): { release: string; subsection: string } {
+  let release = "";
+  let subsection = "";
+  for (let cursor = index; cursor >= 0; cursor -= 1) {
+    const line = lines[cursor] ?? "";
+    if (!subsection && line.startsWith("### ")) {
+      subsection = line.trim();
+      continue;
+    }
+    if (line.startsWith("## ")) {
+      release = line.trim();
+      break;
+    }
+  }
+  return { release, subsection };
+}
+
 function resolveOrderedInsertIndex(
   lines: string[],
   bodyStart: number,
@@ -225,4 +299,62 @@ export function appendUnreleasedChangelogEntry(
   // Non-empty subsections only need the new bullet line.
   lines.splice(insertAt, 0, bullet);
   return lines.join("\n");
+}
+
+export function normalizeUnreleasedChangelogPrEntry(
+  content: string,
+  params: {
+    prNumber: number;
+  },
+): string {
+  const { prNumber } = params;
+  if (!Number.isFinite(prNumber)) {
+    throw new Error("PR number must be a finite number.");
+  }
+
+  const lines = content.split("\n");
+  ensureUnreleasedHeadingIndex(lines);
+  const entries: Array<{ line: string; subsection: string; index: number }> = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (extractPrNumber(line) !== prNumber) {
+      continue;
+    }
+
+    const context = headingContextForLine(lines, index);
+    entries.push({
+      line,
+      subsection: context.subsection || "### Changes",
+      index,
+    });
+  }
+
+  if (entries.length === 0) {
+    return content;
+  }
+
+  const removeIndexes = new Set(entries.map((entry) => entry.index));
+  const nextLines = lines.filter((_, index) => !removeIndexes.has(index));
+  const reinserted = new Set<string>();
+
+  for (const entry of entries) {
+    const dedupeKey = `${entry.subsection}\0${entry.line}`;
+    if (reinserted.has(dedupeKey)) {
+      continue;
+    }
+    reinserted.add(dedupeKey);
+
+    const subsectionIndex = ensureSubsectionIndex(nextLines, entry.subsection);
+    const bodyEnd = findSectionBodyEnd(nextLines, subsectionIndex);
+    const insertAt = resolveOrderedInsertIndex(
+      nextLines,
+      subsectionIndex + 1,
+      bodyEnd,
+      extractPrNumber(entry.line),
+    );
+    nextLines.splice(insertAt, 0, entry.line);
+  }
+
+  return nextLines.join("\n");
 }

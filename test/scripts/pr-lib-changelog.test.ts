@@ -204,6 +204,37 @@ describe("scripts/pr-lib/changelog.sh", () => {
     );
   });
 
+  it("repositions an active PR entry into the local numeric changelog gap", () => {
+    const repo = createTempDir("openclaw-pr-lib-changelog-normalize-active-order-");
+    writeFileSync(
+      path.join(repo, "CHANGELOG.md"),
+      [
+        "# Changelog",
+        "",
+        "## Unreleased",
+        "",
+        "### Fixes",
+        "",
+        "- Later fix (#80876). Thanks @kinjitakabe.",
+        "- Older fix (#77820). Thanks @KrasimirKralev.",
+        "- Much older fix (#74057). Thanks @brokemac79.",
+        "- Config: reject auto-managed meta paths (#80856). Thanks @ai-hpc.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    evaluateShell(repo, "normalize_pr_changelog_entries 80856");
+
+    const changelog = readFileSync(path.join(repo, "CHANGELOG.md"), "utf8");
+    expect(changelog.indexOf("Later fix (#80876)")).toBeLessThan(
+      changelog.indexOf("Config: reject auto-managed meta paths (#80856)"),
+    );
+    expect(changelog.indexOf("Config: reject auto-managed meta paths (#80856)")).toBeLessThan(
+      changelog.indexOf("Older fix (#77820)"),
+    );
+  });
+
   it("maps bug-fix labels to the Fixes section", () => {
     const output = evaluateShell(
       process.cwd(),
