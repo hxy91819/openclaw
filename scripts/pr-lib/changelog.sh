@@ -18,6 +18,14 @@ build_default_pr_changelog_entry() {
   printf '%s (#%s).\n' "$trimmed_title" "$pr"
 }
 
+changelog_helper_root() {
+  cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
+}
+
+changelog_attribution_script() {
+  printf '%s\n' "$(changelog_helper_root)/scripts/check-changelog-attributions.mjs"
+}
+
 changelog_file_hash() {
   local path="$1"
   if command -v sha256sum >/dev/null 2>&1; then
@@ -242,21 +250,21 @@ EOF_NODE
 }
 
 validate_changelog_attribution_policy() {
-  node scripts/check-changelog-attributions.mjs CHANGELOG.md
+  node "$(changelog_attribution_script)" CHANGELOG.md
 }
 
 changelog_thanks_required_for_contributor() {
   local contrib="${1:-}"
-  local normalized
-  normalized=$(printf '%s' "$contrib" | tr '[:upper:]' '[:lower:]')
-
-  case "$normalized" in
-    ""|"null"|"app/"*|"codex"|"openclaw"|"clawsweeper"|"openclaw-clawsweeper"|"clawsweeper[bot]"|"openclaw-clawsweeper[bot]"|"steipete")
-      return 1
-      ;;
-  esac
+  [ -n "$contrib" ] || return 1
+  node "$(changelog_attribution_script)" --is-forbidden-handle "$contrib" && return 1
 
   return 0
+}
+
+changelog_explicit_human_thanks_required_for_contributor() {
+  local contrib="${1:-}"
+  [ -n "$contrib" ] || return 1
+  node "$(changelog_attribution_script)" --requires-explicit-human-thanks "$contrib"
 }
 
 resolve_changelog_diff_range() {
@@ -420,7 +428,7 @@ END {
     rm -f "$diff_file"
     echo "changelog placement validated: PR-linked entry exists under the active Unreleased section in a subsection"
 
-    if [ -n "$contrib" ] && [ "$contrib" != "null" ]; then
+    if changelog_thanks_required_for_contributor "$contrib"; then
       local with_pr_and_thanks
       with_pr_and_thanks=$(printf '%s\n' "$added_lines" | rg -in "$pr_pattern" | awk -v contrib="$contrib" 'tolower($0) ~ tolower("@" contrib) && tolower($0) ~ "thanks" {print; found=1} END {exit !found}')
       if [ -z "$with_pr_and_thanks" ]; then
@@ -431,7 +439,20 @@ END {
       return 0
     fi
 
-    echo "changelog validated: found PR #$pr (contributor handle unavailable, skipping thanks check)"
+    if ! changelog_explicit_human_thanks_required_for_contributor "$contrib"; then
+      echo "changelog validated: found PR #$pr (no eligible human contributor handle, skipping thanks check)"
+      return 0
+    fi
+
+    local with_pr_and_any_thanks
+    with_pr_and_any_thanks=$(printf '%s\n' "$added_lines" | rg -in "$pr_pattern" | rg -i '(^|[[:space:]])thanks[[:space:]]+@' || true)
+    if [ -z "$with_pr_and_any_thanks" ]; then
+      echo "CHANGELOG.md update for bot/app/non-creditable author $contrib must include an explicit human Thanks @handle on the PR #$pr entry line."
+      echo "Choose the credited original contributor, or stop for maintainer input if authorship is unclear."
+      exit 1
+    fi
+
+    echo "changelog validated: found PR #$pr + explicit thanks for bot/app/non-creditable author $contrib"
     return 0
   fi
 
@@ -499,7 +520,27 @@ is_active_release(current_release) && $0 ~ pr_pattern { print }
     return 0
   fi
 
-  echo "changelog validated: found PR #$pr (no eligible human contributor handle, skipping thanks check)"
+  if ! changelog_explicit_human_thanks_required_for_contributor "$contrib"; then
+    echo "changelog validated: found PR #$pr (no eligible human contributor handle, skipping thanks check)"
+    return 0
+  fi
+
+  local with_pr_and_any_thanks
+  with_pr_and_any_thanks=$(awk -v pr_pattern="$pr_pattern" '
+function is_active_release(line) {
+  heading = tolower(line)
+  return heading ~ /^##[[:space:]]+(unreleased|.+[[:space:]]+\(unreleased\))[[:space:]]*$/
+}
+/^## / { current_release = $0 }
+is_active_release(current_release) && $0 ~ pr_pattern { print }
+' CHANGELOG.md | rg -i '(^|[[:space:]])thanks[[:space:]]+@' || true)
+  if [ -z "$with_pr_and_any_thanks" ]; then
+    echo "CHANGELOG.md update for bot/app/non-creditable author $contrib must include an explicit human Thanks @handle on the PR #$pr entry line."
+    echo "Choose the credited original contributor, or stop for maintainer input if authorship is unclear."
+    exit 1
+  fi
+
+  echo "changelog validated: found PR #$pr + explicit thanks for bot/app/non-creditable author $contrib"
 }
 
 validate_changelog_merge_hygiene() {
