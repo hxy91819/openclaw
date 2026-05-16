@@ -422,7 +422,7 @@ END {
 
     if [ -n "$contrib" ] && [ "$contrib" != "null" ]; then
       local with_pr_and_thanks
-      with_pr_and_thanks=$(printf '%s\n' "$added_lines" | rg -in "$pr_pattern" | rg -i "thanks @$contrib" || true)
+      with_pr_and_thanks=$(printf '%s\n' "$added_lines" | rg -in "$pr_pattern" | awk -v contrib="$contrib" 'tolower($0) ~ tolower("@" contrib) && tolower($0) ~ "thanks" {print; found=1} END {exit !found}')
       if [ -z "$with_pr_and_thanks" ]; then
         echo "CHANGELOG.md update must include both PR #$pr and thanks @$contrib on the changelog entry line."
         exit 1
@@ -490,7 +490,7 @@ function is_active_release(line) {
 }
 /^## / { current_release = $0 }
 is_active_release(current_release) && $0 ~ pr_pattern { print }
-' CHANGELOG.md | rg -i "thanks @$contrib" || true)
+' CHANGELOG.md | awk -v contrib="$contrib" 'tolower($0) ~ tolower("@" contrib) && tolower($0) ~ "thanks" {print; found=1} END {exit !found}' || true)
     if [ -z "$with_pr_and_thanks" ]; then
       echo "CHANGELOG.md update must include both PR #$pr and thanks @$contrib on the changelog entry line."
       exit 1
