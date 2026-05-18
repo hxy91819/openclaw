@@ -261,6 +261,8 @@ push_prep_head_to_pr_branch() {
   local docs_only="${6:-false}"
   local result_env_path="${7:-.local/push-result.env}"
 
+  local retry_rebase_error=''
+
   setup_prhead_remote "$pr"
 
   local remote_sha
@@ -295,8 +297,22 @@ push_prep_head_to_pr_branch() {
         pushed_from_sha="$lease_sha"
 
         if [ "$rerun_gates_on_lease_retry" = "true" ]; then
+          if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules --; then
+            echo "Lease retry could not rebase because the prep worktree has local tracked changes. Commit or clean them, then rerun prepare-gates/prepare-push."
+            exit 1
+          fi
+
           git fetch origin "pull/$pr/head:pr-$pr-latest" --force
-          git rebase "pr-$pr-latest"
+          if ! git rebase "pr-$pr-latest"; then
+            retry_rebase_error=$(git status --short --untracked-files=no 2>/dev/null || true)
+            echo "Lease retry rebase failed; stopping before any retry push."
+            if [ -n "$retry_rebase_error" ]; then
+              echo "Tracked worktree state at failure:"
+              printf '%s\n' "$retry_rebase_error"
+            fi
+            exit 1
+          fi
+
           prepare_gates "$pr"
           prep_head_sha=$(git rev-parse HEAD)
         fi

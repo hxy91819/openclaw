@@ -567,4 +567,131 @@ push_prep_head_to_pr_branch 123 feature initial-head stale-remote true false .lo
     const pushResult = readFileSync(path.join(repo, ".local", "push-result.env"), "utf8");
     expect(pushResult).toContain("PUSH_PREP_HEAD_SHA=retry-head");
   });
+
+  it("stops lease-retry before rebase when tracked worktree changes are present", () => {
+    const repo = createTempDir("openclaw-pr-lib-push-dirty-retry-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-lc",
+        `
+source "$OPENCLAW_PUSH_SH"
+setup_prhead_remote() { :; }
+resolve_prhead_remote_sha() { printf 'stale-remote\\n'; }
+prepare_gates() { echo "prepare_gates should not run" >&2; exit 41; }
+wait_for_pr_head_sha() { echo "wait_for_pr_head_sha should not run" >&2; exit 42; }
+gh() {
+  if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "123" ] && [ "$4" = "--json" ] && [ "$5" = "headRefOid" ] && [ "$6" = "--jq" ] && [ "$7" = ".headRefOid" ]; then
+    printf 'fresh-remote\\n'
+    return 0
+  fi
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+}
+git() {
+  case "$1" in
+    push)
+      printf 'lease failed\\n' >&2
+      return 1
+      ;;
+    diff)
+      return 1
+      ;;
+    rebase|fetch|status)
+      echo "unexpected git invocation: $*" >&2
+      exit 43
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+OPENCLAW_ALLOW_UNSIGNED_GIT_PUSH=1
+push_prep_head_to_pr_branch 123 feature initial-head stale-remote true false .local/push-result.env
+`,
+      ],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCLAW_PUSH_SH: pushScriptPath,
+        },
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "Lease retry could not rebase because the prep worktree has local tracked changes",
+    );
+    expect(existsSync(path.join(repo, ".local", "push-result.env"))).toBe(false);
+  });
+
+  it("stops lease-retry when the sync rebase fails instead of retry-pushing", () => {
+    const repo = createTempDir("openclaw-pr-lib-push-rebase-fail-");
+    mkdirSync(path.join(repo, ".local"), { recursive: true });
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-lc",
+        `
+source "$OPENCLAW_PUSH_SH"
+setup_prhead_remote() { :; }
+resolve_prhead_remote_sha() { printf 'stale-remote\\n'; }
+prepare_gates() { echo "prepare_gates should not run" >&2; exit 41; }
+wait_for_pr_head_sha() { echo "wait_for_pr_head_sha should not run" >&2; exit 42; }
+gh() {
+  if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "123" ] && [ "$4" = "--json" ] && [ "$5" = "headRefOid" ] && [ "$6" = "--jq" ] && [ "$7" = ".headRefOid" ]; then
+    printf 'fresh-remote\\n'
+    return 0
+  fi
+  echo "unexpected gh invocation: $*" >&2
+  exit 1
+}
+git() {
+  case "$1" in
+    push)
+      printf 'lease failed\\n' >&2
+      return 1
+      ;;
+    diff)
+      return 0
+      ;;
+    fetch)
+      return 0
+      ;;
+    rebase)
+      printf 'error: cannot rebase: You have unstaged changes.\\n' >&2
+      return 1
+      ;;
+    status)
+      printf ' M CHANGELOG.md\\n'
+      return 0
+      ;;
+  esac
+  echo "unexpected git invocation: $*" >&2
+  exit 1
+}
+OPENCLAW_ALLOW_UNSIGNED_GIT_PUSH=1
+push_prep_head_to_pr_branch 123 feature initial-head stale-remote true false .local/push-result.env
+`,
+      ],
+      {
+        cwd: repo,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCLAW_PUSH_SH: pushScriptPath,
+        },
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Lease retry rebase failed; stopping before any retry push.");
+    expect(result.stdout).toContain("Tracked worktree state at failure:");
+    expect(result.stdout).toContain(" M CHANGELOG.md");
+    expect(existsSync(path.join(repo, ".local", "push-result.env"))).toBe(false);
+  });
 });
