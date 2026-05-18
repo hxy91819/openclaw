@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   listAgentIds,
   resolveDefaultAgentId,
@@ -39,6 +40,8 @@ import {
   resolveAgentIdFromSessionKey,
   resolveExplicitAgentSessionKey,
   resolveAgentMainSessionKey,
+  resolveSessionFilePath,
+  resolveSessionFilePathOptions,
   resolveSessionLifecycleTimestamps,
   resolveSessionResetPolicy,
   resolveSessionResetType,
@@ -1080,7 +1083,27 @@ export const agentHandlers: GatewayRequestHandlers = {
               policy: resetPolicy,
             })
           : undefined;
-        const canReuseSession = Boolean(entry?.sessionId) && (freshness?.fresh ?? false);
+        let failedSessionFileMissing = false;
+        if (
+          entry?.status === "failed" &&
+          entry.sessionId?.trim() &&
+          typeof entry.sessionFile === "string" &&
+          entry.sessionFile.trim().length > 0
+        ) {
+          try {
+            const sessionPathOpts = resolveSessionFilePathOptions({
+              storePath,
+              agentId: resolveAgentIdFromSessionKey(canonicalKey),
+            });
+            failedSessionFileMissing = !existsSync(
+              resolveSessionFilePath(entry.sessionId, entry, sessionPathOpts),
+            );
+          } catch {
+            failedSessionFileMissing = true;
+          }
+        }
+        const canReuseSession =
+          Boolean(entry?.sessionId) && (freshness?.fresh ?? false) && !failedSessionFileMissing;
         const usableRequestedSessionId =
           requestedSessionId && (!entry?.sessionId || canReuseSession)
             ? requestedSessionId

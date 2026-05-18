@@ -562,6 +562,91 @@ describe("gateway agent handler", () => {
     expect(capturedEntry?.sessionFile).toBeUndefined();
   });
 
+  it("repro #83488: failed session with missing transcript is resumed instead of rotated", async () => {
+    const now = Date.parse("2026-05-18T09:45:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    dateOnlyFakeClockActive = true;
+    vi.setSystemTime(now);
+    const missingTranscriptEntry = {
+      sessionId: "failed-missing-session-id",
+      sessionFile: "/tmp/openclaw/missing/failed-missing-session-id.jsonl",
+      status: "failed",
+      updatedAt: now,
+      sessionStartedAt: now,
+      lastInteractionAt: now,
+    };
+    mockMainSessionEntry(missingTranscriptEntry);
+
+    let capturedEntry: Record<string, unknown> | undefined;
+    mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
+      const store: Record<string, unknown> = {
+        "agent:main:main": { ...missingTranscriptEntry },
+      };
+      const result = await updater(store);
+      capturedEntry = result as Record<string, unknown>;
+      return result;
+    });
+    mocks.agentCommand.mockResolvedValue({
+      payloads: [{ text: "ok" }],
+      meta: { durationMs: 100 },
+    });
+
+    await runMainAgent("test", "test-idem-failed-missing-transcript");
+
+    const call = await waitForAgentCommandCall<{ sessionId?: string }>();
+    expect(call.sessionId).not.toBe("failed-missing-session-id");
+    expect(capturedEntry?.sessionId).not.toBe("failed-missing-session-id");
+    expect(capturedEntry?.sessionFile).toBeUndefined();
+  });
+
+  it("keeps a failed session reusable when its relative transcript resolves and exists", async () => {
+    const now = Date.parse("2026-05-18T09:50:00.000Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    dateOnlyFakeClockActive = true;
+    vi.setSystemTime(now);
+
+    await withTempDir({ prefix: "openclaw-gateway-failed-session-file-" }, async (root) => {
+      const sessionsDir = `${root}/sessions`;
+      await fs.mkdir(sessionsDir, { recursive: true });
+      await fs.writeFile(`${sessionsDir}/relative-present.jsonl`, "", "utf8");
+      const failedEntryWithResolvedTranscript = {
+        sessionId: "failed-present-session-id",
+        sessionFile: "relative-present.jsonl",
+        status: "failed",
+        updatedAt: now,
+        sessionStartedAt: now,
+        lastInteractionAt: now,
+      };
+      mocks.loadSessionEntry.mockReturnValue({
+        cfg: {},
+        storePath: `${sessionsDir}/sessions.json`,
+        entry: failedEntryWithResolvedTranscript,
+        canonicalKey: "agent:main:main",
+      });
+
+      let capturedEntry: Record<string, unknown> | undefined;
+      mocks.updateSessionStore.mockImplementation(async (_path, updater) => {
+        const store: Record<string, unknown> = {
+          "agent:main:main": { ...failedEntryWithResolvedTranscript },
+        };
+        const result = await updater(store);
+        capturedEntry = result as Record<string, unknown>;
+        return result;
+      });
+      mocks.agentCommand.mockResolvedValue({
+        payloads: [{ text: "ok" }],
+        meta: { durationMs: 100 },
+      });
+
+      await runMainAgent("test", "test-idem-failed-present-transcript");
+
+      const call = await waitForAgentCommandCall<{ sessionId?: string }>();
+      expect(call.sessionId).toBe("failed-present-session-id");
+      expect(capturedEntry?.sessionId).toBe("failed-present-session-id");
+      expect(capturedEntry?.sessionFile).toBe("relative-present.jsonl");
+    });
+  });
+
   it("keeps stored group metadata when a trusted group session receives caller-supplied selectors", async () => {
     const sessionKey = "agent:main:slack:group:C123";
     const existingEntry = buildExistingMainStoreEntry({
