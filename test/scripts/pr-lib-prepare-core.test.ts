@@ -507,69 +507,8 @@ clean_pr_worktree_state "$TEST_REPO_ROOT/.worktrees/pr-123"
 });
 
 describe("scripts/pr-lib/push.sh", () => {
-  it("refreshes gates metadata when lease-retry reruns prepare gates", () => {
-    const repo = createTempDir("openclaw-pr-lib-push-lease-retry-");
-    mkdirSync(path.join(repo, ".local"), { recursive: true });
-
-    runPushShell(
-      repo,
-      `
-setup_prhead_remote() { :; }
-resolve_prhead_remote_sha() { printf 'stale-remote\\n'; }
-prepare_gates() {
-  printf 'LAST_VERIFIED_HEAD_SHA=%s\\n' "$(git rev-parse HEAD)" > .local/gates.env
-}
-wait_for_pr_head_sha() { return 0; }
-gh() {
-  if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "123" ] && [ "$4" = "--json" ] && [ "$5" = "headRefOid" ] && [ "$6" = "--jq" ] && [ "$7" = ".headRefOid" ]; then
-    printf 'fresh-remote\\n'
-    return 0
-  fi
-  echo "unexpected gh invocation: $*" >&2
-  exit 1
-}
-git() {
-  case "$1" in
-    push)
-      if [ ! -f .local/push-attempted ]; then
-        touch .local/push-attempted
-        printf 'lease failed\\n' >&2
-        return 1
-      fi
-      return 0
-      ;;
-    fetch|rebase|branch)
-      return 0
-      ;;
-    rev-parse)
-      if [ "$2" = "HEAD" ]; then
-        printf 'retry-head\\n'
-      elif [ "$2" = "origin/main" ]; then
-        printf 'main-head\\n'
-      fi
-      return 0
-      ;;
-    merge-base)
-      return 0
-      ;;
-  esac
-  echo "unexpected git invocation: $*" >&2
-  exit 1
-}
-OPENCLAW_ALLOW_UNSIGNED_GIT_PUSH=1
-push_prep_head_to_pr_branch 123 feature initial-head stale-remote true false .local/push-result.env
-`,
-    );
-
-    const gatesEnv = readFileSync(path.join(repo, ".local", "gates.env"), "utf8");
-    expect(gatesEnv).toContain("LAST_VERIFIED_HEAD_SHA=retry-head");
-
-    const pushResult = readFileSync(path.join(repo, ".local", "push-result.env"), "utf8");
-    expect(pushResult).toContain("PUSH_PREP_HEAD_SHA=retry-head");
-  });
-
-  it("stops lease-retry before rebase when tracked worktree changes are present", () => {
-    const repo = createTempDir("openclaw-pr-lib-push-dirty-retry-");
+  it("stops prepare-push when the PR head moves during the initial lease push", () => {
+    const repo = createTempDir("openclaw-pr-lib-push-lease-stop-");
     mkdirSync(path.join(repo, ".local"), { recursive: true });
 
     const result = spawnSync(
@@ -593,14 +532,12 @@ gh() {
 git() {
   case "$1" in
     push)
-      printf 'lease failed\\n' >&2
-      return 1
-      ;;
-    diff)
-      return 1
-      ;;
-    rebase|fetch|status)
-      echo "unexpected git invocation: $*" >&2
+      if [ ! -f .local/push-attempted ]; then
+        touch .local/push-attempted
+        printf 'lease failed\\n' >&2
+        return 1
+      fi
+      echo "unexpected second push: $*" >&2
       exit 43
       ;;
   esac
@@ -622,26 +559,23 @@ push_prep_head_to_pr_branch 123 feature initial-head stale-remote true false .lo
     );
 
     expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Prepare push stopped after the PR head moved during push.");
     expect(result.stdout).toContain(
-      "Lease retry could not rebase because the prep worktree has local tracked changes",
+      "Refresh the prep worktree against the new PR head with scripts/pr prepare-init 123 [--force-clean]",
     );
     expect(existsSync(path.join(repo, ".local", "push-result.env"))).toBe(false);
   });
 
-  it("stops lease-retry when the sync rebase fails instead of retry-pushing", () => {
-    const repo = createTempDir("openclaw-pr-lib-push-rebase-fail-");
+  it("still retries a sync-head push when the remote lease moves", () => {
+    const repo = createTempDir("openclaw-pr-lib-push-sync-retry-");
     mkdirSync(path.join(repo, ".local"), { recursive: true });
 
-    const result = spawnSync(
-      "bash",
-      [
-        "-lc",
-        `
-source "$OPENCLAW_PUSH_SH"
+    runPushShell(
+      repo,
+      `
 setup_prhead_remote() { :; }
 resolve_prhead_remote_sha() { printf 'stale-remote\\n'; }
-prepare_gates() { echo "prepare_gates should not run" >&2; exit 41; }
-wait_for_pr_head_sha() { echo "wait_for_pr_head_sha should not run" >&2; exit 42; }
+wait_for_pr_head_sha() { return 0; }
 gh() {
   if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "123" ] && [ "$4" = "--json" ] && [ "$5" = "headRefOid" ] && [ "$6" = "--jq" ] && [ "$7" = ".headRefOid" ]; then
     printf 'fresh-remote\\n'
@@ -653,21 +587,23 @@ gh() {
 git() {
   case "$1" in
     push)
-      printf 'lease failed\\n' >&2
-      return 1
-      ;;
-    diff)
+      if [ ! -f .local/push-attempted ]; then
+        touch .local/push-attempted
+        printf 'lease failed\\n' >&2
+        return 1
+      fi
       return 0
       ;;
-    fetch)
+    fetch|branch)
       return 0
       ;;
-    rebase)
-      printf 'error: cannot rebase: You have unstaged changes.\\n' >&2
-      return 1
+    rev-parse)
+      if [ "$2" = "origin/main" ]; then
+        printf 'main-head\\n'
+        return 0
+      fi
       ;;
-    status)
-      printf ' M CHANGELOG.md\\n'
+    merge-base)
       return 0
       ;;
   esac
@@ -675,23 +611,12 @@ git() {
   exit 1
 }
 OPENCLAW_ALLOW_UNSIGNED_GIT_PUSH=1
-push_prep_head_to_pr_branch 123 feature initial-head stale-remote true false .local/push-result.env
+push_prep_head_to_pr_branch 123 feature initial-head stale-remote false false .local/push-result.env
 `,
-      ],
-      {
-        cwd: repo,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          OPENCLAW_PUSH_SH: pushScriptPath,
-        },
-      },
     );
 
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("Lease retry rebase failed; stopping before any retry push.");
-    expect(result.stdout).toContain("Tracked worktree state at failure:");
-    expect(result.stdout).toContain(" M CHANGELOG.md");
-    expect(existsSync(path.join(repo, ".local", "push-result.env"))).toBe(false);
+    const pushResult = readFileSync(path.join(repo, ".local", "push-result.env"), "utf8");
+    expect(pushResult).toContain("PUSH_PREP_HEAD_SHA=initial-head");
+    expect(pushResult).toContain("PUSHED_FROM_SHA=fresh-remote");
   });
 });
