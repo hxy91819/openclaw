@@ -86,6 +86,7 @@
     "!docs/images/**",
     "!docs/**/*.jpg",
     "!docs/**/*.png",
+    "src/agents/templates/",
     "scripts/crabbox-wrapper.mjs",
     "patches/",
     "skills/",

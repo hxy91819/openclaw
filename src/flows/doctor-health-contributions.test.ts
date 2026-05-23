@@ -198,6 +198,15 @@ describe("doctor health contributions", () => {
     expect(ids.indexOf("doctor:skills")).toBeLessThan(ids.indexOf("doctor:write-config"));
   });
 
+  it("repairs heartbeat templates before final config writes", () => {
+    const ids = resolveDoctorHealthContributions().map((entry) => entry.id);
+
+    expect(ids.indexOf("doctor:heartbeat-template-repair")).toBeGreaterThan(-1);
+    expect(ids.indexOf("doctor:heartbeat-template-repair")).toBeLessThan(
+      ids.indexOf("doctor:write-config"),
+    );
+  });
+
   it("runs structured repairs before legacy skill repairs and config writes", () => {
     const ids = resolveDoctorHealthContributions().map((entry) => entry.id);
 
