@@ -14,8 +14,12 @@ afterEach(() => {
 
 describe("report-test-temp-creations", () => {
   it("reports only added bare temp creation lines in test files", () => {
-    const bareTempSource =
-      "const tempRoot = fs." + "mkdtemp" + "Sync(path.join(os." + "tmp" + 'dir(), "case-"));';
+    const bareTempSource = [
+      "const tempRoot = fs.",
+      "mkdtemp",
+      'Sync(path.join(os.tmpdir(), "case-"));',
+    ].join("");
+    const mkdtempSource = ["const tempRoot = fs.", "mkdtemp", 'Sync("case-");'].join("");
     const diff = [
       "diff --git a/src/example.test.ts b/src/example.test.ts",
       "--- a/src/example.test.ts",
@@ -28,7 +32,7 @@ describe("report-test-temp-creations", () => {
       "--- a/src/example.ts",
       "+++ b/src/example.ts",
       "@@ -4,0 +5,1 @@",
-      "+" + "const productionTemp = fs." + "mkdtemp" + 'Sync("case-");',
+      `+${["const productionTemp = fs.", "mkdtemp", 'Sync("case-");'].join("")}`,
       "diff --git a/src/helper.test-utils.ts b/src/helper.test-utils.ts",
       "--- a/src/helper.test-utils.ts",
       "+++ b/src/helper.test-utils.ts",
@@ -39,32 +43,32 @@ describe("report-test-temp-creations", () => {
       "--- a/test/helper.test-support.mjs",
       "+++ b/test/helper.test-support.mjs",
       "@@ -1,0 +2,1 @@",
-      "+" + "const tempRoot = fs." + "mkdtemp" + 'Sync("case-");',
+      `+${mkdtempSource}`,
       "diff --git a/test/helpers/temp-fixture.ts b/test/helpers/temp-fixture.ts",
       "--- a/test/helpers/temp-fixture.ts",
       "+++ b/test/helpers/temp-fixture.ts",
       "@@ -1,0 +2,1 @@",
-      "+" + "const tempRoot = fs." + "mkdtemp" + 'Sync("case-");',
+      `+${mkdtempSource}`,
       "diff --git a/src/test-utils/temp-fixture.ts b/src/test-utils/temp-fixture.ts",
       "--- a/src/test-utils/temp-fixture.ts",
       "+++ b/src/test-utils/temp-fixture.ts",
       "@@ -1,0 +2,1 @@",
-      "+" + "const tempRoot = fs." + "mkdtemp" + 'Sync("case-");',
+      `+${mkdtempSource}`,
       "diff --git a/packages/foo/__tests__/helper.ts b/packages/foo/__tests__/helper.ts",
       "--- a/packages/foo/__tests__/helper.ts",
       "+++ b/packages/foo/__tests__/helper.ts",
       "@@ -1,0 +2,1 @@",
-      "+" + "const tempRoot = fs." + "mkdtemp" + 'Sync("case-");',
+      `+${mkdtempSource}`,
       "diff --git a/packages/foo/tests/helper.ts b/packages/foo/tests/helper.ts",
       "--- a/packages/foo/tests/helper.ts",
       "+++ b/packages/foo/tests/helper.ts",
       "@@ -1,0 +2,1 @@",
-      "+" + "const tempRoot = fs." + "mkdtemp" + 'Sync("case-");',
+      `+${mkdtempSource}`,
       "diff --git a/extensions/discord/src/monitor/test-http-helpers.ts b/extensions/discord/src/monitor/test-http-helpers.ts",
       "--- a/extensions/discord/src/monitor/test-http-helpers.ts",
       "+++ b/extensions/discord/src/monitor/test-http-helpers.ts",
       "@@ -1,0 +2,1 @@",
-      "+" + "const tempRoot = fs." + "mkdtemp" + 'Sync("case-");',
+      `+${mkdtempSource}`,
     ].join("\n");
 
     expect(collectTempCreationFindingsFromDiff(diff)).toEqual([
@@ -155,8 +159,11 @@ describe("report-test-temp-creations", () => {
       { cwd: root },
     );
 
-    const source =
-      "const tempRoot = fs." + "mkdtemp" + "Sync(path.join(os." + "tmp" + 'dir(), "case-"));\n';
+    const source = [
+      "const tempRoot = fs.",
+      "mkdtemp",
+      'Sync(path.join(os.tmpdir(), "case-"));\n',
+    ].join("");
     fs.appendFileSync(path.join(root, "src", "case.test.ts"), source, "utf8");
     execFileSync("git", ["add", "src/case.test.ts"], { cwd: root });
 
