@@ -60,6 +60,11 @@ describe("report-test-temp-creations", () => {
       "+++ b/packages/foo/tests/helper.ts",
       "@@ -1,0 +2,1 @@",
       "+" + "const tempRoot = fs." + "mkdtemp" + 'Sync("case-");',
+      "diff --git a/extensions/discord/src/monitor/message-handler.preflight-helpers.ts b/extensions/discord/src/monitor/message-handler.preflight-helpers.ts",
+      "--- a/extensions/discord/src/monitor/message-handler.preflight-helpers.ts",
+      "+++ b/extensions/discord/src/monitor/message-handler.preflight-helpers.ts",
+      "@@ -1,0 +2,1 @@",
+      "+" + "const tempRoot = fs." + "mkdtemp" + 'Sync("case-");',
     ].join("\n");
 
     expect(collectTempCreationFindingsFromDiff(diff)).toEqual([
@@ -101,6 +106,12 @@ describe("report-test-temp-creations", () => {
       },
       {
         file: "packages/foo/tests/helper.ts",
+        line: 2,
+        reason: "new mkdtemp temp directory creation",
+        source: 'const tempRoot = fs.mkdtempSync("case-");',
+      },
+      {
+        file: "extensions/discord/src/monitor/message-handler.preflight-helpers.ts",
         line: 2,
         reason: "new mkdtemp temp directory creation",
         source: 'const tempRoot = fs.mkdtempSync("case-");',

@@ -6,8 +6,9 @@ import { runAsScript } from "./lib/ts-guard-utils.mjs";
 
 const DEFAULT_BASE_REF = "origin/main";
 const DEFAULT_HEAD_REF = "HEAD";
-const TEST_FILE_PATTERN =
-  /(?:\.test(?:-[^./]+)?|\.spec|\.e2e(?:\.test|-harness)?|\.test-helpers|\.test-harness|\.test-support|\.test-utils)\.[cm]?[jt]sx?$/u;
+const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/u;
+const TEST_PATH_PATTERN =
+  /(?:^|\/)(?:test|tests|__tests__|test-utils|test-helpers|helpers)\/|(?:^|\/)[^/]*(?:test|spec|e2e|harness|support|helper|helpers|utils)[^/]*\.[cm]?[jt]sx?$/u;
 const FINDING_PATTERNS = [
   {
     pattern: /\bmkdtemp(?:Sync)?\s*\(/u,
@@ -53,12 +54,7 @@ function normalizePath(filePath) {
 
 function isTestFile(filePath) {
   const normalizedPath = normalizePath(filePath);
-  return (
-    normalizedPath.startsWith("test/") ||
-    normalizedPath.startsWith("src/test-utils/") ||
-    /(?:^|\/)(?:__tests__|tests)\//u.test(normalizedPath) ||
-    TEST_FILE_PATTERN.test(normalizedPath)
-  );
+  return CODE_FILE_PATTERN.test(normalizedPath) && TEST_PATH_PATTERN.test(normalizedPath);
 }
 
 function parseArgs(argv) {
