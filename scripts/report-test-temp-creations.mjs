@@ -165,4 +165,10 @@ export async function main(argv, io) {
   return args.failOnFindings && findings.length > 0 ? 1 : 0;
 }
 
-runAsScript(import.meta.url, main);
+runAsScript(import.meta.url, async (argv, io) => {
+  const exitCode = await main(argv, io);
+  if (!io) {
+    process.exitCode = exitCode;
+  }
+  return exitCode;
+});

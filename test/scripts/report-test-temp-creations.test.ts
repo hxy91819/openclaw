@@ -1,18 +1,27 @@
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { collectTempCreationFindingsFromDiff } from "../../scripts/report-test-temp-creations.mjs";
+import { createTempDirTracker } from "../helpers/temp-dir.js";
 
 const repoRoot = process.cwd();
+const tempDirs = createTempDirTracker();
+
+afterEach(() => {
+  tempDirs.cleanup();
+});
 
 describe("report-test-temp-creations", () => {
   it("reports only added bare temp creation lines in test files", () => {
+    const bareTempSource =
+      "const tempRoot = fs." + "mkdtemp" + "Sync(path.join(os." + "tmp" + 'dir(), "case-"));';
     const diff = [
       "diff --git a/src/example.test.ts b/src/example.test.ts",
       "--- a/src/example.test.ts",
       "+++ b/src/example.test.ts",
       "@@ -10,0 +11,3 @@",
-      "+" + "const tempRoot = fs." + "mkdtemp" + "Sync(path.join(os." + 'tmpdir(), "case-"));',
+      `+${bareTempSource}`,
       '+const helperRoot = makeTempDir(tempDirs, "case-");',
       "+console.log(tempRoot, helperRoot);",
       "diff --git a/src/example.ts b/src/example.ts",
@@ -27,7 +36,7 @@ describe("report-test-temp-creations", () => {
         file: "src/example.test.ts",
         line: 11,
         reason: "new mkdtemp temp directory creation",
-        source: 'const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "case-"));',
+        source: bareTempSource,
       },
     ]);
   });
@@ -45,5 +54,48 @@ describe("report-test-temp-creations", () => {
     expect(output).toContain("Usage: node scripts/report-test-temp-creations.mjs");
     expect(output).toContain("Outputs:");
     expect(output).toContain("Examples:");
+  });
+
+  it("exits non-zero for staged findings when requested", () => {
+    const root = tempDirs.make("openclaw-temp-report-");
+    execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: root });
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    fs.writeFileSync(path.join(root, "src", "case.test.ts"), "const value = 1;\n", "utf8");
+    execFileSync("git", ["add", "src/case.test.ts"], { cwd: root });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=Test User",
+        "commit",
+        "-q",
+        "-m",
+        "initial",
+      ],
+      { cwd: root },
+    );
+
+    const source =
+      "const tempRoot = fs." + "mkdtemp" + "Sync(path.join(os." + "tmp" + 'dir(), "case-"));\n';
+    fs.appendFileSync(path.join(root, "src", "case.test.ts"), source, "utf8");
+    execFileSync("git", ["add", "src/case.test.ts"], { cwd: root });
+
+    expect(() =>
+      execFileSync(
+        process.execPath,
+        [
+          path.join(repoRoot, "scripts", "report-test-temp-creations.mjs"),
+          "--staged",
+          "--fail-on-findings",
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      ),
+    ).toThrow();
   });
 });
