@@ -42,6 +42,33 @@ When you touch tests or want extra confidence:
 - Coverage gate: `pnpm test:coverage`
 - E2E suite: `pnpm test:e2e`
 
+## Test Temp Directories
+
+Prefer the shared helpers in `test/helpers/temp-dir.ts` for test-owned
+temporary directories. They make ownership explicit and keep cleanup in the same
+test lifecycle:
+
+```ts
+import { afterEach } from "vitest";
+import { createTempDirTracker } from "../helpers/temp-dir.js";
+
+const tempDirs = createTempDirTracker();
+
+afterEach(tempDirs.cleanup);
+
+it("uses a temp workspace", () => {
+  const workspace = tempDirs.make("openclaw-example-");
+  // use workspace
+});
+```
+
+Use `makeTempDir(tempDirs, prefix)` and `cleanupTempDirs(tempDirs)` when a test
+already owns an array or set of paths. Avoid new bare `fs.mkdtemp*` calls in
+tests unless a case is explicitly verifying raw temp-dir behavior. For
+migration visibility, `node scripts/report-test-temp-creations.mjs` reports new
+bare temp-dir creation in added diff lines without blocking existing cleanup
+styles.
+
 When debugging real providers/models (requires real creds):
 
 - Live suite (models + gateway tool/image probes): `pnpm test:live`
