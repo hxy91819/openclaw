@@ -29,6 +29,12 @@ describe("report-test-temp-creations", () => {
       "+++ b/src/example.ts",
       "@@ -4,0 +5,1 @@",
       "+" + "const productionTemp = fs." + "mkdtemp" + 'Sync("case-");',
+      "diff --git a/src/helper.test-utils.ts b/src/helper.test-utils.ts",
+      "--- a/src/helper.test-utils.ts",
+      "+++ b/src/helper.test-utils.ts",
+      "@@ -1,0 +2,2 @@",
+      '+const tempRoot = tmp.dirSync({ prefix: "case-" });',
+      "+const tempParent = os.tmpdir();",
     ].join("\n");
 
     expect(collectTempCreationFindingsFromDiff(diff)).toEqual([
@@ -37,6 +43,12 @@ describe("report-test-temp-creations", () => {
         line: 11,
         reason: "new mkdtemp temp directory creation",
         source: bareTempSource,
+      },
+      {
+        file: "src/helper.test-utils.ts",
+        line: 2,
+        reason: "new tmp.dir temp directory creation",
+        source: 'const tempRoot = tmp.dirSync({ prefix: "case-" });',
       },
     ]);
   });
