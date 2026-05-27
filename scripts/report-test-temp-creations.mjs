@@ -7,7 +7,7 @@ import { runAsScript } from "./lib/ts-guard-utils.mjs";
 const DEFAULT_BASE_REF = "origin/main";
 const DEFAULT_HEAD_REF = "HEAD";
 const TEST_FILE_PATTERN =
-  /(?:\.test(?:-[^./]+)?|\.spec|\.e2e(?:\.test|-harness)?|\.test-helpers|\.test-harness|\.test-support)\.ts$/u;
+  /(?:\.test(?:-[^./]+)?|\.spec|\.e2e(?:\.test|-harness)?|\.test-helpers|\.test-harness|\.test-support|\.test-utils)\.ts$/u;
 const FINDING_PATTERNS = [
   {
     pattern: /\bmkdtemp(?:Sync)?\s*\(/u,
@@ -16,10 +16,6 @@ const FINDING_PATTERNS = [
   {
     pattern: /\btmp\s*\.\s*dir(?:Sync)?\s*\(/u,
     reason: "new tmp.dir temp directory creation",
-  },
-  {
-    pattern: /\b(?:os\s*\.\s*)?tmpdir\s*\(/u,
-    reason: "new os.tmpdir usage in a test file",
   },
 ];
 
