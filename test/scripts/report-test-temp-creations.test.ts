@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,26 @@ import { createTempDirTracker } from "../helpers/temp-dir.js";
 
 const repoRoot = process.cwd();
 const tempDirs = createTempDirTracker();
+const nestedGitEnvKeys = [
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_QUARANTINE_PATH",
+  "GIT_WORK_TREE",
+] as const;
+
+function createNestedGitEnv(): NodeJS.ProcessEnv {
+  const env = {
+    ...process.env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+  for (const key of nestedGitEnvKeys) {
+    delete env[key];
+  }
+  return env;
+}
 
 afterEach(() => {
   tempDirs.cleanup();
@@ -100,10 +120,11 @@ describe("report-test-temp-creations", () => {
 
   it("exits non-zero for staged findings when requested", () => {
     const root = tempDirs.make("openclaw-temp-report-");
-    execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: root });
-    fs.mkdirSync(path.join(root, "src"), { recursive: true });
-    fs.writeFileSync(path.join(root, "src", "case.test.ts"), "const value = 1;\n", "utf8");
-    execFileSync("git", ["add", "src/case.test.ts"], { cwd: root });
+    const env = createNestedGitEnv();
+    execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: root, env });
+    fs.mkdirSync(path.join(root, "test", "helpers"), { recursive: true });
+    fs.writeFileSync(path.join(root, "test", "helpers", "case.ts"), "const value = 1;\n", "utf8");
+    execFileSync("git", ["add", "test/helpers/case.ts"], { cwd: root, env });
     execFileSync(
       "git",
       [
@@ -116,7 +137,7 @@ describe("report-test-temp-creations", () => {
         "-m",
         "initial",
       ],
-      { cwd: root },
+      { cwd: root, env },
     );
 
     const source = [
@@ -124,23 +145,24 @@ describe("report-test-temp-creations", () => {
       "mkdtemp",
       'Sync(path.join(os.tmpdir(), "case-"));\n',
     ].join("");
-    fs.appendFileSync(path.join(root, "src", "case.test.ts"), source, "utf8");
-    execFileSync("git", ["add", "src/case.test.ts"], { cwd: root });
+    fs.appendFileSync(path.join(root, "test", "helpers", "case.ts"), source, "utf8");
+    execFileSync("git", ["add", "test/helpers/case.ts"], { cwd: root, env });
 
-    expect(() =>
-      execFileSync(
-        process.execPath,
-        [
-          path.join(repoRoot, "scripts", "report-test-temp-creations.mjs"),
-          "--staged",
-          "--fail-on-findings",
-        ],
-        {
-          cwd: root,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      ),
-    ).toThrow();
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(repoRoot, "scripts", "report-test-temp-creations.mjs"),
+        "--staged",
+        "--fail-on-findings",
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env,
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("test/helpers/case.ts");
   });
 });
