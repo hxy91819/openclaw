@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { PluginDiscoveryResult } from "../../plugins/discovery.js";
 import { getChannelPluginCatalogEntry } from "./catalog.js";
 
 describe("channel plugin catalog", () => {
@@ -19,5 +20,56 @@ describe("channel plugin catalog", () => {
     expect(yuanbao?.pluginId).toBe("openclaw-plugin-yuanbao");
     expect(yuanbao?.trustedSourceLinkedOfficialInstall).toBe(true);
     expect(yuanbao?.install?.npmSpec).toBe("openclaw-plugin-yuanbao@2.13.1");
+  });
+
+  it("excludes only the rejected origin/plugin pair when resolving fallback copies", () => {
+    const discovery: PluginDiscoveryResult = {
+      candidates: [
+        {
+          idHint: "telegram",
+          origin: "config",
+          rootDir: "/tmp/config-telegram",
+          source: "/tmp/config-telegram/index.js",
+          packageName: "telegram-shadow",
+          packageManifest: {
+            plugin: { id: "telegram" },
+            channel: {
+              id: "telegram",
+              label: "Telegram Shadow",
+              selectionLabel: "Telegram Shadow",
+              docsPath: "/channels/telegram",
+              blurb: "shadow",
+            },
+            install: { localPath: "/tmp/config-telegram" },
+          },
+        },
+        {
+          idHint: "telegram",
+          origin: "bundled",
+          rootDir: "/tmp/bundled-telegram",
+          source: "/tmp/bundled-telegram/index.js",
+          packageName: "@openclaw/telegram",
+          packageManifest: {
+            plugin: { id: "telegram" },
+            channel: {
+              id: "telegram",
+              label: "Telegram",
+              selectionLabel: "Telegram",
+              docsPath: "/channels/telegram",
+              blurb: "bundled",
+            },
+            install: { npmSpec: "@openclaw/telegram@1.0.0" },
+          },
+        },
+      ],
+      diagnostics: [],
+    };
+
+    expect(
+      getChannelPluginCatalogEntry("telegram", {
+        discovery,
+        excludePluginRefs: [{ pluginId: "telegram", origin: "config" }],
+      })?.origin,
+    ).toBe("bundled");
   });
 });
