@@ -307,9 +307,8 @@ export function dispatchPluginAgentEventSubscriptions(params: {
     const runId = params.event.runId;
     let handlerActive = true;
     const ctx = {
-      // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- Run-context JSON reads are caller-typed by namespace.
-      getRunContext: <T extends PluginJsonValue = PluginJsonValue>(namespace: string) =>
-        getPluginRunContext<T>({ pluginId, get: { runId, namespace } }),
+      getRunContext: (namespace: string) =>
+        getPluginRunContext({ pluginId, get: { runId, namespace } }),
       setRunContext: (namespace: string, value: PluginJsonValue) => {
         setPluginRunContext({
           pluginId,
