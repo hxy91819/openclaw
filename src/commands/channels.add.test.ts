@@ -142,6 +142,22 @@ function mockArg(source: MockCallSource, callIndex: number, argIndex: number, la
   return call[argIndex];
 }
 
+function excludesPluginRef(
+  options: unknown,
+  expected: { pluginId: string; origin?: string },
+): boolean {
+  return (
+    Array.isArray((options as { excludePluginRefs?: unknown[] } | undefined)?.excludePluginRefs) &&
+    (
+      options as { excludePluginRefs: Array<{ pluginId?: string; origin?: string }> }
+    ).excludePluginRefs.some(
+      (entry) =>
+        entry.pluginId === expected.pluginId &&
+        (expected.origin === undefined || entry.origin === expected.origin),
+    )
+  );
+}
+
 function writtenConfig(index = 0) {
   return requireRecord(
     mockArg(configMocks.writeConfigFile, index, 0, `written config ${index}`),
@@ -937,9 +953,14 @@ describe("channelsAddCommand", () => {
         aliases: ["ext"],
       },
     };
-    catalogMocks.listChannelPluginCatalogEntries.mockImplementation(
-      ({ excludeWorkspace }: { excludeWorkspace?: boolean } = {}) =>
-        excludeWorkspace ? [trustedEntry] : [workspaceEntry],
+    catalogMocks.listChannelPluginCatalogEntries.mockReturnValue([workspaceEntry]);
+    catalogMocks.getChannelPluginCatalogEntry.mockImplementation((_channelId, options) =>
+      excludesPluginRef(options, {
+        pluginId: "evil-external-chat-shadow",
+        origin: "workspace",
+      })
+        ? trustedEntry
+        : workspaceEntry,
     );
     registerExternalChatSetupPlugin("@vendor/external-chat-plugin");
 

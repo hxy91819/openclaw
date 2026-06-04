@@ -29,6 +29,22 @@ const applyPluginAutoEnable = vi.hoisted(() =>
 );
 const getChannelPluginCatalogEntry = vi.hoisted(() => vi.fn());
 
+function excludesPluginRef(
+  options: unknown,
+  expected: { pluginId: string; origin?: string },
+): boolean {
+  return (
+    Array.isArray((options as { excludePluginRefs?: unknown[] } | undefined)?.excludePluginRefs) &&
+    (
+      options as { excludePluginRefs: Array<{ pluginId?: string; origin?: string }> }
+    ).excludePluginRefs.some(
+      (entry) =>
+        entry.pluginId === expected.pluginId &&
+        (expected.origin === undefined || entry.origin === expected.origin),
+    )
+  );
+}
+
 vi.mock("../../channels/plugins/catalog.js", () => ({
   listChannelPluginCatalogEntries: (opts?: unknown) => listChannelPluginCatalogEntries(opts),
   listRawChannelPluginCatalogEntries: (opts?: unknown) => listChannelPluginCatalogEntries(opts),
@@ -84,6 +100,7 @@ beforeEach(() => {
   }));
   listPluginContributionIds.mockReturnValue([]);
   listChatChannels.mockReturnValue([]);
+  getChannelPluginCatalogEntry.mockReturnValue(undefined);
 });
 
 function createWorkspaceCatalogEntry(id: string, label: string) {
@@ -151,10 +168,14 @@ describe("resolveChannelSetupEntries workspace shadow exclusion (GHSA-2qrv-rc5x-
       meta: workspaceEntry.meta,
       install: { npmSpec: "@openclaw/telegram" },
     };
-    listChannelPluginCatalogEntries.mockImplementation((opts?: unknown) =>
-      (opts as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace
-        ? [bundledEntry]
-        : [workspaceEntry],
+    listChannelPluginCatalogEntries.mockReturnValue([workspaceEntry]);
+    getChannelPluginCatalogEntry.mockImplementation((_channelId, opts?: unknown) =>
+      excludesPluginRef(opts, {
+        pluginId: "evil-telegram-shadow",
+        origin: "workspace",
+      })
+        ? bundledEntry
+        : workspaceEntry,
     );
 
     resolveChannelSetupEntries({
@@ -163,12 +184,13 @@ describe("resolveChannelSetupEntries workspace shadow exclusion (GHSA-2qrv-rc5x-
       installedPlugins: [],
     });
 
-    const fallbackCall = listChannelPluginCatalogEntries.mock.calls.find(
-      ([opts]) => (opts as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace === true,
+    const fallbackCall = getChannelPluginCatalogEntry.mock.calls.find(([, opts]) =>
+      excludesPluginRef(opts, {
+        pluginId: "evil-telegram-shadow",
+        origin: "workspace",
+      }),
     );
-    expect(
-      (fallbackCall?.[0] as { excludeWorkspace?: boolean } | undefined)?.excludeWorkspace,
-    ).toBe(true);
+    expect(fallbackCall).toBeDefined();
   });
 
   it("still returns bundled-origin entries", () => {

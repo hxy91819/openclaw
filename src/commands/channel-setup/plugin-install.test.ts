@@ -914,7 +914,13 @@ describe("ensureChannelSetupPluginInstalled", () => {
     });
     expect(getChannelPluginCatalogEntry).toHaveBeenNthCalledWith(2, "external-chat", {
       workspaceDir: "/tmp/openclaw-workspace",
-      excludeWorkspace: true,
+      env: undefined,
+      excludePluginRefs: [
+        {
+          pluginId: "evil-external-chat-shadow",
+          origin: "workspace",
+        },
+      ],
     });
   });
 

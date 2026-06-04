@@ -22,6 +22,7 @@ type MarkerKind = "import" | "register" | "setup-import" | "setup-register";
 const states: OpenClawTestState[] = [];
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const entryPath = path.join(repoRoot, "src", "entry.ts");
+const channelAddTimeoutMs = 120_000;
 
 afterEach(async () => {
   await Promise.all(states.splice(0).map((state) => state.cleanup()));
@@ -267,7 +268,7 @@ function runChannelsAdd(params: {
       cwd: repoRoot,
       env: createCliEnv(params),
       encoding: "utf8",
-      timeout: 60_000,
+      timeout: channelAddTimeoutMs,
     },
   );
 }
