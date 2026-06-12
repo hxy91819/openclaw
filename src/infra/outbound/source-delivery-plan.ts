@@ -236,7 +236,13 @@ function resolveObservedMessageToolTarget(
   plan: SourceDeliveryPlan,
   target: SourceDeliveryMessageToolTarget,
 ): SourceDeliveryMessageToolTarget {
-  if (target.tool !== "message" || target.to || target.provider !== "message") {
+  const provider = target.provider?.trim().toLowerCase();
+  const deliveryChannel = plan.target.channel?.trim().toLowerCase();
+  if (
+    target.tool !== "message" ||
+    target.to ||
+    (provider && provider !== "message" && provider !== deliveryChannel)
+  ) {
     return target;
   }
   const implicitTarget = resolveImplicitMessageToolDeliveryTarget(plan);

@@ -617,11 +617,6 @@ function resolveMessageToolTarget(args: Record<string, unknown>): string | undef
   if (channelIdRaw) {
     return channelIdRaw;
   }
-  if (Array.isArray(args.targets)) {
-    return args.targets.find(
-      (value): value is string => typeof value === "string" && value.trim().length > 0,
-    );
-  }
   return undefined;
 }
 
@@ -643,14 +638,15 @@ export function extractMessagingToolSend(
     if (!toRaw) {
       const providerHint =
         normalizeOptionalString(args.provider) ?? normalizeOptionalString(args.channel);
-      if (providerHint || (Array.isArray(args.channelIds) && args.channelIds.length > 0)) {
-        return undefined;
-      }
+      const provider =
+        (providerHint ? normalizeChannelId(providerHint) : null) ??
+        normalizeOptionalLowercaseString(providerHint) ??
+        "message";
       const threadId = normalizeOptionalString(args.threadId);
       const threadSuppressed = args.topLevel === true || args.threadId === null;
       return {
         tool: toolName,
-        provider: "message",
+        provider,
         ...(accountId ? { accountId } : {}),
         ...(threadId ? { threadId } : {}),
         ...(threadSuppressed ? { threadSuppressed: true } : {}),

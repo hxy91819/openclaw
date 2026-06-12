@@ -288,6 +288,39 @@ describe("source delivery plan", () => {
     expect(outcome.unverifiedMessageToolDelivery).toBe(true);
   });
 
+  it("backfills implicit current targets when the provider matches the planned channel", () => {
+    const contract = createSourceDeliveryPlan({
+      owner: "direct_fallback",
+      reason: "cron_announce",
+      target: { channel: "slack", to: "channel:C1" },
+      messageToolEnabled: true,
+      requireExplicitMessageTargetEvidence: true,
+      directFallback: true,
+      skipFallbackWhenMessageToolSentToTarget: true,
+    });
+
+    const outcome = resolveSourceDeliveryOutcome(contract, {
+      didSendViaMessageTool: true,
+      messageToolImplicitCurrentTargets: [{ tool: "message", provider: "slack", text: "done" }],
+    });
+
+    expect(outcome.visibleDeliveries).toEqual([
+      {
+        via: "message_tool",
+        target: {
+          tool: "message",
+          provider: "slack",
+          to: "channel:C1",
+          text: "done",
+        },
+        verifiedTarget: true,
+      },
+    ]);
+    expect(outcome.verifiedMessageToolDelivery).toBe(true);
+    expect(outcome.satisfiesSourceDelivery).toBe(true);
+    expect(outcome.unverifiedMessageToolDelivery).toBe(false);
+  });
+
   it("matches source targets through the same provider normalization used by delivery", () => {
     expect(
       sourceDeliveryTargetsMatch(

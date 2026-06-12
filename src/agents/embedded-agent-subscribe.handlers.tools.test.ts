@@ -1590,7 +1590,7 @@ describe("messaging tool media URL tracking", () => {
     expect(ctx.state.messagingToolSentTexts).toEqual([]);
   });
 
-  it("does not treat no-target cross-channel message sends as current-conversation evidence", async () => {
+  it("records no-target channel message sends as provider-scoped implicit evidence", async () => {
     const { ctx } = createTestContext();
 
     await handleToolExecutionStart(ctx, {
@@ -1608,7 +1608,15 @@ describe("messaging tool media URL tracking", () => {
     });
 
     expect(ctx.state.messagingToolSentTargets).toEqual([]);
-    expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
+    expectRecordFields(
+      requireSingleImplicitCurrentTarget(ctx),
+      "implicit current messaging target",
+      {
+        tool: "message",
+        provider: "telegram",
+        text: "hi",
+      },
+    );
   });
 
   it("commits channelId message sends as explicit target evidence", async () => {
@@ -1637,7 +1645,7 @@ describe("messaging tool media URL tracking", () => {
     expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
   });
 
-  it("commits targets array message sends as explicit target evidence", async () => {
+  it("does not treat targets array message sends as explicit target evidence", async () => {
     const { ctx } = createTestContext();
 
     await handleToolExecutionStart(ctx, {
@@ -1654,16 +1662,19 @@ describe("messaging tool media URL tracking", () => {
       result: { ok: true },
     });
 
-    expectRecordFields(requireSingleMessagingTarget(ctx), "messaging target", {
-      tool: "message",
-      provider: "message",
-      to: "other-room",
-      text: "hi",
-    });
-    expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
+    expect(ctx.state.messagingToolSentTargets).toEqual([]);
+    expectRecordFields(
+      requireSingleImplicitCurrentTarget(ctx),
+      "implicit current messaging target",
+      {
+        tool: "message",
+        provider: "message",
+        text: "hi",
+      },
+    );
   });
 
-  it("does not treat channelIds-only message sends as current-conversation evidence", async () => {
+  it("does not treat channelIds-only message sends as explicit target evidence", async () => {
     const { ctx } = createTestContext();
 
     await handleToolExecutionStart(ctx, {
@@ -1681,7 +1692,15 @@ describe("messaging tool media URL tracking", () => {
     });
 
     expect(ctx.state.messagingToolSentTargets).toEqual([]);
-    expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
+    expectRecordFields(
+      requireSingleImplicitCurrentTarget(ctx),
+      "implicit current messaging target",
+      {
+        tool: "message",
+        provider: "message",
+        text: "hi",
+      },
+    );
   });
 
   it("commits mediaUrls from tool result payload", async () => {
