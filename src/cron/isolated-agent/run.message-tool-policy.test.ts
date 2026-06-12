@@ -88,11 +88,15 @@ function makeResolvedAnnounceTarget(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeMessageToolRunResult(messagingToolSentTargets: Array<Record<string, unknown>>) {
+function makeMessageToolRunResult(
+  messagingToolSentTargets: Array<Record<string, unknown>>,
+  messagingToolImplicitCurrentTargets: Array<Record<string, unknown>> = [],
+) {
   return {
     payloads: [{ text: "sent" }],
     didSendViaMessagingTool: true,
     messagingToolSentTargets,
+    messagingToolImplicitCurrentTargets,
     meta: { agentMeta: { usage: { input: 10, output: 20 } } },
   };
 }
@@ -239,11 +243,14 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
 
   async function expectCronFallbackSkippedForMessageToolDelivery(options: {
     sentTargets: Array<Record<string, unknown>>;
+    implicitCurrentTargets?: Array<Record<string, unknown>>;
     job?: Parameters<typeof makeAnnounceMessageToolJob>[0];
   }) {
     mockRunCronFallbackPassthrough();
     resolveCronDeliveryPlanMock.mockReturnValue(makeAnnounceDeliveryPlan());
-    runEmbeddedAgentMock.mockResolvedValue(makeMessageToolRunResult(options.sentTargets));
+    runEmbeddedAgentMock.mockResolvedValue(
+      makeMessageToolRunResult(options.sentTargets, options.implicitCurrentTargets),
+    );
 
     const result = await runCronIsolatedAgentTurn({
       ...makeParams(),
@@ -937,7 +944,8 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
 
   it("skips cron fallback for direct message sends to the current conversation", async () => {
     await expectCronFallbackSkippedForMessageToolDelivery({
-      sentTargets: [{ tool: "message", provider: "message" }],
+      sentTargets: [],
+      implicitCurrentTargets: [{ tool: "message", provider: "message" }],
     });
   });
 

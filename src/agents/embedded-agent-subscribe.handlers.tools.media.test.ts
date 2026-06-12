@@ -41,6 +41,8 @@ function createMockContext(overrides?: {
       messagingToolSentTextsNormalized: [],
       messagingToolSentMediaUrls: [],
       messagingToolSentTargets: [],
+      messagingToolImplicitCurrentTargets: [],
+      pendingMessagingImplicitCurrentTargets: new Map(),
       deterministicApprovalPromptPending: false,
       deterministicApprovalPromptSent: false,
     },

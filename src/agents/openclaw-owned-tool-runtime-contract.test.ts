@@ -47,6 +47,8 @@ function createToolHandlerCtx(): ToolHandlerContext {
       toolMetaById: new Map<string, ToolCallSummary>(),
       pendingMessagingTargets: new Map<string, MessagingToolSend>(),
       messagingToolSentTargets: [] as MessagingToolSend[],
+      messagingToolImplicitCurrentTargets: [] as MessagingToolSend[],
+      pendingMessagingImplicitCurrentTargets: new Map<string, MessagingToolSend>(),
       successfulCronAdds: 0,
     },
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },

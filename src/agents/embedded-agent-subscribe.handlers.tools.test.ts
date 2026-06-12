@@ -78,6 +78,8 @@ function createTestContext(): {
       messagingToolSentMediaUrls: [],
       messagingToolSourceReplyPayloads: [],
       messagingToolSentTargets: [],
+      messagingToolImplicitCurrentTargets: [],
+      pendingMessagingImplicitCurrentTargets: new Map(),
       successfulCronAdds: 0,
       deterministicApprovalPromptSent: false,
       toolExecutionSinceLastBlockReply: false,
@@ -165,6 +167,12 @@ function requireSingleMessagingTarget(ctx: ToolHandlerContext) {
   const targets = ctx.state.messagingToolSentTargets;
   expect(targets).toHaveLength(1);
   return requireRecord(targets[0], "messaging target");
+}
+
+function requireSingleImplicitCurrentTarget(ctx: ToolHandlerContext) {
+  const targets = ctx.state.messagingToolImplicitCurrentTargets;
+  expect(targets).toHaveLength(1);
+  return requireRecord(targets[0], "implicit current messaging target");
 }
 
 describe("handleToolExecutionStart read path checks", () => {
@@ -1547,13 +1555,18 @@ describe("messaging tool media URL tracking", () => {
       result: { ok: true },
     });
 
-    expectRecordFields(requireSingleMessagingTarget(ctx), "messaging target", {
-      tool: "message",
-      provider: "message",
-      accountId: "bot-a",
-      threadSuppressed: true,
-      text: "hi",
-    });
+    expect(ctx.state.messagingToolSentTargets).toEqual([]);
+    expectRecordFields(
+      requireSingleImplicitCurrentTarget(ctx),
+      "implicit current messaging target",
+      {
+        tool: "message",
+        provider: "message",
+        accountId: "bot-a",
+        threadSuppressed: true,
+        text: "hi",
+      },
+    );
   });
 
   it("does not commit dry-run message sends as delivery evidence", async () => {

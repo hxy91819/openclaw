@@ -30,6 +30,8 @@ export function createBaseToolHandlerState() {
     messagingToolSentMediaUrls: [] as string[],
     messagingToolSourceReplyPayloads: [],
     messagingToolSentTargets: [] as unknown[],
+    messagingToolImplicitCurrentTargets: [] as unknown[],
+    pendingMessagingImplicitCurrentTargets: new Map<string, unknown>(),
     deterministicApprovalPromptSent: false,
     blockBuffer: "",
   };

@@ -207,6 +207,8 @@ export type EmbeddedAgentRunResult = {
   messagingToolSentMediaUrls?: string[];
   // Messaging tool targets that successfully sent a message during the run.
   messagingToolSentTargets?: MessagingToolSend[];
+  // Direct message-tool sends that used the current source conversation target.
+  messagingToolImplicitCurrentTargets?: MessagingToolSend[];
   // Message-tool replies delivered to the active internal UI source.
   messagingToolSourceReplyPayloads?: MessagingToolSourceReplyPayload[];
   // Child sessions successfully accepted by sessions_spawn during the run.

@@ -204,7 +204,7 @@ describe("source delivery plan", () => {
 
     const outcome = resolveSourceDeliveryOutcome(contract, {
       didSendViaMessageTool: true,
-      messageToolSentTargets: [{ tool: "message", provider: "message", text: "done" }],
+      messageToolImplicitCurrentTargets: [{ tool: "message", provider: "message", text: "done" }],
     });
 
     expect(outcome.visibleDeliveries).toEqual([
@@ -237,7 +237,7 @@ describe("source delivery plan", () => {
 
     const outcome = resolveSourceDeliveryOutcome(contract, {
       didSendViaMessageTool: true,
-      messageToolSentTargets: [
+      messageToolImplicitCurrentTargets: [
         { tool: "message", provider: "message", threadSuppressed: true, text: "done" },
       ],
     });

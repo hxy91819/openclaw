@@ -220,11 +220,13 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     messagingToolSentTexts: [],
     messagingToolSentTextsNormalized: [],
     messagingToolSentTargets: [],
+    messagingToolImplicitCurrentTargets: [],
     heartbeatToolResponse: undefined,
     messagingToolSentMediaUrls: [],
     messagingToolSourceReplyPayloads: [],
     pendingMessagingTexts: new Map(),
     pendingMessagingTargets: new Map(),
+    pendingMessagingImplicitCurrentTargets: new Map(),
     successfulCronAdds: 0,
     pendingMessagingMediaUrls: new Map(),
     pendingToolMediaUrls: initialPendingToolMediaUrls,
@@ -252,6 +254,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
   const messagingToolSentTexts = state.messagingToolSentTexts;
   const messagingToolSentTextsNormalized = state.messagingToolSentTextsNormalized;
   const messagingToolSentTargets = state.messagingToolSentTargets;
+  const messagingToolImplicitCurrentTargets = state.messagingToolImplicitCurrentTargets;
   const messagingToolSentMediaUrls = state.messagingToolSentMediaUrls;
   const messagingToolSourceReplyPayloads = state.messagingToolSourceReplyPayloads;
   const pendingMessagingTexts = state.pendingMessagingTexts;
@@ -503,6 +506,10 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     if (messagingToolSentTargets.length > MAX_MESSAGING_SENT_TARGETS) {
       const overflow = messagingToolSentTargets.length - MAX_MESSAGING_SENT_TARGETS;
       messagingToolSentTargets.splice(0, overflow);
+    }
+    if (messagingToolImplicitCurrentTargets.length > MAX_MESSAGING_SENT_TARGETS) {
+      const overflow = messagingToolImplicitCurrentTargets.length - MAX_MESSAGING_SENT_TARGETS;
+      messagingToolImplicitCurrentTargets.splice(0, overflow);
     }
     if (messagingToolSentMediaUrls.length > MAX_MESSAGING_SENT_MEDIA_URLS) {
       const overflow = messagingToolSentMediaUrls.length - MAX_MESSAGING_SENT_MEDIA_URLS;
@@ -1193,10 +1200,12 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     messagingToolSentTexts.length = 0;
     messagingToolSentTextsNormalized.length = 0;
     messagingToolSentTargets.length = 0;
+    messagingToolImplicitCurrentTargets.length = 0;
     messagingToolSentMediaUrls.length = 0;
     messagingToolSourceReplyPayloads.length = 0;
     pendingMessagingTexts.clear();
     pendingMessagingTargets.clear();
+    state.pendingMessagingImplicitCurrentTargets.clear();
     state.successfulCronAdds = 0;
     state.heartbeatToolResponse = undefined;
     state.pendingMessagingMediaUrls.clear();
@@ -1377,6 +1386,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     getMessagingToolSentTexts: () => messagingToolSentTexts.slice(),
     getMessagingToolSentMediaUrls: () => messagingToolSentMediaUrls.slice(),
     getMessagingToolSentTargets: () => messagingToolSentTargets.slice(),
+    getMessagingToolImplicitCurrentTargets: () => messagingToolImplicitCurrentTargets.slice(),
     getMessagingToolSourceReplyPayloads: () => messagingToolSourceReplyPayloads.slice(),
     getHeartbeatToolResponse: () =>
       state.heartbeatToolResponse ? { ...state.heartbeatToolResponse } : undefined,

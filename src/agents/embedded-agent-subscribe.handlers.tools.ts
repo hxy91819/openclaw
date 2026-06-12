@@ -1032,7 +1032,11 @@ export function handleToolExecutionStart(
       if (isMessagingSend) {
         const sendTarget = extractMessagingToolSend(toolName, argsRecord);
         if (sendTarget) {
-          ctx.state.pendingMessagingTargets.set(toolCallId, sendTarget);
+          if (sendTarget.to) {
+            ctx.state.pendingMessagingTargets.set(toolCallId, sendTarget);
+          } else {
+            ctx.state.pendingMessagingImplicitCurrentTargets.set(toolCallId, sendTarget);
+          }
         }
         // Field names vary by tool: Discord/Slack use "content", sessions_send uses "message"
         const text = (argsRecord.content as string) ?? (argsRecord.message as string);
@@ -1237,6 +1241,8 @@ export async function handleToolExecutionEnd(
   // Commit messaging tool evidence on success, discard on error.
   const pendingText = ctx.state.pendingMessagingTexts.get(toolCallId);
   const pendingTarget = ctx.state.pendingMessagingTargets.get(toolCallId);
+  const pendingImplicitCurrentTarget =
+    ctx.state.pendingMessagingImplicitCurrentTargets.get(toolCallId);
   const pendingMediaUrls = ctx.state.pendingMessagingMediaUrls.get(toolCallId) ?? [];
   const startArgs =
     startData?.args && typeof startData.args === "object"
@@ -1263,6 +1269,17 @@ export async function handleToolExecutionEnd(
     if (!isToolError) {
       ctx.state.messagingToolSentTargets.push({
         ...pendingTarget,
+        ...(pendingText ? { text: pendingText } : {}),
+        ...(committedMediaUrls.length > 0 ? { mediaUrls: committedMediaUrls.slice() } : {}),
+      });
+      ctx.trimMessagingToolSent();
+    }
+  }
+  if (pendingImplicitCurrentTarget) {
+    ctx.state.pendingMessagingImplicitCurrentTargets.delete(toolCallId);
+    if (!isToolError) {
+      ctx.state.messagingToolImplicitCurrentTargets.push({
+        ...pendingImplicitCurrentTarget,
         ...(pendingText ? { text: pendingText } : {}),
         ...(committedMediaUrls.length > 0 ? { mediaUrls: committedMediaUrls.slice() } : {}),
       });

@@ -1115,6 +1115,7 @@ async function finalizeCronRun(params: {
   const sourceDeliveryOutcome = resolveSourceDeliveryOutcome(prepared.sourceDelivery, {
     didSendViaMessageTool: finalRunResult.didSendViaMessagingTool,
     messageToolSentTargets: finalRunResult.messagingToolSentTargets,
+    messageToolImplicitCurrentTargets: finalRunResult.messagingToolImplicitCurrentTargets,
   });
   if (hasFatalStructuredErrorPayload && prepared.deliveryRequested) {
     // Structured run error payloads belong in cron state and failure alerts,
