@@ -913,6 +913,9 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
       }),
     });
 
+    expectEmbeddedRunFields({
+      requireExplicitMessageTarget: false,
+    });
     expect(dispatchCronDeliveryMock).toHaveBeenCalledTimes(1);
     expectDispatchFields({
       deliveryRequested: true,
@@ -930,6 +933,12 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
       delivered: true,
     });
     expect(result.delivery).not.toHaveProperty("messageToolSentTo");
+  });
+
+  it("skips cron fallback for direct message sends to the current conversation", async () => {
+    await expectCronFallbackSkippedForMessageToolDelivery({
+      sentTargets: [{ tool: "message", provider: "message" }],
+    });
   });
 
   it("rewrites generic message provider to resolved channel in delivery trace", async () => {

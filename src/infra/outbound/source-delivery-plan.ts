@@ -69,6 +69,7 @@ export type SourceDeliveryPlan = {
     enabled: boolean;
     force: boolean;
     requireExplicitTarget: boolean;
+    requireExplicitTargetEvidence: boolean;
     defaultTarget: boolean;
   };
   fallback: {
@@ -174,6 +175,7 @@ export function createSourceDeliveryPlan(params: {
   messageToolEnabled?: boolean;
   messageToolForced?: boolean;
   requireExplicitMessageTarget?: boolean;
+  requireExplicitMessageTargetEvidence?: boolean;
   directFallback?: boolean;
   skipFallbackWhenMessageToolSentToTarget?: boolean;
   fallbackBestEffort?: boolean;
@@ -197,6 +199,7 @@ export function createSourceDeliveryPlan(params: {
       enabled: params.messageToolEnabled ?? messageToolOwnsDelivery,
       force: params.messageToolForced ?? messageToolOwnsDelivery,
       requireExplicitTarget: params.requireExplicitMessageTarget ?? false,
+      requireExplicitTargetEvidence: params.requireExplicitMessageTargetEvidence ?? false,
       defaultTarget: Boolean(params.target?.channel || params.target?.to),
     },
     fallback: {
@@ -229,6 +232,29 @@ function resolveImplicitMessageToolDeliveryTarget(
   };
 }
 
+function resolveObservedMessageToolTarget(
+  plan: SourceDeliveryPlan,
+  target: SourceDeliveryMessageToolTarget,
+): SourceDeliveryMessageToolTarget {
+  if (target.tool !== "message" || target.to) {
+    return target;
+  }
+  const implicitTarget = resolveImplicitMessageToolDeliveryTarget(plan);
+  return implicitTarget
+    ? {
+        ...target,
+        provider: implicitTarget.provider,
+        ...((target.accountId ?? implicitTarget.accountId)
+          ? { accountId: target.accountId ?? implicitTarget.accountId }
+          : {}),
+        ...(implicitTarget.to ? { to: implicitTarget.to } : {}),
+        ...((target.threadId ?? implicitTarget.threadId)
+          ? { threadId: target.threadId ?? implicitTarget.threadId }
+          : {}),
+      }
+    : target;
+}
+
 /** Evaluates whether observed message-tool sends satisfy the source delivery plan. */
 export function resolveSourceDeliveryOutcome(
   plan: SourceDeliveryPlan,
@@ -244,8 +270,8 @@ export function resolveSourceDeliveryOutcome(
   // evidence so pending/inter-session sends cannot masquerade as channel acks.
   const sentTargets =
     explicitTargets.length > 0
-      ? explicitTargets
-      : didSendViaMessageTool && !plan.messageTool.requireExplicitTarget
+      ? explicitTargets.map((target) => resolveObservedMessageToolTarget(plan, target))
+      : didSendViaMessageTool && !plan.messageTool.requireExplicitTargetEvidence
         ? [resolveImplicitMessageToolDeliveryTarget(plan)].filter(
             (target): target is SourceDeliveryMessageToolTarget => Boolean(target),
           )

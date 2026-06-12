@@ -625,7 +625,10 @@ export function extractMessagingToolSend(
     }
     const toRaw = resolveMessageToolTarget(args);
     if (!toRaw) {
-      return undefined;
+      return {
+        tool: toolName,
+        provider: "message",
+      };
     }
     const providerRaw = normalizeOptionalString(args.provider) ?? "";
     const channelRaw = normalizeOptionalString(args.channel) ?? "";

@@ -172,10 +172,13 @@ describe("source delivery plan", () => {
       reason: "cron_announce",
       target: { channel: "slack", to: "channel:C1" },
       messageToolEnabled: true,
-      requireExplicitMessageTarget: true,
+      requireExplicitMessageTargetEvidence: true,
       directFallback: true,
       skipFallbackWhenMessageToolSentToTarget: true,
     });
+
+    expect(contract.messageTool.requireExplicitTarget).toBe(false);
+    expect(contract.messageTool.requireExplicitTargetEvidence).toBe(true);
 
     const outcome = resolveSourceDeliveryOutcome(contract, {
       didSendViaMessageTool: true,
@@ -185,6 +188,39 @@ describe("source delivery plan", () => {
     expect(outcome.visibleDeliveries).toEqual([]);
     expect(outcome.verifiedMessageToolDelivery).toBe(false);
     expect(outcome.satisfiesSourceDelivery).toBe(false);
+    expect(outcome.unverifiedMessageToolDelivery).toBe(false);
+  });
+
+  it("credits direct message-tool sends that use the current conversation target", () => {
+    const contract = createSourceDeliveryPlan({
+      owner: "direct_fallback",
+      reason: "cron_announce",
+      target: { channel: "slack", to: "channel:C1" },
+      messageToolEnabled: true,
+      requireExplicitMessageTargetEvidence: true,
+      directFallback: true,
+      skipFallbackWhenMessageToolSentToTarget: true,
+    });
+
+    const outcome = resolveSourceDeliveryOutcome(contract, {
+      didSendViaMessageTool: true,
+      messageToolSentTargets: [{ tool: "message", provider: "message", text: "done" }],
+    });
+
+    expect(outcome.visibleDeliveries).toEqual([
+      {
+        via: "message_tool",
+        target: {
+          tool: "message",
+          provider: "slack",
+          to: "channel:C1",
+          text: "done",
+        },
+        verifiedTarget: true,
+      },
+    ]);
+    expect(outcome.verifiedMessageToolDelivery).toBe(true);
+    expect(outcome.satisfiesSourceDelivery).toBe(true);
     expect(outcome.unverifiedMessageToolDelivery).toBe(false);
   });
 

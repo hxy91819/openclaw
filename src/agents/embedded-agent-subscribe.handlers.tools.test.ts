@@ -1524,6 +1524,30 @@ describe("messaging tool media URL tracking", () => {
     expect(ctx.state.pendingMessagingMediaUrls.has("tool-m2")).toBe(false);
   });
 
+  it("commits direct message sends without an explicit target as current-conversation evidence", async () => {
+    const { ctx } = createTestContext();
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "message",
+      toolCallId: "tool-current-message",
+      args: { action: "send", content: "hi" },
+    });
+    await handleToolExecutionEnd(ctx, {
+      type: "tool_execution_end",
+      toolName: "message",
+      toolCallId: "tool-current-message",
+      isError: false,
+      result: { ok: true },
+    });
+
+    expectRecordFields(requireSingleMessagingTarget(ctx), "messaging target", {
+      tool: "message",
+      provider: "message",
+      text: "hi",
+    });
+  });
+
   it("commits mediaUrls from tool result payload", async () => {
     const { ctx } = createTestContext();
 
