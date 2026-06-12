@@ -82,6 +82,7 @@ export type AgentCommandDeliveryResult = {
   messagingToolSentTexts?: string[];
   messagingToolSentMediaUrls?: string[];
   messagingToolSentTargets?: MessagingToolSend[];
+  messagingToolImplicitCurrentTargets?: MessagingToolSend[];
   deliverySucceeded?: boolean;
   deliveryStatus?: AgentCommandDeliveryStatus;
 };
@@ -205,6 +206,9 @@ function buildDeliveryResult(params: {
       : {}),
     ...(hasNonEmptyArray(params.result.messagingToolSentTargets)
       ? { messagingToolSentTargets: params.result.messagingToolSentTargets }
+      : {}),
+    ...(hasNonEmptyArray(params.result.messagingToolImplicitCurrentTargets)
+      ? { messagingToolImplicitCurrentTargets: params.result.messagingToolImplicitCurrentTargets }
       : {}),
     ...(params.deliverySucceeded !== undefined
       ? { deliverySucceeded: params.deliverySucceeded }

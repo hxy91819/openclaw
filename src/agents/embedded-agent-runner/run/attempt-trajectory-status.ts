@@ -36,6 +36,7 @@ export type ResolveAttemptTrajectoryTerminalParams = {
   messagingToolSentTexts: string[];
   messagingToolSentMediaUrls: string[];
   messagingToolSentTargets: unknown[];
+  messagingToolImplicitCurrentTargets?: unknown[];
   successfulCronAdds: number;
   synthesizedPayloadCount: number;
   acceptedSessionSpawns?: readonly AcceptedSessionSpawn[];
@@ -79,13 +80,17 @@ function hasNonEmptyString(values: string[]): boolean {
 function hasCommittedMessagingDeliveryEvidence(
   params: Pick<
     ResolveAttemptTrajectoryTerminalParams,
-    "messagingToolSentTexts" | "messagingToolSentMediaUrls" | "messagingToolSentTargets"
+    | "messagingToolSentTexts"
+    | "messagingToolSentMediaUrls"
+    | "messagingToolSentTargets"
+    | "messagingToolImplicitCurrentTargets"
   >,
 ): boolean {
   return (
     hasNonEmptyString(params.messagingToolSentTexts) ||
     hasNonEmptyString(params.messagingToolSentMediaUrls) ||
-    params.messagingToolSentTargets.length > 0
+    params.messagingToolSentTargets.length > 0 ||
+    (params.messagingToolImplicitCurrentTargets?.length ?? 0) > 0
   );
 }
 

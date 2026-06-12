@@ -5158,6 +5158,7 @@ export async function runEmbeddedAttempt(
         messagingToolSentTexts: getMessagingToolSentTexts(),
         messagingToolSentMediaUrls: getMessagingToolSentMediaUrls(),
         messagingToolSentTargets: getMessagingToolSentTargets(),
+        messagingToolImplicitCurrentTargets: getMessagingToolImplicitCurrentTargets(),
         successfulCronAdds: getSuccessfulCronAdds(),
         synthesizedPayloadCount,
         acceptedSessionSpawns,

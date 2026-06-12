@@ -23,6 +23,7 @@ function baseParams(
     messagingToolSentTexts: [],
     messagingToolSentMediaUrls: [],
     messagingToolSentTargets: [],
+    messagingToolImplicitCurrentTargets: [],
     successfulCronAdds: 0,
     synthesizedPayloadCount: 0,
     ...overrides,
@@ -49,6 +50,16 @@ describe("attempt trajectory status", () => {
         baseParams({
           didSendViaMessagingTool: true,
           messagingToolSentTargets: [{ channel: "telegram" }],
+        }),
+      ),
+    ).toEqual({ status: "success" });
+  });
+
+  it("keeps implicit current-conversation messaging delivery as success", () => {
+    expect(
+      resolveAttemptTrajectoryTerminal(
+        baseParams({
+          messagingToolImplicitCurrentTargets: [{ tool: "message", provider: "message" }],
         }),
       ),
     ).toEqual({ status: "success" });

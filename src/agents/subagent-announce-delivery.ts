@@ -1130,9 +1130,12 @@ function collectMessagingToolDeliveredMediaUrlsForTarget(
   const targets = Array.isArray(result.messagingToolSentTargets)
     ? result.messagingToolSentTargets
     : [];
+  const implicitCurrentTargets = Array.isArray(result.messagingToolImplicitCurrentTargets)
+    ? result.messagingToolImplicitCurrentTargets
+    : [];
   const urls = new Set<string>();
   const targetedUrls = new Set<string>();
-  for (const target of targets) {
+  for (const target of [...targets, ...implicitCurrentTargets]) {
     const targetMediaUrls = collectMessagingToolDeliveredMediaUrls({
       messagingToolSentTargets: [target],
     });

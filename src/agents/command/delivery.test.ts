@@ -646,6 +646,13 @@ describe("normalizeAgentCommandReplyPayloads", () => {
             mediaUrls: ["/tmp/generated-image.png"],
           },
         ],
+        messagingToolImplicitCurrentTargets: [
+          {
+            tool: "message",
+            provider: "message",
+            text: "Sent to the current chat.",
+          },
+        ],
       } as RunResult,
     });
 
@@ -660,6 +667,13 @@ describe("normalizeAgentCommandReplyPayloads", () => {
         threadId: "22",
         text: "The image is ready.",
         mediaUrls: ["/tmp/generated-image.png"],
+      },
+    ]);
+    expect(delivered.messagingToolImplicitCurrentTargets).toEqual([
+      {
+        tool: "message",
+        provider: "message",
+        text: "Sent to the current chat.",
       },
     ]);
     expect(deliverOutboundPayloadsMock).not.toHaveBeenCalled();
