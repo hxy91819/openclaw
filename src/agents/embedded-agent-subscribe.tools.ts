@@ -609,7 +609,20 @@ function resolveMessageToolTarget(args: Record<string, unknown>): string | undef
   if (toRaw) {
     return toRaw;
   }
-  return readStringValue(args.target);
+  const targetRaw = readStringValue(args.target);
+  if (targetRaw) {
+    return targetRaw;
+  }
+  const channelIdRaw = readStringValue(args.channelId);
+  if (channelIdRaw) {
+    return channelIdRaw;
+  }
+  if (Array.isArray(args.targets)) {
+    return args.targets.find(
+      (value): value is string => typeof value === "string" && value.trim().length > 0,
+    );
+  }
+  return undefined;
 }
 
 export function extractMessagingToolSend(
@@ -630,7 +643,7 @@ export function extractMessagingToolSend(
     if (!toRaw) {
       const providerHint =
         normalizeOptionalString(args.provider) ?? normalizeOptionalString(args.channel);
-      if (providerHint) {
+      if (providerHint || (Array.isArray(args.channelIds) && args.channelIds.length > 0)) {
         return undefined;
       }
       const threadId = normalizeOptionalString(args.threadId);

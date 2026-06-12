@@ -1611,6 +1611,79 @@ describe("messaging tool media URL tracking", () => {
     expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
   });
 
+  it("commits channelId message sends as explicit target evidence", async () => {
+    const { ctx } = createTestContext();
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "message",
+      toolCallId: "tool-channel-id-message",
+      args: { action: "send", channelId: "other-room", content: "hi" },
+    });
+    await handleToolExecutionEnd(ctx, {
+      type: "tool_execution_end",
+      toolName: "message",
+      toolCallId: "tool-channel-id-message",
+      isError: false,
+      result: { ok: true },
+    });
+
+    expectRecordFields(requireSingleMessagingTarget(ctx), "messaging target", {
+      tool: "message",
+      provider: "message",
+      to: "other-room",
+      text: "hi",
+    });
+    expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
+  });
+
+  it("commits targets array message sends as explicit target evidence", async () => {
+    const { ctx } = createTestContext();
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "message",
+      toolCallId: "tool-targets-message",
+      args: { action: "send", targets: ["other-room"], content: "hi" },
+    });
+    await handleToolExecutionEnd(ctx, {
+      type: "tool_execution_end",
+      toolName: "message",
+      toolCallId: "tool-targets-message",
+      isError: false,
+      result: { ok: true },
+    });
+
+    expectRecordFields(requireSingleMessagingTarget(ctx), "messaging target", {
+      tool: "message",
+      provider: "message",
+      to: "other-room",
+      text: "hi",
+    });
+    expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
+  });
+
+  it("does not treat channelIds-only message sends as current-conversation evidence", async () => {
+    const { ctx } = createTestContext();
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "message",
+      toolCallId: "tool-channel-ids-message",
+      args: { action: "send", channelIds: ["other-room"], content: "hi" },
+    });
+    await handleToolExecutionEnd(ctx, {
+      type: "tool_execution_end",
+      toolName: "message",
+      toolCallId: "tool-channel-ids-message",
+      isError: false,
+      result: { ok: true },
+    });
+
+    expect(ctx.state.messagingToolSentTargets).toEqual([]);
+    expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
+  });
+
   it("commits mediaUrls from tool result payload", async () => {
     const { ctx } = createTestContext();
 
