@@ -248,9 +248,13 @@ function resolveObservedMessageToolTarget(
           ? { accountId: target.accountId ?? implicitTarget.accountId }
           : {}),
         ...(implicitTarget.to ? { to: implicitTarget.to } : {}),
-        ...((target.threadId ?? implicitTarget.threadId)
-          ? { threadId: target.threadId ?? implicitTarget.threadId }
-          : {}),
+        ...(target.threadId
+          ? { threadId: target.threadId }
+          : target.threadSuppressed === true
+            ? {}
+            : implicitTarget.threadId
+              ? { threadId: implicitTarget.threadId }
+              : {}),
       }
     : target;
 }

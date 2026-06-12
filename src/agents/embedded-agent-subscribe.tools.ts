@@ -625,9 +625,14 @@ export function extractMessagingToolSend(
     }
     const toRaw = resolveMessageToolTarget(args);
     if (!toRaw) {
+      const threadId = normalizeOptionalString(args.threadId);
+      const threadSuppressed = args.topLevel === true || args.threadId === null;
       return {
         tool: toolName,
         provider: "message",
+        ...(accountId ? { accountId } : {}),
+        ...(threadId ? { threadId } : {}),
+        ...(threadSuppressed ? { threadSuppressed: true } : {}),
       };
     }
     const providerRaw = normalizeOptionalString(args.provider) ?? "";

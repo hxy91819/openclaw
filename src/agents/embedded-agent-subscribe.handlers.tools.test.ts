@@ -1531,7 +1531,13 @@ describe("messaging tool media URL tracking", () => {
       type: "tool_execution_start",
       toolName: "message",
       toolCallId: "tool-current-message",
-      args: { action: "send", content: "hi" },
+      args: {
+        action: "send",
+        content: "hi",
+        accountId: "bot-a",
+        threadId: null,
+        topLevel: true,
+      },
     });
     await handleToolExecutionEnd(ctx, {
       type: "tool_execution_end",
@@ -1544,6 +1550,8 @@ describe("messaging tool media URL tracking", () => {
     expectRecordFields(requireSingleMessagingTarget(ctx), "messaging target", {
       tool: "message",
       provider: "message",
+      accountId: "bot-a",
+      threadSuppressed: true,
       text: "hi",
     });
   });

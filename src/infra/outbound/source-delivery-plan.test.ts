@@ -224,6 +224,42 @@ describe("source delivery plan", () => {
     expect(outcome.unverifiedMessageToolDelivery).toBe(false);
   });
 
+  it("does not backfill the planned thread when the direct message suppressed thread delivery", () => {
+    const contract = createSourceDeliveryPlan({
+      owner: "direct_fallback",
+      reason: "cron_announce",
+      target: { channel: "slack", to: "channel:C1", threadId: "1700000000.000001" },
+      messageToolEnabled: true,
+      requireExplicitMessageTargetEvidence: true,
+      directFallback: true,
+      skipFallbackWhenMessageToolSentToTarget: true,
+    });
+
+    const outcome = resolveSourceDeliveryOutcome(contract, {
+      didSendViaMessageTool: true,
+      messageToolSentTargets: [
+        { tool: "message", provider: "message", threadSuppressed: true, text: "done" },
+      ],
+    });
+
+    expect(outcome.visibleDeliveries).toEqual([
+      {
+        via: "message_tool",
+        target: {
+          tool: "message",
+          provider: "slack",
+          to: "channel:C1",
+          threadSuppressed: true,
+          text: "done",
+        },
+        verifiedTarget: false,
+      },
+    ]);
+    expect(outcome.verifiedMessageToolDelivery).toBe(false);
+    expect(outcome.satisfiesSourceDelivery).toBe(false);
+    expect(outcome.unverifiedMessageToolDelivery).toBe(true);
+  });
+
   it("matches source targets through the same provider normalization used by delivery", () => {
     expect(
       sourceDeliveryTargetsMatch(
