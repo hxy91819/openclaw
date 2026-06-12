@@ -1590,6 +1590,27 @@ describe("messaging tool media URL tracking", () => {
     expect(ctx.state.messagingToolSentTexts).toEqual([]);
   });
 
+  it("does not treat no-target cross-channel message sends as current-conversation evidence", async () => {
+    const { ctx } = createTestContext();
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "message",
+      toolCallId: "tool-cross-channel-message",
+      args: { action: "send", channel: "telegram", content: "hi" },
+    });
+    await handleToolExecutionEnd(ctx, {
+      type: "tool_execution_end",
+      toolName: "message",
+      toolCallId: "tool-cross-channel-message",
+      isError: false,
+      result: { ok: true },
+    });
+
+    expect(ctx.state.messagingToolSentTargets).toEqual([]);
+    expect(ctx.state.messagingToolImplicitCurrentTargets).toEqual([]);
+  });
+
   it("commits mediaUrls from tool result payload", async () => {
     const { ctx } = createTestContext();
 

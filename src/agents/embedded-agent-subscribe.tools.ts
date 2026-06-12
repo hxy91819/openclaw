@@ -628,6 +628,11 @@ export function extractMessagingToolSend(
     }
     const toRaw = resolveMessageToolTarget(args);
     if (!toRaw) {
+      const providerHint =
+        normalizeOptionalString(args.provider) ?? normalizeOptionalString(args.channel);
+      if (providerHint) {
+        return undefined;
+      }
       const threadId = normalizeOptionalString(args.threadId);
       const threadSuppressed = args.topLevel === true || args.threadId === null;
       return {

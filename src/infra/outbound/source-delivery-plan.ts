@@ -236,7 +236,7 @@ function resolveObservedMessageToolTarget(
   plan: SourceDeliveryPlan,
   target: SourceDeliveryMessageToolTarget,
 ): SourceDeliveryMessageToolTarget {
-  if (target.tool !== "message" || target.to) {
+  if (target.tool !== "message" || target.to || target.provider !== "message") {
     return target;
   }
   const implicitTarget = resolveImplicitMessageToolDeliveryTarget(plan);
