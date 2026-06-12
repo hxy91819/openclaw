@@ -39,6 +39,9 @@ export function isMessagingToolSendAction(
     return true;
   }
   if (toolName === "message") {
+    if (args.dryRun === true) {
+      return false;
+    }
     return isMessageToolSendActionName(action);
   }
   const providerId = normalizeChannelId(toolName);

@@ -1556,6 +1556,27 @@ describe("messaging tool media URL tracking", () => {
     });
   });
 
+  it("does not commit dry-run message sends as delivery evidence", async () => {
+    const { ctx } = createTestContext();
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "message",
+      toolCallId: "tool-dry-run-message",
+      args: { action: "send", content: "preview", dryRun: true },
+    });
+    await handleToolExecutionEnd(ctx, {
+      type: "tool_execution_end",
+      toolName: "message",
+      toolCallId: "tool-dry-run-message",
+      isError: false,
+      result: { ok: true, dryRun: true },
+    });
+
+    expect(ctx.state.messagingToolSentTargets).toEqual([]);
+    expect(ctx.state.messagingToolSentTexts).toEqual([]);
+  });
+
   it("commits mediaUrls from tool result payload", async () => {
     const { ctx } = createTestContext();
 

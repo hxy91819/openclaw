@@ -623,6 +623,9 @@ export function extractMessagingToolSend(
     if (!isMessageToolSendActionName(action)) {
       return undefined;
     }
+    if (args.dryRun === true) {
+      return undefined;
+    }
     const toRaw = resolveMessageToolTarget(args);
     if (!toRaw) {
       const threadId = normalizeOptionalString(args.threadId);
