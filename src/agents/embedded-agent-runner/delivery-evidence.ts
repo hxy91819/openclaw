@@ -30,6 +30,7 @@ export type AgentDeliveryEvidence = {
   messagingToolSentTexts?: unknown;
   messagingToolSentMediaUrls?: unknown;
   messagingToolSentTargets?: unknown;
+  messagingToolImplicitCurrentTargets?: unknown;
   acceptedSessionSpawns?: unknown;
   successfulCronAdds?: unknown;
   meta?: {
@@ -100,15 +101,24 @@ export function collectDeliveredMediaUrls(result: AgentDeliveryEvidence): string
 
 /** Collects media URLs recorded by messaging-tool sends and their target attachments. */
 export function collectMessagingToolDeliveredMediaUrls(
-  result: Pick<AgentDeliveryEvidence, "messagingToolSentMediaUrls" | "messagingToolSentTargets">,
+  result: Pick<
+    AgentDeliveryEvidence,
+    | "messagingToolSentMediaUrls"
+    | "messagingToolSentTargets"
+    | "messagingToolImplicitCurrentTargets"
+  >,
 ): string[] {
   const urls = new Set<string>();
   collectStringValues(result.messagingToolSentMediaUrls, urls);
-  if (Array.isArray(result.messagingToolSentTargets)) {
-    for (const target of result.messagingToolSentTargets) {
-      if (target && typeof target === "object" && !Array.isArray(target)) {
-        collectMediaUrlsFromRecord(target as Record<string, unknown>, urls);
-      }
+  const targetEvidence = [
+    ...(Array.isArray(result.messagingToolSentTargets) ? result.messagingToolSentTargets : []),
+    ...(Array.isArray(result.messagingToolImplicitCurrentTargets)
+      ? result.messagingToolImplicitCurrentTargets
+      : []),
+  ];
+  for (const target of targetEvidence) {
+    if (target && typeof target === "object" && !Array.isArray(target)) {
+      collectMediaUrlsFromRecord(target as Record<string, unknown>, urls);
     }
   }
   return Array.from(urls);
@@ -140,6 +150,7 @@ function hasAgentDeliveryEvidenceShape(value: object): boolean {
     "messagingToolSentTexts" in value ||
     "messagingToolSentMediaUrls" in value ||
     "messagingToolSentTargets" in value ||
+    "messagingToolImplicitCurrentTargets" in value ||
     "acceptedSessionSpawns" in value ||
     "successfulCronAdds" in value ||
     "meta" in value
@@ -188,13 +199,17 @@ export function hasMessagingToolDeliveryEvidence(result: AgentDeliveryEvidence):
 export function hasCommittedMessagingToolDeliveryEvidence(
   result: Pick<
     AgentDeliveryEvidence,
-    "messagingToolSentTexts" | "messagingToolSentMediaUrls" | "messagingToolSentTargets"
+    | "messagingToolSentTexts"
+    | "messagingToolSentMediaUrls"
+    | "messagingToolSentTargets"
+    | "messagingToolImplicitCurrentTargets"
   >,
 ): boolean {
   return (
     hasNonEmptyStringArray(result.messagingToolSentTexts) ||
     hasNonEmptyStringArray(result.messagingToolSentMediaUrls) ||
-    hasNonEmptyArray(result.messagingToolSentTargets)
+    hasNonEmptyArray(result.messagingToolSentTargets) ||
+    hasNonEmptyArray(result.messagingToolImplicitCurrentTargets)
   );
 }
 

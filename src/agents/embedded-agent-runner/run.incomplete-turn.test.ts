@@ -2336,6 +2336,17 @@ describe("runEmbeddedAgent incomplete-turn safety", () => {
     ).toBe(true);
   });
 
+  it("treats implicit current-conversation messaging targets as delivery", () => {
+    expect(
+      hasCommittedMessagingToolDeliveryEvidence({
+        messagingToolSentTexts: [],
+        messagingToolSentMediaUrls: [],
+        messagingToolSentTargets: [],
+        messagingToolImplicitCurrentTargets: [{ tool: "message", provider: "message" }],
+      }),
+    ).toBe(true);
+  });
+
   it("treats committed messaging text as replay-invalid side effect metadata", () => {
     expect(
       buildAttemptReplayMetadata({

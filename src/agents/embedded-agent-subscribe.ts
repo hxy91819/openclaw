@@ -702,6 +702,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
         messagingToolSentTexts,
         messagingToolSentMediaUrls,
         messagingToolSentTargets,
+        messagingToolImplicitCurrentTargets,
       })
     ) {
       return;
@@ -1185,6 +1186,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
         messagingToolSentTexts,
         messagingToolSentMediaUrls,
         messagingToolSentTargets,
+        messagingToolImplicitCurrentTargets,
       }) ||
       state.successfulCronAdds > 0 ||
       state.acceptedSessionSpawns.length > 0 ||
@@ -1402,6 +1404,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
         messagingToolSentTexts,
         messagingToolSentMediaUrls,
         messagingToolSentTargets,
+        messagingToolImplicitCurrentTargets,
       }),
     didSendDeterministicApprovalPrompt: () => state.deterministicApprovalPromptSent,
     getLastToolError: () => (state.lastToolError ? { ...state.lastToolError } : undefined),
