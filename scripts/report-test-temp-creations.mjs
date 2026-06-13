@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import { isChangedLaneTestPath } from "./changed-lanes.mjs";
 import { booleanFlag, parseFlagArgs, stringFlag } from "./lib/arg-utils.mjs";
 import { runAsScript } from "./lib/ts-guard-utils.mjs";
@@ -19,12 +20,20 @@ const FINDING_PATTERNS = [
 ];
 const TEMP_DIR_ALLOW_COMMENT_RE =
   /(?:^|\s)(?:\/\/|\/\*|\*|#)\s*openclaw-temp-dir:\s*allow\s+(.+)$/u;
+const MANUAL_TEMP_DIR_HELPERS = ["cleanupTempDirs", "createTempDirTracker", "makeTempDir"];
+const TEMP_DIR_HELPER_IMPORT_RE =
+  /from\s+["'][^"']*(?:^|\/)(?:test\/)?helpers\/temp-dir(?:\.js)?["']/u;
+const MANUAL_TEMP_DIR_HELPER_CALL_RE = new RegExp(
+  `\\b(?:${MANUAL_TEMP_DIR_HELPERS.join("|")})\\s*\\(`,
+  "u",
+);
 
 function usage() {
   return `Usage: node scripts/report-test-temp-creations.mjs [options]
 
 Description:
-  Reports new bare test temp-directory creation patterns in added diff lines.
+  Reports new bare test temp-directory creation patterns and new manual
+  test/helpers/temp-dir.ts cleanup helper usage in added diff lines.
   This is a low-noise migration aid, not a cleanup data-flow checker. It does
   not scan existing lines and does not decide whether cleanup is sufficient.
   Add "openclaw-temp-dir: allow <reason>" in a same-line or immediately
@@ -62,6 +71,10 @@ function isTestFile(filePath) {
   return isChangedLaneTestPath(filePath);
 }
 
+function isSharedTempDirHelperTest(filePath) {
+  return normalizePath(filePath) === "test/helpers/temp-dir.test.ts";
+}
+
 function isTruthyEnvFlag(value) {
   const normalized = String(value ?? "")
     .trim()
@@ -82,6 +95,90 @@ function hasTempDirAllowMarker(source) {
   return reason.length > 0;
 }
 
+function hasManualTempDirHelperName(source) {
+  return MANUAL_TEMP_DIR_HELPERS.some((name) => new RegExp(`\\b${name}\\b`, "u").test(source));
+}
+
+function sourceImportsManualTempDirHelper(source) {
+  return (
+    /^\s*import\b/u.test(source) &&
+    TEMP_DIR_HELPER_IMPORT_RE.test(source) &&
+    hasManualTempDirHelperName(source)
+  );
+}
+
+function sourceTextImportsManualTempDirHelper(sourceText) {
+  let pendingImport = null;
+  for (const line of sourceText.split(/\r?\n/u)) {
+    if (!pendingImport && /^\s*import\s*\{/u.test(line) && !/\bfrom\b/u.test(line)) {
+      pendingImport = [line];
+      continue;
+    }
+
+    if (pendingImport) {
+      pendingImport.push(line);
+      if (/\bfrom\b/u.test(line)) {
+        const importSource = pendingImport.join("\n");
+        if (TEMP_DIR_HELPER_IMPORT_RE.test(importSource)) {
+          return hasManualTempDirHelperName(importSource);
+        }
+        pendingImport = null;
+      }
+      continue;
+    }
+
+    if (/^\s*import\b/u.test(line) && sourceImportsManualTempDirHelper(line)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function findAddedManualHelperImportFindings(addedLines) {
+  const findings = [];
+  let pendingImport = null;
+
+  for (const addedLine of addedLines) {
+    const source = addedLine.source;
+    if (!pendingImport && /^\s*import\s*\{/u.test(source) && !/\bfrom\b/u.test(source)) {
+      pendingImport = [addedLine];
+      continue;
+    }
+
+    if (pendingImport) {
+      pendingImport.push(addedLine);
+      if (/\bfrom\b/u.test(source)) {
+        const importSource = pendingImport.map((line) => line.source).join("\n");
+        if (TEMP_DIR_HELPER_IMPORT_RE.test(importSource)) {
+          for (const line of pendingImport) {
+            if (hasManualTempDirHelperName(line.source)) {
+              findings.push({
+                file: line.file,
+                line: line.line,
+                reason: "new manual temp-dir helper usage",
+                source: line.source.trim(),
+              });
+            }
+          }
+        }
+        pendingImport = null;
+      }
+      continue;
+    }
+
+    if (sourceImportsManualTempDirHelper(source)) {
+      findings.push({
+        file: addedLine.file,
+        line: addedLine.line,
+        reason: "new manual temp-dir helper usage",
+        source: source.trim(),
+      });
+    }
+  }
+
+  return findings;
+}
+
 function isTempDirAllowComment(source) {
   const trimmed = source.trim();
   return /^(?:\/\/|\/\*|\*|#)/u.test(trimmed) && hasTempDirAllowMarker(trimmed);
@@ -91,7 +188,7 @@ export function formatGithubWarning(finding) {
   const file = escapeGithubCommandProperty(finding.file);
   const line = escapeGithubCommandProperty(finding.line);
   const message = escapeGithubCommandValue(
-    `${finding.reason}: prefer test/helpers/temp-dir.ts for new test-owned temp directories.`,
+    `${finding.reason}: prefer useTempDirTracker() from test/helpers/temp-dir.ts for new test-owned temp directories.`,
   );
   return `::warning file=${file},line=${line}::${message}`;
 }
@@ -131,8 +228,9 @@ function readDiff(args, cwd = process.cwd()) {
   });
 }
 
-export function collectTempCreationFindingsFromDiff(diffText) {
+export function collectTempCreationFindingsFromDiff(diffText, options = {}) {
   const findings = [];
+  const addedLinesByFile = new Map();
   let currentFile = null;
   let currentLine = 0;
   let allowNextLine = null;
@@ -160,6 +258,15 @@ export function collectTempCreationFindingsFromDiff(diffText) {
     if (line.startsWith("+") && !line.startsWith("+++")) {
       if (currentFile && isTestFile(currentFile)) {
         const source = line.slice(1);
+        const addedLine = {
+          file: currentFile,
+          line: currentLine,
+          source,
+        };
+        addedLinesByFile.set(currentFile, [
+          ...(addedLinesByFile.get(currentFile) ?? []),
+          addedLine,
+        ]);
         const allowed =
           hasTempDirAllowMarker(source) ||
           (allowNextLine?.file === currentFile && allowNextLine.line === currentLine);
@@ -190,6 +297,29 @@ export function collectTempCreationFindingsFromDiff(diffText) {
     }
   }
 
+  for (const [file, addedLines] of addedLinesByFile) {
+    if (isSharedTempDirHelperTest(file)) {
+      continue;
+    }
+    findings.push(...findAddedManualHelperImportFindings(addedLines));
+    const fileText = options.readFileText?.(file);
+    const importsManualTempDirHelper =
+      typeof fileText === "string" && sourceTextImportsManualTempDirHelper(fileText);
+    if (!importsManualTempDirHelper) {
+      continue;
+    }
+    for (const addedLine of addedLines) {
+      if (MANUAL_TEMP_DIR_HELPER_CALL_RE.test(addedLine.source)) {
+        findings.push({
+          file: addedLine.file,
+          line: addedLine.line,
+          reason: "new manual temp-dir helper usage",
+          source: addedLine.source.trim(),
+        });
+      }
+    }
+  }
+
   return findings;
 }
 
@@ -203,21 +333,31 @@ export async function main(argv, io) {
     return 0;
   }
 
-  const findings = collectTempCreationFindingsFromDiff(readDiff(args));
+  const findings = collectTempCreationFindingsFromDiff(readDiff(args), {
+    readFileText(file) {
+      try {
+        return fs.readFileSync(file, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+  });
   if (args.json) {
     stdout.write(`${JSON.stringify(findings, null, 2)}\n`);
   } else if (findings.length === 0) {
-    stderr.write("No new bare test temp-directory creation patterns found.\n");
+    stderr.write("No new test temp-directory migration findings found.\n");
   } else if (isTruthyEnvFlag(env.GITHUB_ACTIONS)) {
     for (const finding of findings) {
       stderr.write(`${formatGithubWarning(finding)}\n`);
     }
   } else {
-    stderr.write("New bare test temp-directory creation patterns:\n");
+    stderr.write("New test temp-directory migration findings:\n");
     for (const finding of findings) {
       stderr.write(`- ${finding.file}:${finding.line} ${finding.reason}: ${finding.source}\n`);
     }
-    stderr.write("Prefer test/helpers/temp-dir.ts for new test-owned temp directories.\n");
+    stderr.write(
+      "Prefer useTempDirTracker() from test/helpers/temp-dir.ts for new test-owned temp directories.\n",
+    );
   }
 
   return args.failOnFindings && findings.length > 0 ? 1 : 0;

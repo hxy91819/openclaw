@@ -1,15 +1,15 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   collectTempCreationFindingsFromDiff,
   formatGithubWarning,
 } from "../../scripts/report-test-temp-creations.mjs";
-import { createTempDirTracker } from "../helpers/temp-dir.js";
+import { useTempDirTracker } from "../helpers/temp-dir.js";
 
 const repoRoot = process.cwd();
-const tempDirs = createTempDirTracker();
+const tempDirs = useTempDirTracker();
 const nestedGitEnvKeys = [
   "GIT_ALTERNATE_OBJECT_DIRECTORIES",
   "GIT_DIR",
@@ -30,10 +30,6 @@ function createNestedGitEnv(): NodeJS.ProcessEnv {
   }
   return env;
 }
-
-afterEach(() => {
-  tempDirs.cleanup();
-});
 
 describe("report-test-temp-creations", () => {
   it("keeps a non-executed warning fixture for changed-gate proof", () => {
@@ -113,6 +109,86 @@ describe("report-test-temp-creations", () => {
     ]);
   });
 
+  it("reports new manual shared temp-dir helper imports and calls", () => {
+    const diff = [
+      "diff --git a/test/manual-temp.test.ts b/test/manual-temp.test.ts",
+      "--- a/test/manual-temp.test.ts",
+      "+++ b/test/manual-temp.test.ts",
+      "@@ -1,0 +1,3 @@",
+      '+import { makeTempDir } from "./helpers/temp-dir.js";',
+      "+const tempDirs: string[] = [];",
+      '+const root = makeTempDir(tempDirs, "case-");',
+      "diff --git a/test/auto-temp.test.ts b/test/auto-temp.test.ts",
+      "--- a/test/auto-temp.test.ts",
+      "+++ b/test/auto-temp.test.ts",
+      "@@ -1,0 +1,2 @@",
+      '+import { useTempDirTracker } from "./helpers/temp-dir.js";',
+      "+const tempDirs = useTempDirTracker();",
+      "diff --git a/test/helpers/temp-dir.test.ts b/test/helpers/temp-dir.test.ts",
+      "--- a/test/helpers/temp-dir.test.ts",
+      "+++ b/test/helpers/temp-dir.test.ts",
+      "@@ -1,0 +1,2 @@",
+      '+import { makeTempDir } from "./temp-dir.js";',
+      '+const dir = makeTempDir([], "helper-self-test-");',
+    ].join("\n");
+
+    expect(
+      collectTempCreationFindingsFromDiff(diff, {
+        readFileText(file) {
+          if (file === "test/manual-temp.test.ts") {
+            return 'import { makeTempDir } from "./helpers/temp-dir.js";\n';
+          }
+          if (file === "test/auto-temp.test.ts") {
+            return 'import { useTempDirTracker } from "./helpers/temp-dir.js";\n';
+          }
+          return "";
+        },
+      }),
+    ).toEqual([
+      {
+        file: "test/manual-temp.test.ts",
+        line: 1,
+        reason: "new manual temp-dir helper usage",
+        source: 'import { makeTempDir } from "./helpers/temp-dir.js";',
+      },
+      {
+        file: "test/manual-temp.test.ts",
+        line: 3,
+        reason: "new manual temp-dir helper usage",
+        source: 'const root = makeTempDir(tempDirs, "case-");',
+      },
+    ]);
+  });
+
+  it("reports multiline manual shared temp-dir helper imports", () => {
+    const diff = [
+      "diff --git a/src/example.test.ts b/src/example.test.ts",
+      "--- a/src/example.test.ts",
+      "+++ b/src/example.test.ts",
+      "@@ -1,0 +1,5 @@",
+      "+import {",
+      "+  cleanupTempDirs,",
+      "+  makeTempDir,",
+      '+} from "../test/helpers/temp-dir.js";',
+      "+const value = 1;",
+    ].join("\n");
+
+    expect(collectTempCreationFindingsFromDiff(diff)).toEqual([
+      {
+        file: "src/example.test.ts",
+        line: 2,
+        reason: "new manual temp-dir helper usage",
+        source: "cleanupTempDirs,",
+      },
+      {
+        file: "src/example.test.ts",
+        line: 3,
+        reason: "new manual temp-dir helper usage",
+        source: "makeTempDir,",
+      },
+    ]);
+  });
+
   it("honors explicit allow comments with reasons", () => {
     const mkdtempCall = ["fs.", "mkdtemp", 'Sync("case-")'].join("");
     const tmpDirCall = ["tmp.", "dir", 'Sync({ prefix: "case-" })'].join("");
@@ -187,7 +263,7 @@ describe("report-test-temp-creations", () => {
         source: "const tempRoot = fs.mkdtempSync();",
       }),
     ).toBe(
-      "::warning file=test/helpers/temp%2Cfixture.ts,line=12::new mkdtemp temp directory creation: prefer test/helpers/temp-dir.ts for new test-owned temp directories.",
+      "::warning file=test/helpers/temp%2Cfixture.ts,line=12::new mkdtemp temp directory creation: prefer useTempDirTracker() from test/helpers/temp-dir.ts for new test-owned temp directories.",
     );
   });
 
