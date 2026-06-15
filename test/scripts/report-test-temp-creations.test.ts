@@ -231,7 +231,7 @@ describe("report-test-temp-creations", () => {
     ).toEqual([
       {
         file,
-        line: 1,
+        line: 2,
         reason: "new manual temp-dir helper import",
         source: 'import { createTempDirTracker, } from "../test/helpers/temp-dir.js";',
       },
@@ -240,6 +240,38 @@ describe("report-test-temp-creations", () => {
         line: 4,
         reason: "new manual temp-dir helper usage",
         source: "const tempDirs = createTempDirTracker();",
+      },
+    ]);
+  });
+
+  it("reports manual helpers added to existing multiline imports", () => {
+    const file = "test/scripts/manual-temp.test.ts";
+    const source = [
+      "import {",
+      "  useTempDirTracker,",
+      "  makeTempDir,",
+      '} from "../helpers/temp-dir.js";',
+      "const tempDirs = useTempDirTracker();",
+    ].join("\n");
+    const diff = [
+      "diff --git a/test/scripts/manual-temp.test.ts b/test/scripts/manual-temp.test.ts",
+      "--- a/test/scripts/manual-temp.test.ts",
+      "+++ b/test/scripts/manual-temp.test.ts",
+      "@@ -1,3 +1,4 @@",
+      " import {",
+      "   useTempDirTracker,",
+      "+  makeTempDir,",
+      ' } from "../helpers/temp-dir.js";',
+    ].join("\n");
+
+    expect(
+      collectTempCreationFindingsFromDiff(diff, { fileTextByPath: { [file]: source } }),
+    ).toEqual([
+      {
+        file,
+        line: 3,
+        reason: "new manual temp-dir helper import",
+        source: 'import { useTempDirTracker, makeTempDir, } from "../helpers/temp-dir.js";',
       },
     ]);
   });

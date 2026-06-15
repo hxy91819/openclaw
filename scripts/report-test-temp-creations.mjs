@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { isChangedLaneTestPath } from "./changed-lanes.mjs";
 import { booleanFlag, parseFlagArgs, stringFlag } from "./lib/arg-utils.mjs";
 import { runAsScript } from "./lib/ts-guard-utils.mjs";
@@ -29,9 +30,9 @@ function usage() {
   return `Usage: node scripts/report-test-temp-creations.mjs [options]
 
 Description:
-  Reports new bare test temp-directory creation patterns in added diff lines.
+  Reports new test temp-directory migration warnings in added diff lines.
   This is a low-noise migration aid, not a cleanup data-flow checker. It does
-  not scan existing lines and does not decide whether cleanup is sufficient.
+  not scan existing lines for bare temp dirs and does not decide whether cleanup is sufficient.
   Add "openclaw-temp-dir: allow <reason>" in a same-line or immediately
   preceding added comment when a test intentionally needs bare temp creation.
   File scope intentionally reuses scripts/changed-lanes.mjs test-path
@@ -146,10 +147,6 @@ function stripKnownExtension(filePath) {
   return filePath.replace(/\.(?:c|m)?[jt]sx?$/u, "");
 }
 
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
 function isTempDirHelperImportSpec(filePath, specifier) {
   const normalizedSpecifier = normalizePath(specifier);
   const resolvedPath = normalizedSpecifier.startsWith(".")
@@ -158,126 +155,49 @@ function isTempDirHelperImportSpec(filePath, specifier) {
   return stripKnownExtension(resolvedPath) === stripKnownExtension(TEMP_DIR_HELPER_PATH);
 }
 
-function parseManualNamedImports(importClause) {
-  const namedImports = importClause.match(/\{(?<names>[\s\S]*?)\}/u)?.groups?.names;
-  if (!namedImports) {
-    return [];
+function scriptKindForFile(filePath) {
+  if (/\.[cm]?tsx$/u.test(filePath)) {
+    return ts.ScriptKind.TSX;
   }
-
-  const imports = [];
-  for (const rawPart of namedImports.split(",")) {
-    const part = rawPart
-      .replace(/\/\*[\s\S]*?\*\//gu, "")
-      .replace(/\/\/.*$/u, "")
-      .trim();
-    if (!part) {
-      continue;
-    }
-    const importMatch = part.match(
-      /^(?<imported>[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*)(?:\s+as\s+(?<local>[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*))?$/u,
-    );
-    if (!importMatch?.groups) {
-      continue;
-    }
-    const imported = importMatch.groups.imported;
-    if (MANUAL_TEMP_DIR_HELPERS.has(imported)) {
-      imports.push({
-        imported,
-        local: importMatch.groups.local ?? imported,
-      });
-    }
+  if (/\.[cm]?jsx$/u.test(filePath)) {
+    return ts.ScriptKind.JSX;
   }
-  return imports;
+  if (/\.[cm]?js$/u.test(filePath)) {
+    return ts.ScriptKind.JS;
+  }
+  return ts.ScriptKind.TS;
 }
 
-function findManualHelperImportDeclarations(filePath, sourceText) {
-  const declarations = [];
-  const importDeclarationRe =
-    /^\s*import\s+(?<clause>[\s\S]*?)\s+from\s+["'](?<specifier>[^"']+)["'];?/gmu;
-  for (const match of sourceText.matchAll(importDeclarationRe)) {
-    const groups = match.groups;
-    if (!groups || !isTempDirHelperImportSpec(filePath, groups.specifier)) {
-      continue;
-    }
-    const imports = parseManualNamedImports(groups.clause);
-    if (imports.length > 0) {
-      declarations.push({
-        index: match.index,
-        imports,
-        source: match[0],
-      });
-    }
-  }
-  return declarations;
+function createSourceFile(filePath, sourceText) {
+  return ts.createSourceFile(
+    filePath,
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKindForFile(filePath),
+  );
 }
 
-function sourceTextImportsManualTempDirHelpers(filePath, sourceText) {
-  const localNames = new Set();
-  for (const declaration of findManualHelperImportDeclarations(filePath, sourceText)) {
-    for (const namedImport of declaration.imports) {
-      localNames.add(namedImport.local);
-    }
-  }
-  return localNames;
+function lineForNode(sourceFile, node) {
+  return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 }
 
-function stripLineLiteralsAndComments(source) {
-  let stripped = "";
-  let quote = null;
-  let escaped = false;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    const next = source[index + 1];
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === quote) {
-        quote = null;
-      }
-      stripped += " ";
-      continue;
-    }
-    if (char === "/" && next === "/") {
-      break;
-    }
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-      stripped += " ";
-      continue;
-    }
-    stripped += char;
-  }
-
-  return stripped;
+function sourceLineText(sourceFile, line) {
+  const lineStarts = sourceFile.getLineStarts();
+  const start = lineStarts[line - 1] ?? 0;
+  const end = lineStarts[line] ?? sourceFile.text.length;
+  return sourceFile.text.slice(start, end).trim();
 }
 
-function lineForOffset(lines, offset) {
-  let cursor = 0;
-  for (const line of lines) {
-    const nextCursor = cursor + line.source.length + 1;
-    if (offset < nextCursor) {
-      return line.line;
+function nodeOverlapsAddedLine(sourceFile, node, addedLineNumbers) {
+  const startLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+  const endLine = sourceFile.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
+  for (let line = startLine; line <= endLine; line += 1) {
+    if (addedLineNumbers.has(line)) {
+      return true;
     }
-    cursor = nextCursor;
   }
-  return lines.at(-1)?.line ?? 1;
-}
-
-function findAddedManualHelperImportFindings(filePath, addedLines) {
-  const addedSource = addedLines.map((line) => line.source).join("\n");
-  const findings = [];
-  for (const declaration of findManualHelperImportDeclarations(filePath, addedSource)) {
-    findings.push({
-      file: filePath,
-      line: lineForOffset(addedLines, declaration.index),
-      reason: "new manual temp-dir helper import",
-      source: declaration.source.trim().replace(/\s+/gu, " "),
-    });
-  }
-  return findings;
+  return false;
 }
 
 function normalizeFileTextMap(fileTextByPath) {
@@ -298,6 +218,80 @@ function readCurrentSource(filePath, options, fileTextByPath) {
     return options.readFile(filePath) ?? "";
   }
   return "";
+}
+
+function collectManualTempDirHelperImports(sourceFile, filePath, addedLineNumbers = null) {
+  const imports = [];
+  const localNames = new Set();
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !statement.importClause?.namedBindings ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !isTempDirHelperImportSpec(filePath, statement.moduleSpecifier.text) ||
+      !ts.isNamedImports(statement.importClause.namedBindings)
+    ) {
+      continue;
+    }
+    let importWarningLine = null;
+    for (const element of statement.importClause.namedBindings.elements) {
+      const imported = element.propertyName?.text ?? element.name.text;
+      if (!MANUAL_TEMP_DIR_HELPERS.has(imported)) {
+        continue;
+      }
+      localNames.add(element.name.text);
+      if (
+        importWarningLine === null &&
+        (!addedLineNumbers || nodeOverlapsAddedLine(sourceFile, element, addedLineNumbers))
+      ) {
+        importWarningLine = lineForNode(sourceFile, element);
+      }
+    }
+    if (importWarningLine !== null) {
+      imports.push({
+        line: importWarningLine,
+        source: statement.getText(sourceFile).trim().replace(/\s+/gu, " "),
+      });
+    }
+  }
+  return { imports, localNames };
+}
+
+function findManualHelperUsageFindings(filePath, sourceText, addedLines) {
+  const addedLineNumbers = new Set(addedLines.map((line) => line.line));
+  const sourceFile = createSourceFile(filePath, sourceText);
+  const { imports, localNames } = collectManualTempDirHelperImports(
+    sourceFile,
+    filePath,
+    addedLineNumbers,
+  );
+  const findings = imports.map((manualImport) => ({
+    file: filePath,
+    line: manualImport.line,
+    reason: "new manual temp-dir helper import",
+    source: manualImport.source,
+  }));
+  if (localNames.size === 0) {
+    return findings;
+  }
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      localNames.has(node.expression.text) &&
+      nodeOverlapsAddedLine(sourceFile, node.expression, addedLineNumbers)
+    ) {
+      findings.push({
+        file: filePath,
+        line: lineForNode(sourceFile, node.expression),
+        reason: "new manual temp-dir helper usage",
+        source: sourceLineText(sourceFile, lineForNode(sourceFile, node.expression)),
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return findings;
 }
 
 function collectAddedLinesByFile(diffText) {
@@ -405,29 +399,11 @@ export function collectTempCreationFindingsFromDiff(diffText, options = {}) {
     if (!shouldInspectManualHelperUsage(file)) {
       continue;
     }
-    findings.push(...findAddedManualHelperImportFindings(file, addedLines));
-
-    const importedManualHelpers = sourceTextImportsManualTempDirHelpers(
-      file,
-      readCurrentSource(file, options, fileTextByPath),
-    );
-    if (importedManualHelpers.size === 0) {
+    const sourceText = readCurrentSource(file, options, fileTextByPath);
+    if (!sourceText) {
       continue;
     }
-    const helperCallRe = new RegExp(
-      String.raw`(?<![$\w.])(?:${[...importedManualHelpers].map(escapeRegExp).join("|")})\s*\(`,
-      "u",
-    );
-    for (const addedLine of addedLines) {
-      if (helperCallRe.test(stripLineLiteralsAndComments(addedLine.source))) {
-        findings.push({
-          file,
-          line: addedLine.line,
-          reason: "new manual temp-dir helper usage",
-          source: addedLine.source.trim(),
-        });
-      }
-    }
+    findings.push(...findManualHelperUsageFindings(file, sourceText, addedLines));
   }
 
   return findings;

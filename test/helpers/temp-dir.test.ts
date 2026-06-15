@@ -15,9 +15,6 @@ afterEach(() => {
 });
 
 describe("temp-dir test helpers", () => {
-  const autoCleanupTracker = useTempDirTracker();
-  let autoCleanedDir = "";
-
   it("keeps a non-executed temp warning fixture for CI proof", () => {
     // openclaw-temp-dir: allow test fixture for the temp warning report
     const warningFixture = 'tmp.dirSync({ prefix: "openclaw-warning-fixture-" })';
@@ -38,20 +35,6 @@ describe("temp-dir test helpers", () => {
     expect([...tracker.dirs]).toEqual([]);
   });
 
-  it("tracks temp dirs with Vitest cleanup", () => {
-    autoCleanedDir = autoCleanupTracker.make("openclaw-temp-dir-auto-");
-    fs.writeFileSync(path.join(autoCleanedDir, "artifact.txt"), "artifact\n", "utf8");
-
-    expect(fs.existsSync(autoCleanedDir)).toBe(true);
-    expect("cleanup" in autoCleanupTracker).toBe(false);
-  });
-
-  it("removes auto-tracked temp dirs after each test", () => {
-    expect(autoCleanedDir).not.toBe("");
-    expect(fs.existsSync(autoCleanedDir)).toBe(false);
-    expect([...autoCleanupTracker.dirs]).toEqual([]);
-  });
-
   it("supports existing caller-owned temp dir collections", () => {
     const dir = makeTempDir(tempDirs, "openclaw-temp-dir-existing-");
     fs.mkdirSync(path.join(dir, "nested"), { recursive: true });
@@ -60,5 +43,27 @@ describe("temp-dir test helpers", () => {
 
     expect(fs.existsSync(dir)).toBe(false);
     expect([...tempDirs]).toEqual([]);
+  });
+
+  describe("auto-cleaning tracker", () => {
+    const createdDirs: string[] = [];
+
+    afterEach(() => {
+      for (const dir of createdDirs.splice(0)) {
+        expect(fs.existsSync(dir)).toBe(false);
+      }
+      expect([...autoCleanupTracker.dirs]).toEqual([]);
+    });
+
+    const autoCleanupTracker = useTempDirTracker();
+
+    it("tracks temp dirs with Vitest cleanup", () => {
+      const autoCleanedDir = autoCleanupTracker.make("openclaw-temp-dir-auto-");
+      createdDirs.push(autoCleanedDir);
+      fs.writeFileSync(path.join(autoCleanedDir, "artifact.txt"), "artifact\n", "utf8");
+
+      expect(fs.existsSync(autoCleanedDir)).toBe(true);
+      expect("cleanup" in autoCleanupTracker).toBe(false);
+    });
   });
 });
