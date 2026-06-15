@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanupTempDirs, createTempDirTracker, makeTempDir } from "./temp-dir.js";
+import {
+  cleanupTempDirs,
+  createTempDirTracker,
+  makeTempDir,
+  useTempDirTracker,
+} from "./temp-dir.js";
 
 const tempDirs = new Set<string>();
 
@@ -10,6 +15,9 @@ afterEach(() => {
 });
 
 describe("temp-dir test helpers", () => {
+  const autoCleanupTracker = useTempDirTracker();
+  let autoCleanedDir = "";
+
   it("keeps a non-executed temp warning fixture for CI proof", () => {
     // openclaw-temp-dir: allow test fixture for the temp warning report
     const warningFixture = 'tmp.dirSync({ prefix: "openclaw-warning-fixture-" })';
@@ -28,6 +36,20 @@ describe("temp-dir test helpers", () => {
 
     expect(fs.existsSync(dir)).toBe(false);
     expect([...tracker.dirs]).toEqual([]);
+  });
+
+  it("tracks temp dirs with Vitest cleanup", () => {
+    autoCleanedDir = autoCleanupTracker.make("openclaw-temp-dir-auto-");
+    fs.writeFileSync(path.join(autoCleanedDir, "artifact.txt"), "artifact\n", "utf8");
+
+    expect(fs.existsSync(autoCleanedDir)).toBe(true);
+    expect("cleanup" in autoCleanupTracker).toBe(false);
+  });
+
+  it("removes auto-tracked temp dirs after each test", () => {
+    expect(autoCleanedDir).not.toBe("");
+    expect(fs.existsSync(autoCleanedDir)).toBe(false);
+    expect([...autoCleanupTracker.dirs]).toEqual([]);
   });
 
   it("supports existing caller-owned temp dir collections", () => {
