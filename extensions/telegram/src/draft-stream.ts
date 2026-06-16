@@ -6,6 +6,7 @@ import {
 } from "openclaw/plugin-sdk/channel-outbound";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { buildTelegramThreadParams, type TelegramThreadSpec } from "./bot/helpers.js";
+import { markdownToTelegramRichHtml } from "./format.js";
 import {
   isRecoverableTelegramNetworkError,
   isSafeToRetrySendError,
@@ -116,6 +117,7 @@ export function createTelegramDraftStream(params: {
   minInitialChars?: number;
   /** Optional preview renderer (e.g. markdown -> HTML + parse mode). */
   renderText?: (text: string) => TelegramDraftPreview;
+  chatType?: "direct" | "group";
   /** Called when a late send resolves after forceNewMessage() switched generations. */
   onSupersededPreview?: (preview: SupersededTelegramPreview) => void;
   log?: (message: string) => void;
@@ -130,6 +132,7 @@ export function createTelegramDraftStream(params: {
   const chatId = params.chatId;
   const threadParams = buildTelegramThreadParams(params.thread);
   const replyToMessageId = normalizeTelegramReplyToMessageId(params.replyToMessageId);
+  const useLegacyTextPreview = params.chatType === "group";
   const richReplyParams: Omit<TelegramSendRichMessageParams, "chat_id" | "rich_message"> =
     replyToMessageId != null
       ? {
@@ -159,6 +162,13 @@ export function createTelegramDraftStream(params: {
     sendGeneration: number;
   };
   const sendRenderedMessage = async (preview: TelegramDraftPreview) => {
+    if (useLegacyTextPreview) {
+      return await params.api.sendMessage(
+        chatId,
+        renderTelegramDraftPreviewHtml(preview),
+        buildLegacyDraftPreviewSendParams(preview, richReplyParams),
+      );
+    }
     const richRawApi = getTelegramRichRawApi(params.api);
     return await richRawApi.sendRichMessage({
       chat_id: chatId,
@@ -172,6 +182,15 @@ export function createTelegramDraftStream(params: {
   }: PreviewSendParams): Promise<boolean> => {
     if (typeof streamMessageId === "number") {
       streamVisibleSinceMs ??= Date.now();
+      if (useLegacyTextPreview) {
+        await params.api.editMessageText(
+          chatId,
+          streamMessageId,
+          renderTelegramDraftPreviewHtml(preview),
+          buildLegacyDraftPreviewEditParams(preview),
+        );
+        return true;
+      }
       const richRawApi = getTelegramRichRawApi(params.api);
       await richRawApi.editMessageText({
         chat_id: chatId,
@@ -458,4 +477,41 @@ export function createTelegramDraftStream(params: {
     forceNewMessage,
     sendMayHaveLanded: () => messageSendAttempted && typeof streamMessageId !== "number",
   };
+}
+
+function renderTelegramDraftPreviewHtml(preview: TelegramDraftPreview): string {
+  if (preview.richMessage.html !== undefined) {
+    return preview.richMessage.html;
+  }
+  return markdownToTelegramRichHtml(preview.richMessage.markdown);
+}
+
+function buildLegacyDraftPreviewSendParams(
+  preview: TelegramDraftPreview,
+  richParams: Omit<TelegramSendRichMessageParams, "chat_id" | "rich_message">,
+): NonNullable<Parameters<Bot["api"]["sendMessage"]>[2]> {
+  return {
+    parse_mode: "HTML",
+    ...buildLegacyDraftPreviewLinkParams(preview),
+    ...(richParams.message_thread_id !== undefined
+      ? { message_thread_id: richParams.message_thread_id }
+      : {}),
+    ...(richParams.disable_notification === true ? { disable_notification: true } : {}),
+    ...(richParams.reply_parameters ? { reply_parameters: richParams.reply_parameters } : {}),
+  };
+}
+
+function buildLegacyDraftPreviewEditParams(
+  preview: TelegramDraftPreview,
+): NonNullable<Parameters<Bot["api"]["editMessageText"]>[3]> {
+  return {
+    parse_mode: "HTML",
+    ...buildLegacyDraftPreviewLinkParams(preview),
+  };
+}
+
+function buildLegacyDraftPreviewLinkParams(preview: TelegramDraftPreview) {
+  return preview.richMessage.skip_entity_detection === true
+    ? { link_preview_options: { is_disabled: true } }
+    : {};
 }

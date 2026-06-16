@@ -24,6 +24,10 @@ function createForumDraftStream(api: ReturnType<typeof createMockDraftApi>) {
   return createThreadedDraftStream(api, { id: 99, scope: "forum" });
 }
 
+function createGroupDraftStream(api: ReturnType<typeof createMockDraftApi>) {
+  return createDraftStream(api, { chatType: "group" });
+}
+
 function createThreadedDraftStream(
   api: ReturnType<typeof createMockDraftApi>,
   thread: { id: number; scope: "forum" | "dm" },
@@ -101,6 +105,66 @@ function createForceNewMessageHarness(params: { throttleMs?: number } = {}) {
 }
 
 describe("createTelegramDraftStream", () => {
+  it("uses legacy text messages for group stream previews", async () => {
+    const api = createMockDraftApi();
+    const stream = createGroupDraftStream(api);
+
+    stream.update("**Hello**");
+    await stream.flush();
+
+    expect(api.sendMessage).toHaveBeenCalledWith(123, markdownToTelegramRichHtml("**Hello**"), {
+      parse_mode: "HTML",
+    });
+    expect(api.raw.sendRichMessage).not.toHaveBeenCalled();
+  });
+
+  it("edits group stream previews with legacy text messages", async () => {
+    const api = createMockDraftApi();
+    const stream = createGroupDraftStream(api);
+
+    stream.update("Hello");
+    await stream.flush();
+    stream.update("Hello again");
+    await stream.flush();
+
+    expect(api.raw.sendRichMessage).not.toHaveBeenCalled();
+    expect(api.sendMessage).toHaveBeenCalledTimes(1);
+    expect(api.editMessageText).toHaveBeenCalledWith(
+      123,
+      17,
+      markdownToTelegramRichHtml("Hello again"),
+      { parse_mode: "HTML" },
+    );
+    expect(api.raw.editMessageText).not.toHaveBeenCalled();
+  });
+
+  it("keeps link previews disabled for group stream previews", async () => {
+    const api = createMockDraftApi();
+    const stream = createGroupDraftStream(api);
+
+    stream.updatePreview({
+      text: "https://example.test",
+      richMessage: { html: "https://example.test", skip_entity_detection: true },
+    });
+    await stream.flush();
+
+    expect(api.sendMessage).toHaveBeenCalledWith(123, "https://example.test", {
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+    });
+
+    stream.updatePreview({
+      text: "https://example.test/next",
+      richMessage: { html: "https://example.test/next", skip_entity_detection: true },
+    });
+    await stream.flush();
+
+    expect(api.editMessageText).toHaveBeenCalledWith(123, 17, "https://example.test/next", {
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+    });
+  });
+
   it("sends stream preview message with message_thread_id when provided", async () => {
     const api = createMockDraftApi();
     const stream = createForumDraftStream(api);

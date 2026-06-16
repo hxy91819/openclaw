@@ -989,6 +989,7 @@ export const dispatchTelegramMessage = async ({
           thread: threadSpec,
           replyToMessageId: draftReplyToMessageId,
           minInitialChars: draftMinInitialChars,
+          chatType: isGroup ? "group" : "direct",
           renderText: renderStreamText,
           onSupersededPreview: (superseded) => {
             if (superseded.retain) {

@@ -649,6 +649,51 @@ describe("dispatchTelegramMessage draft streaming", () => {
     expect(draftStream.clear).toHaveBeenCalledTimes(1);
   });
 
+  it("marks group draft streams so previews avoid Telegram rich messages", async () => {
+    const draftStream = createDraftStream();
+    createTelegramDraftStream.mockReturnValue(draftStream);
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(
+      async ({ dispatcherOptions, replyOptions }) => {
+        await replyOptions?.onPartialReply?.({ text: "Hello group" });
+        await dispatcherOptions.deliver({ text: "Hello group" }, { kind: "final" });
+        return { queuedFinal: true };
+      },
+    );
+
+    await dispatchWithContext({
+      context: createContext({
+        primaryCtx: {
+          message: {
+            chat: { id: -100123, type: "supergroup", title: "Test Group" },
+            message_id: 456,
+            date: 1,
+          },
+        } as unknown as TelegramMessageContext["primaryCtx"],
+        msg: {
+          chat: { id: -100123, type: "supergroup", title: "Test Group" },
+          message_id: 456,
+          date: 1,
+        } as unknown as TelegramMessageContext["msg"],
+        chatId: -100123,
+        isGroup: true,
+        replyThreadId: undefined,
+        threadSpec: { id: undefined, scope: "none" },
+        ctxPayload: {
+          SessionKey: "agent:test:telegram:group:-100123",
+          ChatType: "group",
+        } as unknown as TelegramMessageContext["ctxPayload"],
+      }),
+      streamMode: "partial",
+    });
+
+    expectDraftStreamParams({
+      chatId: -100123,
+      chatType: "group",
+      thread: { id: undefined, scope: "none" },
+    });
+    expect(draftStream.update).toHaveBeenCalledWith("Hello group");
+  });
+
   it("recovers forum thread context from a topic-scoped session key", async () => {
     const recordInboundSession = vi.fn(async () => undefined);
     const oldHistoryKey = "-1003774691294:topic:1";
