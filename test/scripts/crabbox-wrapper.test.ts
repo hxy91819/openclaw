@@ -122,6 +122,13 @@ function writeFakeCrabbox(binDir: string, helpText: string): string {
       'for arg in "$@"; do',
       '  printf "%s\\0" "$arg"',
       "done",
+      'printf "%s\\0" "3"',
+      'printf "%s\\0" "CRABBOX_LOCAL_CONTAINER_IMAGE"',
+      'printf "%s\\0" "${CRABBOX_LOCAL_CONTAINER_IMAGE:-}"',
+      'printf "%s\\0" "CRABBOX_LOCAL_CONTAINER_WORK_ROOT"',
+      'printf "%s\\0" "${CRABBOX_LOCAL_CONTAINER_WORK_ROOT:-}"',
+      'printf "%s\\0" "CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET"',
+      'printf "%s\\0" "${CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET:-}"',
       'if [ -n "$script_path" ] && [ -f "$script_path" ]; then',
       '  cat "$script_path"',
       "fi",
@@ -154,11 +161,16 @@ function writeFakeCrabbox(binDir: string, helpText: string): string {
     "const scriptIndex = args.findIndex((arg) => arg === '--script' || arg === '-script');",
     "const scriptPath = scriptIndex >= 0 ? args[scriptIndex + 1] : '';",
     "const scriptContent = scriptPath ? require('node:fs').readFileSync(scriptPath, 'utf8') : '';",
+    "const env = {",
+    "  CRABBOX_LOCAL_CONTAINER_IMAGE: process.env.CRABBOX_LOCAL_CONTAINER_IMAGE || '',",
+    "  CRABBOX_LOCAL_CONTAINER_WORK_ROOT: process.env.CRABBOX_LOCAL_CONTAINER_WORK_ROOT || '',",
+    "  CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET: process.env.CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET || '',",
+    "};",
     "if (args.includes('--artifact-glob') || args.includes('-artifact-glob')) {",
     "  require('node:fs').mkdirSync('.crabbox/runs/run_fake', { recursive: true });",
     "  require('node:fs').writeFileSync('.crabbox/runs/run_fake/fake-artifacts.tgz', 'fake artifact\\n');",
     "}",
-    "console.log(JSON.stringify({ args, cwd: process.cwd(), scriptContent }));",
+    "console.log(JSON.stringify({ args, cwd: process.cwd(), env, scriptContent }));",
   ].join("\n");
   writeFileSync(helperPath, `${helperScript}\n`, "utf8");
 
@@ -324,6 +336,7 @@ function runWrapper(
 function parseFakeCrabboxOutput(result: ReturnType<typeof runWrapper>): {
   args: string[];
   cwd: string;
+  env?: Record<string, string>;
   scriptContent?: string;
 } {
   const marker = "__OPENCLAW_FAKE_CRABBOX_V1__\0";
@@ -341,12 +354,20 @@ function parseFakeCrabboxOutput(result: ReturnType<typeof runWrapper>): {
     const cwd = readField();
     const argCount = Number.parseInt(readField(), 10);
     const args = Array.from({ length: argCount }, () => readField());
+    const envCount = Number.parseInt(readField(), 10);
+    const env = Object.fromEntries(
+      Array.from({ length: envCount }, () => {
+        const key = readField();
+        return [key, readField()];
+      }),
+    );
     const scriptContent = result.stdout.slice(offset);
-    return { args, cwd, scriptContent };
+    return { args, cwd, env, scriptContent };
   }
   return JSON.parse(result.stdout.trim()) as {
     args: string[];
     cwd: string;
+    env?: Record<string, string>;
     scriptContent?: string;
   };
 }
@@ -473,20 +494,113 @@ describe.concurrent("scripts/crabbox-wrapper", () => {
     expect(parseFakeCrabboxOutput(result).args).toContain("blacksmith-testbox");
   });
 
-  it("only forces the short local-container Docker work root on Linux", () => {
+  it("defaults local-container runs to a Node image and container-owned work root", () => {
     const result = runWrapper(
       "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
       ["run", "--provider", "local-container", "--", "echo ok"],
     );
 
     expect(result.status).toBe(0);
-    const expectedMessage =
-      "[crabbox] provider=docker using short host-visible work root for OpenClaw Docker tests";
-    if (process.platform === "linux") {
-      expect(result.stderr).toContain(expectedMessage);
-    } else {
-      expect(result.stderr).not.toContain(expectedMessage);
-    }
+    const output = parseFakeCrabboxOutput(result);
+    expect(output.args).toEqual([
+      "run",
+      "--provider",
+      "local-container",
+      "--no-hydrate",
+      "--",
+      "echo ok",
+    ]);
+    expect(output.env).toMatchObject({
+      CRABBOX_LOCAL_CONTAINER_IMAGE: "node:24-bookworm",
+      CRABBOX_LOCAL_CONTAINER_WORK_ROOT: "/home/crabbox/work",
+      CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET: "",
+    });
+    expect(result.stderr).toContain("provider=docker using Node 24 image with bundled Corepack");
+    expect(result.stderr).toContain(
+      "provider=docker using container-owned work root for OpenClaw proof",
+    );
+    expect(result.stderr).not.toContain("enabling host Docker socket pass-through");
+  });
+
+  it("keeps explicit local-container image, work root, hydration, and Docker socket choices", () => {
+    const result = runWrapper(
+      "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
+      [
+        "run",
+        "--provider",
+        "local-container",
+        "--no-hydrate",
+        "--local-container-image",
+        "ubuntu:26.04",
+        "--local-container-work-root",
+        "/work/crabbox",
+        "--local-container-docker-socket",
+        "--",
+        "echo ok",
+      ],
+      {
+        env: {
+          CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET: "1",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const output = parseFakeCrabboxOutput(result);
+    expect(output.args).toEqual([
+      "run",
+      "--provider",
+      "local-container",
+      "--no-hydrate",
+      "--local-container-image",
+      "ubuntu:26.04",
+      "--local-container-work-root",
+      "/work/crabbox",
+      "--local-container-docker-socket",
+      "--",
+      "echo ok",
+    ]);
+    expect(output.env).toMatchObject({
+      CRABBOX_LOCAL_CONTAINER_IMAGE: "",
+      CRABBOX_LOCAL_CONTAINER_WORK_ROOT: "",
+      CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET: "1",
+    });
+    expect(result.stderr).not.toContain("using Node 24 image");
+    expect(result.stderr).not.toContain("using container-owned work root");
+  });
+
+  it("does not disable hydration for custom local-container images", () => {
+    const result = runWrapper(
+      "provider: hetzner, aws, local-container, blacksmith-testbox, or cloudflare\n",
+      [
+        "run",
+        "--provider",
+        "local-container",
+        "--local-container-image",
+        "ubuntu:26.04",
+        "--",
+        "echo ok",
+      ],
+    );
+
+    expect(result.status).toBe(0);
+    const output = parseFakeCrabboxOutput(result);
+    expect(output.args).toEqual([
+      "run",
+      "--provider",
+      "local-container",
+      "--local-container-image",
+      "ubuntu:26.04",
+      "--",
+      "echo ok",
+    ]);
+    expect(output.env).toMatchObject({
+      CRABBOX_LOCAL_CONTAINER_IMAGE: "",
+      CRABBOX_LOCAL_CONTAINER_WORK_ROOT: "/home/crabbox/work",
+      CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET: "",
+    });
+    expect(result.stderr).not.toContain("skipping Actions hydration");
+    expect(result.stderr).not.toContain("using Node 24 image");
   });
 
   it("defaults AWS macOS runs to on-demand capacity", () => {

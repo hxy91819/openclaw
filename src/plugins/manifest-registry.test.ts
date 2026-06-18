@@ -10,6 +10,7 @@ import {
   loadPluginManifestRegistry,
 } from "./manifest-registry.js";
 import type { OpenClawPackageManifest } from "./manifest.js";
+import { PORTABLE_PLUGIN_INSTALL_RECORDS_FILE_ENV } from "./portable-plugin-install-records.js";
 import { cleanupTrackedTempDirs, makeTrackedTempDir } from "./test-helpers/fs-fixtures.js";
 
 vi.unmock("../version.js");
@@ -51,6 +52,12 @@ function writeManifest(dir: string, manifest: Record<string, unknown>) {
 function writeTextFile(rootDir: string, relativePath: string, value: string) {
   mkdirSafe(path.dirname(path.join(rootDir, relativePath)));
   fs.writeFileSync(path.join(rootDir, relativePath), value, "utf-8");
+}
+
+function writePortableInstallRecordsFile(rootDir: string, records: Record<string, unknown>) {
+  const filePath = path.join(rootDir, "portable-install-records.json");
+  fs.writeFileSync(filePath, JSON.stringify({ installRecords: records }), "utf-8");
+  return filePath;
 }
 
 function setupBundleFixture(params: {
@@ -779,6 +786,76 @@ describe("loadPluginManifestRegistry", () => {
           rootDir: dir,
           packageName: "@openclaw/diagnostics-prometheus",
           origin: "global",
+        }),
+      ],
+    });
+
+    expect(registry.plugins[0]?.trustedOfficialInstall).toBeUndefined();
+  });
+
+  it("marks official image-baked config channel plugins trusted from portable install records", () => {
+    const dir = makeTempDir();
+    writeManifest(dir, {
+      id: "msteams",
+      configSchema: { type: "object" },
+      channels: ["msteams"],
+      channelConfigs: {
+        msteams: {
+          schema: { type: "object" },
+        },
+      },
+    });
+    const portableRecordsFile = writePortableInstallRecordsFile(makeTempDir(), {
+      msteams: {
+        source: "npm",
+        spec: "@openclaw/msteams",
+        resolvedName: "@openclaw/msteams",
+        resolvedVersion: "2026.6.17",
+        resolvedSpec: "@openclaw/msteams@2026.6.17",
+        installPath: "/image-build/path/that/does/not/exist",
+      },
+    });
+
+    const registry = loadPluginManifestRegistry({
+      candidates: [
+        createPluginCandidate({
+          idHint: "msteams",
+          rootDir: dir,
+          packageName: "@openclaw/msteams",
+          origin: "config",
+        }),
+      ],
+      env: {
+        [PORTABLE_PLUGIN_INSTALL_RECORDS_FILE_ENV]: portableRecordsFile,
+      },
+    });
+
+    expectRecordFields(registry.plugins[0], "plugin", {
+      origin: "config",
+      trustedOfficialInstall: true,
+    });
+  });
+
+  it("does not trust image-baked config channel plugins without portable install records", () => {
+    const dir = makeTempDir();
+    writeManifest(dir, {
+      id: "msteams",
+      configSchema: { type: "object" },
+      channels: ["msteams"],
+      channelConfigs: {
+        msteams: {
+          schema: { type: "object" },
+        },
+      },
+    });
+
+    const registry = loadPluginManifestRegistry({
+      candidates: [
+        createPluginCandidate({
+          idHint: "msteams",
+          rootDir: dir,
+          packageName: "@openclaw/msteams",
+          origin: "config",
         }),
       ],
     });

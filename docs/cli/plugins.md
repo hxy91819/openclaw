@@ -458,6 +458,14 @@ The local plugin registry is OpenClaw's persisted cold read model for installed 
 
 Use `plugins registry` to inspect whether the persisted registry is present, current, or stale. Use `--refresh` to rebuild it from the persisted plugin index, config policy, and manifest/package metadata. This is a repair path, not a runtime activation path.
 
+Immutable container images can also provide official plugin install provenance
+through `OPENCLAW_PORTABLE_PLUGIN_INSTALL_RECORDS_FILE`. Point it at a
+read-only installed-plugin-index SQLite database or JSON file with
+`installRecords` when official plugins are baked into the image and loaded
+through `plugins.load.paths`. OpenClaw still requires the discovered package to
+match the official external plugin catalog before granting trusted-plugin state
+access.
+
 `openclaw doctor --fix` also repairs registry-adjacent managed npm drift: if an orphaned or recovered `@openclaw/*` package under a managed plugin npm project or the legacy flat managed npm root shadows a bundled plugin, doctor removes that stale package and rebuilds the registry so startup validates against the bundled manifest. Doctor also relinks the host `openclaw` package into managed npm plugins that declare `peerDependencies.openclaw`, so package-local runtime imports such as `openclaw/plugin-sdk/*` resolve after updates or npm repairs.
 
 <Warning>

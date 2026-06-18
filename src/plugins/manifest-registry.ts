@@ -56,15 +56,19 @@ import {
 } from "./manifest.js";
 import { checkMinHostVersion } from "./min-host-version.js";
 import {
+  resolveTrustedSourceLinkedOfficialClawHubInstall,
+  resolveTrustedSourceLinkedOfficialNpmSpec,
+} from "./official-external-install-records.js";
+import {
   getOfficialExternalPluginCatalogEntryForPackage,
   getOfficialExternalPluginCatalogManifest,
   resolveOfficialExternalPluginId,
-  resolveOfficialExternalPluginInstall,
 } from "./official-external-plugin-catalog.js";
 import { resolvePackagePluginApiRange } from "./package-compat.js";
 import { isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
 import type { PluginKind } from "./plugin-kind.types.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
+import { mergePortablePluginInstallRecords } from "./portable-plugin-install-records.js";
 import type { PluginDependencySpecMap } from "./status-dependencies.js";
 
 function resolvePluginSourcePath(sourcePath: string): string {
@@ -795,17 +799,6 @@ function matchesInstalledPluginRecord(params: {
   );
 }
 
-function npmSpecMatchesPackage(value: string | undefined, packageName: string): boolean {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return false;
-  }
-  if (normalized === packageName) {
-    return true;
-  }
-  return normalized.startsWith(`${packageName}@`);
-}
-
 function isTrustedOfficialPluginInstall(params: {
   pluginId: string;
   candidate: PluginCandidate;
@@ -831,31 +824,22 @@ function isTrustedOfficialPluginInstall(params: {
   if (!catalogEntry || resolveOfficialExternalPluginId(catalogEntry) !== params.pluginId) {
     return false;
   }
-  const officialInstall = resolveOfficialExternalPluginInstall(catalogEntry);
   const installRecord = params.installRecords[params.pluginId];
   if (!installRecord) {
     return false;
   }
-  if (
-    installRecord.source === "npm" &&
-    officialInstall?.npmSpec === packageName &&
-    [
-      installRecord.resolvedName,
-      installRecord.spec,
-      installRecord.resolvedSpec,
-      params.candidate.packageName,
-    ].some((value) => npmSpecMatchesPackage(value, packageName))
-  ) {
+  const trustedNpmSpec = resolveTrustedSourceLinkedOfficialNpmSpec({
+    pluginId: params.pluginId,
+    record: installRecord,
+  });
+  if (trustedNpmSpec && catalogEntry.name === packageName) {
     return true;
   }
-  if (
-    installRecord.source === "clawhub" &&
-    officialInstall?.clawhubSpec &&
-    installRecord.clawhubChannel === "official" &&
-    (installRecord.clawhubPackage === packageName ||
-      installRecord.spec === officialInstall.clawhubSpec ||
-      installRecord.resolvedSpec === officialInstall.clawhubSpec)
-  ) {
+  const trustedClawHubInstall = resolveTrustedSourceLinkedOfficialClawHubInstall({
+    pluginId: params.pluginId,
+    record: installRecord,
+  });
+  if (trustedClawHubInstall && catalogEntry.name === packageName) {
     return true;
   }
   return false;
@@ -989,6 +973,14 @@ export function loadPluginManifestRegistry(
       }));
   const diagnostics: PluginDiagnostic[] = [...discovery.diagnostics];
   const candidates: PluginCandidate[] = discovery.candidates;
+  if (!params.installRecords) {
+    installRecords = mergePortablePluginInstallRecords({
+      baseRecords: getInstallRecords(),
+      candidates,
+      env,
+    });
+    installRecordsLoaded = true;
+  }
   const records: PluginManifestRecord[] = [];
   const seenIds = new Map<string, SeenIdEntry>();
   const realpathCache = new Map<string, string>();

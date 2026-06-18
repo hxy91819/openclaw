@@ -125,25 +125,26 @@ and setup-time config writes through `openclaw-gateway` with
 
 The setup script accepts these optional environment variables:
 
-| Variable                                   | Purpose                                                               |
-| ------------------------------------------ | --------------------------------------------------------------------- |
-| `OPENCLAW_IMAGE`                           | Use a remote image instead of building locally                        |
-| `OPENCLAW_IMAGE_APT_PACKAGES`              | Install extra apt packages during build (space-separated)             |
-| `OPENCLAW_IMAGE_PIP_PACKAGES`              | Install extra Python packages during build (space-separated)          |
-| `OPENCLAW_EXTENSIONS`                      | Pre-install plugin dependencies at build time (space-separated names) |
-| `OPENCLAW_EXTRA_MOUNTS`                    | Extra host bind mounts (comma-separated `source:target[:opts]`)       |
-| `OPENCLAW_HOME_VOLUME`                     | Persist `/home/node` in a named Docker volume                         |
-| `OPENCLAW_SANDBOX`                         | Opt in to sandbox bootstrap (`1`, `true`, `yes`, `on`)                |
-| `OPENCLAW_SKIP_ONBOARDING`                 | Skip the interactive onboarding step (`1`, `true`, `yes`, `on`)       |
-| `OPENCLAW_DOCKER_SOCKET`                   | Override Docker socket path                                           |
-| `OPENCLAW_DISABLE_BONJOUR`                 | Disable Bonjour/mDNS advertising (defaults to `1` for Docker)         |
-| `OPENCLAW_DISABLE_BUNDLED_SOURCE_OVERLAYS` | Disable bundled plugin source bind-mount overlays                     |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`              | Shared OTLP/HTTP collector endpoint for OpenTelemetry export          |
-| `OTEL_EXPORTER_OTLP_*_ENDPOINT`            | Signal-specific OTLP endpoints for traces, metrics, or logs           |
-| `OTEL_EXPORTER_OTLP_PROTOCOL`              | OTLP protocol override. Only `http/protobuf` is supported today       |
-| `OTEL_SERVICE_NAME`                        | Service name used for OpenTelemetry resources                         |
-| `OTEL_SEMCONV_STABILITY_OPT_IN`            | Opt in to latest experimental GenAI semantic attributes               |
-| `OPENCLAW_OTEL_PRELOADED`                  | Skip starting a second OpenTelemetry SDK when one is preloaded        |
+| Variable                                        | Purpose                                                                                         |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `OPENCLAW_IMAGE`                                | Use a remote image instead of building locally                                                  |
+| `OPENCLAW_IMAGE_APT_PACKAGES`                   | Install extra apt packages during build (space-separated)                                       |
+| `OPENCLAW_IMAGE_PIP_PACKAGES`                   | Install extra Python packages during build (space-separated)                                    |
+| `OPENCLAW_EXTENSIONS`                           | Pre-install plugin dependencies at build time (space-separated names)                           |
+| `OPENCLAW_PORTABLE_PLUGIN_INSTALL_RECORDS_FILE` | Read official plugin install provenance from an image-baked installed-index SQLite or JSON file |
+| `OPENCLAW_EXTRA_MOUNTS`                         | Extra host bind mounts (comma-separated `source:target[:opts]`)                                 |
+| `OPENCLAW_HOME_VOLUME`                          | Persist `/home/node` in a named Docker volume                                                   |
+| `OPENCLAW_SANDBOX`                              | Opt in to sandbox bootstrap (`1`, `true`, `yes`, `on`)                                          |
+| `OPENCLAW_SKIP_ONBOARDING`                      | Skip the interactive onboarding step (`1`, `true`, `yes`, `on`)                                 |
+| `OPENCLAW_DOCKER_SOCKET`                        | Override Docker socket path                                                                     |
+| `OPENCLAW_DISABLE_BONJOUR`                      | Disable Bonjour/mDNS advertising (defaults to `1` for Docker)                                   |
+| `OPENCLAW_DISABLE_BUNDLED_SOURCE_OVERLAYS`      | Disable bundled plugin source bind-mount overlays                                               |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                   | Shared OTLP/HTTP collector endpoint for OpenTelemetry export                                    |
+| `OTEL_EXPORTER_OTLP_*_ENDPOINT`                 | Signal-specific OTLP endpoints for traces, metrics, or logs                                     |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`                   | OTLP protocol override. Only `http/protobuf` is supported today                                 |
+| `OTEL_SERVICE_NAME`                             | Service name used for OpenTelemetry resources                                                   |
+| `OTEL_SEMCONV_STABILITY_OPT_IN`                 | Opt in to latest experimental GenAI semantic attributes                                         |
+| `OPENCLAW_OTEL_PRELOADED`                       | Skip starting a second OpenTelemetry SDK when one is preloaded                                  |
 
 The official Docker image does not ship Homebrew. During onboarding, OpenClaw
 hides brew-only skill dependency installers when it is running in a Linux
@@ -160,6 +161,42 @@ one plugin source directory over its packaged source path, for example
 `OPENCLAW_EXTRA_MOUNTS=/path/to/fork/extensions/synology-chat:/app/extensions/synology-chat:ro`.
 That mounted source directory overrides the matching compiled
 `/app/dist/extensions/synology-chat` bundle for the same plugin id.
+
+### Image-baked official channel plugins
+
+Official channel plugins that are installed outside `~/.openclaw` need install
+provenance before they can use host-managed plugin state. In immutable
+container images, bake both the plugin package and the installed plugin index
+created by `openclaw plugins install` into the image, then point
+`OPENCLAW_PORTABLE_PLUGIN_INSTALL_RECORDS_FILE` at that read-only index file.
+
+The file can be the installed-plugin-index SQLite database or a JSON export with
+an `installRecords` object. At startup, OpenClaw matches those records against
+the discovered official package and anchors the path proof to the configured
+`plugins.load.paths` directory. This does not make arbitrary load-path plugins
+trusted; the package still has to match the official external plugin catalog and
+the portable install record.
+
+```bash
+export OPENCLAW_PORTABLE_PLUGIN_INSTALL_RECORDS_FILE=/app/openclaw-plugin-index.sqlite
+```
+
+For Microsoft Teams, keep the plugin path explicit and enable the plugin owner:
+
+```json
+{
+  "plugins": {
+    "load": {
+      "paths": ["/app/plugins/msteams"]
+    },
+    "entries": {
+      "msteams": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
 
 ### Observability
 

@@ -330,6 +330,13 @@ const runValueOptions = new Set([
   "islo-workdir",
   "junit",
   "label",
+  "local-container-image",
+  "local-container-memory",
+  "local-container-network",
+  "local-container-runtime",
+  "local-container-user",
+  "local-container-volume",
+  "local-container-work-root",
   "market",
   "modal-app",
   "modal-image",
@@ -2383,26 +2390,35 @@ if (
 }
 
 const childEnv = { ...process.env };
-if (
+const shouldUseDefaultLocalContainerImage =
   isLocalContainerProvider(provider) &&
-  !childEnv.CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET &&
-  !hasOption(normalizedArgs, "--local-container-docker-socket")
+  !childEnv.CRABBOX_LOCAL_CONTAINER_IMAGE &&
+  !hasOption(normalizedArgs, "--local-container-image");
+if (
+  shouldUseDefaultLocalContainerImage &&
+  normalizedArgs[0] === "run" &&
+  !hasOption(normalizedArgs, "--no-hydrate")
 ) {
-  childEnv.CRABBOX_LOCAL_CONTAINER_DOCKER_SOCKET = "1";
+  // The repo hydrate workflow targets prepared remote boxes. Stock Node
+  // containers already have Node/Corepack, and hydration can fail on same-path
+  // tool links before the user command runs.
+  const optionEnd = commandOptionEnd(normalizedArgs);
+  normalizedArgs.splice(optionEnd, 0, "--no-hydrate");
+  console.error("[crabbox] provider=docker skipping Actions hydration for local Node image runs");
+}
+if (shouldUseDefaultLocalContainerImage) {
+  childEnv.CRABBOX_LOCAL_CONTAINER_IMAGE = "node:24-bookworm";
   console.error(
-    "[crabbox] provider=docker enabling host Docker socket pass-through for OpenClaw Docker tests",
+    "[crabbox] provider=docker using Node 24 image with bundled Corepack for OpenClaw proof",
   );
 }
 if (
   isLocalContainerProvider(provider) &&
-  process.platform === "linux" &&
   !childEnv.CRABBOX_LOCAL_CONTAINER_WORK_ROOT &&
   !hasOption(normalizedArgs, "--local-container-work-root")
 ) {
-  childEnv.CRABBOX_LOCAL_CONTAINER_WORK_ROOT = "/tmp/openclaw-crabbox-docker-work";
-  console.error(
-    "[crabbox] provider=docker using short host-visible work root for OpenClaw Docker tests",
-  );
+  childEnv.CRABBOX_LOCAL_CONTAINER_WORK_ROOT = "/home/crabbox/work";
+  console.error("[crabbox] provider=docker using container-owned work root for OpenClaw proof");
 }
 
 const remoteMarkedArgs = injectRemoteChangedGateEnvironment(normalizedArgs);

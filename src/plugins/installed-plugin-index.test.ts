@@ -21,6 +21,7 @@ import {
 import { recordPluginInstall } from "./installs.js";
 import type { PluginManifestRecord } from "./manifest-registry.js";
 import type { OpenClawPackageManifest } from "./manifest.js";
+import { PORTABLE_PLUGIN_INSTALL_RECORDS_FILE_ENV } from "./portable-plugin-install-records.js";
 import { cleanupTrackedTempDirs, makeTrackedTempDir } from "./test-helpers/fs-fixtures.js";
 
 vi.unmock("../version.js");
@@ -41,6 +42,12 @@ function writePluginManifest(rootDir: string, manifest: Record<string, unknown>)
 
 function writePackageJson(rootDir: string, packageJson: Record<string, unknown>) {
   fs.writeFileSync(path.join(rootDir, "package.json"), JSON.stringify(packageJson), "utf-8");
+}
+
+function writePortableInstallRecordsFile(rootDir: string, records: Record<string, unknown>) {
+  const filePath = path.join(rootDir, "portable-install-records.json");
+  fs.writeFileSync(filePath, JSON.stringify({ installRecords: records }), "utf-8");
+  return filePath;
 }
 
 function writeRuntimeEntry(rootDir: string) {
@@ -280,6 +287,95 @@ describe("installed plugin index", () => {
     });
     expectSha256(packageJson.hash);
     expect(index.plugins[0]?.installRecord).toBeUndefined();
+    expect(index.plugins[0]?.installRecordHash).toBeUndefined();
+  });
+
+  it("trusts image-baked official channel plugins with portable install records", () => {
+    const rootDir = makeTempDir();
+    writeRuntimeEntry(rootDir);
+    writePackageJson(rootDir, {
+      name: "@openclaw/msteams",
+      version: "2026.6.17",
+    });
+    writePluginManifest(rootDir, {
+      id: "msteams",
+      name: "Microsoft Teams",
+      configSchema: { type: "object" },
+      channels: ["msteams"],
+      channelConfigs: {
+        msteams: {
+          schema: { type: "object" },
+        },
+      },
+    });
+    const portableRecordsFile = writePortableInstallRecordsFile(makeTempDir(), {
+      msteams: {
+        source: "npm",
+        spec: "@openclaw/msteams",
+        resolvedName: "@openclaw/msteams",
+        resolvedVersion: "2026.6.17",
+        resolvedSpec: "@openclaw/msteams@2026.6.17",
+        installPath: "/image-build/path/that/does/not/exist",
+      },
+    });
+
+    const index = loadInstalledPluginIndex({
+      candidates: [
+        createPluginCandidate({
+          rootDir,
+          idHint: "msteams",
+          origin: "config",
+          packageName: "@openclaw/msteams",
+          packageVersion: "2026.6.17",
+        }),
+      ],
+      env: hermeticEnv({
+        [PORTABLE_PLUGIN_INSTALL_RECORDS_FILE_ENV]: portableRecordsFile,
+      }),
+    });
+
+    const plugin = requireRecord(index.plugins[0], "installed plugin record");
+    expectRecordFields(plugin, {
+      pluginId: "msteams",
+      origin: "config",
+    });
+    expect(index.plugins[0]?.installRecordHash).toBeDefined();
+    expect(index.installRecords.msteams?.installPath).toBe(fs.realpathSync(rootDir));
+    expect(index.installRecords.msteams?.sourcePath).toBe(fs.realpathSync(rootDir));
+  });
+
+  it("does not trust image-baked channel plugins without portable install records", () => {
+    const rootDir = makeTempDir();
+    writeRuntimeEntry(rootDir);
+    writePackageJson(rootDir, {
+      name: "@openclaw/msteams",
+      version: "2026.6.17",
+    });
+    writePluginManifest(rootDir, {
+      id: "msteams",
+      configSchema: { type: "object" },
+      channels: ["msteams"],
+      channelConfigs: {
+        msteams: {
+          schema: { type: "object" },
+        },
+      },
+    });
+
+    const index = loadInstalledPluginIndex({
+      candidates: [
+        createPluginCandidate({
+          rootDir,
+          idHint: "msteams",
+          origin: "config",
+          packageName: "@openclaw/msteams",
+          packageVersion: "2026.6.17",
+        }),
+      ],
+      env: hermeticEnv(),
+    });
+
+    expect(index.installRecords.msteams).toBeUndefined();
     expect(index.plugins[0]?.installRecordHash).toBeUndefined();
   });
 
