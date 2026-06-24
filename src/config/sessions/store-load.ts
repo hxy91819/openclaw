@@ -385,6 +385,7 @@ export function loadSessionStore(
     const currentFileStat = getFileStatSnapshot(storePath);
     const cached = readSessionStoreCache({
       storePath,
+      ctimeMs: currentFileStat?.ctimeMs,
       mtimeMs: currentFileStat?.mtimeMs,
       sizeBytes: currentFileStat?.sizeBytes,
       clone: opts.clone,
@@ -498,6 +499,7 @@ export function loadSessionStore(
     writeSessionStoreCache({
       storePath,
       store,
+      ctimeMs: fileStat?.ctimeMs,
       mtimeMs,
       sizeBytes: fileStat?.sizeBytes,
       serialized: serializedFromDisk,
@@ -515,6 +517,7 @@ export function readSessionStoreSnapshot(storePath: string): SessionStoreSnapsho
   if (cacheEnabled) {
     const cached = readSessionStoreSnapshotCache({
       storePath,
+      ctimeMs: currentFileStat?.ctimeMs,
       mtimeMs: currentFileStat?.mtimeMs,
       sizeBytes: currentFileStat?.sizeBytes,
     });
@@ -530,6 +533,7 @@ export function readSessionStoreSnapshot(storePath: string): SessionStoreSnapsho
   return writeSessionStoreSnapshotCache({
     storePath,
     store,
+    ctimeMs: currentFileStat?.ctimeMs,
     mtimeMs: currentFileStat?.mtimeMs,
     sizeBytes: currentFileStat?.sizeBytes,
   });

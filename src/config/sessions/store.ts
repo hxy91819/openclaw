@@ -25,7 +25,11 @@ import {
 } from "./disk-budget.js";
 import { extractGeneratedTranscriptSessionId } from "./generated-transcript-session-id.js";
 import { deriveSessionMetaPatch } from "./metadata.js";
-import { resolveExplicitSessionFilePath, resolveSessionFilePath } from "./paths.js";
+import {
+  resolveExplicitSessionFilePath,
+  resolveSessionFilePath,
+  resolveStorePath,
+} from "./paths.js";
 import { resolveSessionStorePathForScope } from "./session-store-path.js";
 import {
   ensureSessionStorePromptBlobsForPersistence,
@@ -393,6 +397,7 @@ function updateSessionStoreWriteCaches(params: {
   writeSessionStoreCache({
     storePath: params.storePath,
     store: params.store,
+    ctimeMs: fileStat?.ctimeMs,
     mtimeMs: fileStat?.mtimeMs,
     sizeBytes: fileStat?.sizeBytes,
     serialized: params.serialized,
@@ -413,6 +418,7 @@ function restoreUnchangedSessionStoreCache(
   const loadedFileStat = writerStoreFileStats.get(store) ?? null;
   const currentFileStat = getFileStatSnapshot(storePath) ?? null;
   if (
+    loadedFileStat?.ctimeMs !== currentFileStat?.ctimeMs ||
     loadedFileStat?.mtimeMs !== currentFileStat?.mtimeMs ||
     loadedFileStat?.sizeBytes !== currentFileStat?.sizeBytes
   ) {
@@ -425,6 +431,7 @@ function restoreUnchangedSessionStoreCache(
   writeSessionStoreCache({
     storePath,
     store,
+    ctimeMs: loadedFileStat?.ctimeMs,
     mtimeMs: loadedFileStat?.mtimeMs,
     sizeBytes: loadedFileStat?.sizeBytes,
     serialized,
@@ -625,6 +632,7 @@ function loadMutableSessionStoreForWriter(storePath: string): Record<string, Ses
   if (isSessionStoreCacheEnabled()) {
     const cached = takeMutableSessionStoreCache({
       storePath,
+      ctimeMs: currentFileStat?.ctimeMs,
       mtimeMs: currentFileStat?.mtimeMs,
       sizeBytes: currentFileStat?.sizeBytes,
     });
