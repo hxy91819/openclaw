@@ -4,7 +4,11 @@ import {
   buildAgentRunTerminalOutcome,
   type AgentRunTerminalOutcome,
 } from "../agents/agent-run-terminal-outcome.js";
-import { updateSessionStoreEntry, type SessionEntry } from "../config/sessions.js";
+import {
+  buildAutomaticRestartRecoveryClearPatch,
+  updateSessionStoreEntry,
+  type SessionEntry,
+} from "../config/sessions.js";
 import type { AgentEventPayload } from "../infra/agent-events.js";
 import { parseCronRunScopeSuffix } from "../sessions/session-key-utils.js";
 import { loadSessionEntry } from "./session-utils.js";
@@ -42,6 +46,10 @@ type PersistedLifecycleSessionShape = Pick<
   | "runtimeMs"
   | "abortedLastRun"
   | "restartRecoveryRuns"
+  | "restartRecoveryAttempts"
+  | "restartRecoveryQuarantinedAt"
+  | "restartRecoveryQuarantineReason"
+  | "subagentRecovery"
 >;
 
 type GatewaySessionLifecycleSnapshot = Partial<LifecycleSessionShape>;
@@ -187,6 +195,9 @@ export function derivePersistedSessionLifecyclePatch(params: {
     ...snapshot,
     updatedAt: typeof snapshot.updatedAt === "number" ? snapshot.updatedAt : undefined,
   };
+  if (snapshot.status === "done") {
+    Object.assign(patch, buildAutomaticRestartRecoveryClearPatch(params.entry));
+  }
   const runId = params.event.runId?.trim();
   const lifecycleGeneration = params.event.lifecycleGeneration?.trim();
   const restartRecoveryRuns = params.entry?.restartRecoveryRuns;
