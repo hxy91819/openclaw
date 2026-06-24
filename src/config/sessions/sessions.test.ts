@@ -774,6 +774,7 @@ describe("session store writer queue", () => {
     writeSessionStoreCache({
       storePath,
       store,
+      ctimeMs: 1,
       mtimeMs: 1,
       sizeBytes: serialized.length,
       serialized,
@@ -784,6 +785,7 @@ describe("session store writer queue", () => {
 
     const cached = readSessionStoreCache({
       storePath,
+      ctimeMs: 1,
       mtimeMs: 1,
       sizeBytes: serialized.length,
     });
