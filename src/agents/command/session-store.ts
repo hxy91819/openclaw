@@ -203,7 +203,7 @@ export async function updateSessionStoreAfterAgentRun(params: {
     if (params.clearRestartRecoveryForceSafeTools && result.meta.aborted !== true) {
       next.restartRecoveryForceSafeTools = undefined;
     }
-    if (next.abortedLastRun === false) {
+    if (!next.abortedLastRun) {
       clearAutomaticRestartRecoveryState(next);
     }
     if (result.meta.systemPromptReport) {
