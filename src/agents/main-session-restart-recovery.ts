@@ -40,6 +40,7 @@ import {
   isSubagentSessionKey,
   resolveAgentIdFromSessionKey,
 } from "../routing/session-key.js";
+import { MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL } from "../sessions/input-provenance.js";
 import { resolveSendPolicy } from "../sessions/send-policy.js";
 import {
   deliveryContextFromSession,
@@ -63,6 +64,8 @@ const RESTART_RECOVERY_RESUME_MESSAGE =
 
 const DEFAULT_RECOVERY_DELAY_MS = 5_000;
 const MAX_RECOVERY_RETRIES = 3;
+const MAX_RESTART_RECOVERY_ATTEMPTS = MAX_RECOVERY_RETRIES;
+const RESTART_RECOVERY_BUDGET_QUARANTINE_REASON = "exceeded_restart_retry_budget";
 const RETRY_BACKOFF_MULTIPLIER = 2;
 const UNRESUMABLE_SESSION_NOTICE =
   "I was interrupted by a gateway restart and couldn't safely resume the previous turn. " +
@@ -93,6 +96,30 @@ function normalizeStringSet(values: Iterable<string> | undefined): Set<string> {
 
 function normalizeFiniteTimestamp(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeRestartRecoveryAttempts(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function isMainRestartRecoveryQuarantined(entry: SessionEntry): boolean {
+  return (
+    typeof entry.restartRecoveryQuarantinedAt === "number" &&
+    Number.isFinite(entry.restartRecoveryQuarantinedAt) &&
+    entry.restartRecoveryQuarantinedAt > 0
+  );
+}
+
+function prepareMainRestartRecovery(entry: SessionEntry): void {
+  entry.restartRecoveryQuarantinedAt = undefined;
+  entry.restartRecoveryQuarantineReason = undefined;
+}
+
+function quarantineMainRestartRecoveryBudgetExceeded(entry: SessionEntry, now: number): void {
+  entry.abortedLastRun = false;
+  entry.restartRecoveryQuarantinedAt = now;
+  entry.restartRecoveryQuarantineReason = RESTART_RECOVERY_BUDGET_QUARANTINE_REASON;
+  entry.updatedAt = now;
 }
 
 function hasCurrentProcessOwner(params: {
@@ -259,11 +286,15 @@ export async function markRestartAbortedMainSessions(params: {
           if (!matches) {
             continue;
           }
-          if (shouldSkipMainRecovery(entry, sessionKey)) {
+          if (
+            shouldSkipMainRecovery(entry, sessionKey) ||
+            isMainRestartRecoveryQuarantined(entry)
+          ) {
             counts.skipped++;
             continue;
           }
           const wasRunning = entry.status === "running";
+          prepareMainRestartRecovery(entry);
           entry.status = "running";
           entry.abortedLastRun = true;
           if (!wasRunning) {
@@ -350,7 +381,10 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
           if (entry.status !== "running" || entry.abortedLastRun === true) {
             continue;
           }
-          if (shouldSkipMainRecovery(entry, sessionKey)) {
+          if (
+            shouldSkipMainRecovery(entry, sessionKey) ||
+            isMainRestartRecoveryQuarantined(entry)
+          ) {
             counts.skipped++;
             continue;
           }
@@ -372,6 +406,7 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
           ) {
             continue;
           }
+          prepareMainRestartRecovery(entry);
           entry.abortedLastRun = true;
           entry.updatedAt = Date.now();
           replacements.push({ sessionKey, entry });
@@ -695,6 +730,74 @@ function buildResumeMessage(pendingFinalDeliveryText?: string | null): string {
   return RESTART_RECOVERY_RESUME_MESSAGE;
 }
 
+async function quarantineSessionRestartRecoveryBudgetExceeded(params: {
+  storePath: string;
+  sessionKey: string;
+}): Promise<void> {
+  await applyRestartRecoveryLifecycle({
+    storePath: params.storePath,
+    update: (entries) => {
+      const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
+      const entry = current?.entry;
+      if (!entry || entry.abortedLastRun !== true) {
+        return { result: undefined };
+      }
+      quarantineMainRestartRecoveryBudgetExceeded(entry, Date.now());
+      return {
+        result: undefined,
+        replacements: [{ sessionKey: params.sessionKey, entry }],
+      };
+    },
+  });
+  log.warn(`quarantined main-session restart recovery after retry budget: ${params.sessionKey}`);
+}
+
+type RestartRecoveryAttemptReservation =
+  | { status: "reserved"; attempt: number }
+  | { status: "missing" }
+  | { status: "over_budget" };
+
+async function reserveSessionRestartRecoveryAttempt(params: {
+  entry: SessionEntry;
+  storePath: string;
+  sessionKey: string;
+}): Promise<RestartRecoveryAttemptReservation> {
+  const reservation = await applyRestartRecoveryLifecycle<RestartRecoveryAttemptReservation>({
+    storePath: params.storePath,
+    update: (entries) => {
+      const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
+      const entry = current?.entry;
+      if (!entry || entry.abortedLastRun !== true) {
+        return { result: { status: "missing" } };
+      }
+      const attempts = normalizeRestartRecoveryAttempts(entry.restartRecoveryAttempts);
+      if (attempts >= MAX_RESTART_RECOVERY_ATTEMPTS) {
+        quarantineMainRestartRecoveryBudgetExceeded(entry, Date.now());
+        return {
+          result: { status: "over_budget" },
+          replacements: [{ sessionKey: params.sessionKey, entry }],
+        };
+      }
+      const reservedAttempt = attempts + 1;
+      entry.restartRecoveryAttempts = reservedAttempt;
+      entry.restartRecoveryQuarantinedAt = undefined;
+      entry.restartRecoveryQuarantineReason = undefined;
+      entry.updatedAt = Date.now();
+      return {
+        result: { status: "reserved", attempt: reservedAttempt },
+        replacements: [{ sessionKey: params.sessionKey, entry }],
+      };
+    },
+  });
+  if (reservation.status !== "reserved") {
+    return reservation;
+  }
+  params.entry.restartRecoveryAttempts = reservation.attempt;
+  params.entry.restartRecoveryQuarantinedAt = undefined;
+  params.entry.restartRecoveryQuarantineReason = undefined;
+  return reservation;
+}
+
 async function markSessionFailed(params: {
   storePath: string;
   sessionKey: string;
@@ -865,6 +968,11 @@ async function resumeMainSession(params: {
       deliver: Boolean(deliveryContext),
       lane: CommandLane.Main,
       ...(params.forceRestartSafeTools ? { forceRestartSafeTools: true } : {}),
+      inputProvenance: {
+        kind: "internal_system",
+        sourceSessionKey: params.sessionKey,
+        sourceTool: MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL,
+      },
     };
     if (deliveryContext) {
       agentParams.channel = deliveryContext.channel;
@@ -956,7 +1064,7 @@ export async function markRestartAbortedMainSessionsFromLocks(params: {
         if (entry.status !== "running") {
           continue;
         }
-        if (shouldSkipMainRecovery(entry, sessionKey)) {
+        if (shouldSkipMainRecovery(entry, sessionKey) || isMainRestartRecoveryQuarantined(entry)) {
           counts.skipped++;
           continue;
         }
@@ -964,6 +1072,7 @@ export async function markRestartAbortedMainSessionsFromLocks(params: {
         if (!entryLockPaths.some((lockPath) => interruptedLockPaths.has(lockPath))) {
           continue;
         }
+        prepareMainRestartRecovery(entry);
         entry.abortedLastRun = true;
         replacements.push({ sessionKey, entry });
         counts.marked++;
@@ -1066,6 +1175,26 @@ async function recoverStore(params: {
       result.skipped++;
       continue;
     }
+    const reservation = await reserveSessionRestartRecoveryAttempt({
+      entry,
+      storePath: params.storePath,
+      sessionKey,
+    });
+    if (reservation.status !== "reserved") {
+      if (reservation.status === "over_budget") {
+        log.warn(`quarantined main-session restart recovery after retry budget: ${sessionKey}`);
+      }
+      result.skipped++;
+      continue;
+    }
+    const quarantineIfBudgetExhausted = async () => {
+      if (reservation.attempt >= MAX_RESTART_RECOVERY_ATTEMPTS) {
+        await quarantineSessionRestartRecoveryBudgetExceeded({
+          storePath: params.storePath,
+          sessionKey,
+        });
+      }
+    };
 
     if (
       entry.pendingFinalDelivery === true &&
@@ -1084,6 +1213,7 @@ async function recoverStore(params: {
         params.resumedSessionKeys.add(resumeDedupeKey);
         result.recovered++;
       } else {
+        await quarantineIfBudgetExhausted();
         result.failed++;
       }
       continue;
@@ -1126,6 +1256,7 @@ async function recoverStore(params: {
         continue;
       }
       log.warn(`failed to read transcript for ${sessionKey}: ${String(err)}`);
+      await quarantineIfBudgetExhausted();
       result.failed++;
       continue;
     }
@@ -1186,6 +1317,7 @@ async function recoverStore(params: {
       params.resumedSessionKeys.add(resumeDedupeKey);
       result.recovered++;
     } else {
+      await quarantineIfBudgetExhausted();
       result.failed++;
     }
   }

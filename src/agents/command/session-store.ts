@@ -3,6 +3,7 @@
  */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
+  clearAutomaticRestartRecoveryState,
   resolveCompactionSessionFile,
   setSessionRuntimeModel,
   type SessionEntry,
@@ -201,6 +202,9 @@ export async function updateSessionStoreAfterAgentRun(params: {
     next.abortedLastRun = result.meta.aborted ?? false;
     if (params.clearRestartRecoveryForceSafeTools && result.meta.aborted !== true) {
       next.restartRecoveryForceSafeTools = undefined;
+    }
+    if (next.abortedLastRun === false) {
+      clearAutomaticRestartRecoveryState(next);
     }
     if (result.meta.systemPromptReport) {
       next.systemPromptReport = result.meta.systemPromptReport;
