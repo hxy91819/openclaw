@@ -103,10 +103,14 @@ const OPENCLAW_STABLE_OR_BETA_COMPANION_VERSION_RE =
   /^(\d{4}\.[1-9]\d?\.[1-9]\d?)(?:-beta\.[1-9]\d*)?$/;
 
 function shouldFallbackClawHubToNpm(params: {
+  candidate: DownloadableInstallCandidate;
   result: { ok: false; code?: string };
   npmSpec?: string;
 }): boolean {
-  if (!isOpenClawOrgNpmSpec(params.npmSpec)) {
+  if (
+    !isOpenClawOrgNpmSpec(params.npmSpec) &&
+    !params.candidate.trustedSourceLinkedOfficialInstall
+  ) {
     return false;
   }
   return (
@@ -1047,7 +1051,11 @@ async function installCandidate(params: {
     }
     if (
       !npmInstallSpec ||
-      !shouldFallbackClawHubToNpm({ result: clawhubResult, npmSpec: npmInstallSpec })
+      !shouldFallbackClawHubToNpm({
+        candidate,
+        result: clawhubResult,
+        npmSpec: npmInstallSpec,
+      })
     ) {
       return {
         records: params.records,

@@ -686,10 +686,13 @@ function isExternalizedBundledPluginEnabled(params: {
 function shouldFallbackClawHubBridgeToNpm(params: {
   result: { ok: false; code?: string };
   npmSpec?: string;
+  trustedSourceLinkedOfficialInstall?: boolean;
 }): boolean {
-  if (!isOpenClawOrgNpmSpec(params.npmSpec)) {
+  if (!isOpenClawOrgNpmSpec(params.npmSpec) && !params.trustedSourceLinkedOfficialInstall) {
     return false;
   }
+  // Keep ClawHub-to-npm recovery on the official catalog trust path; unlinked
+  // npm packages must not become fallback targets just because ClawHub missed.
   return (
     params.result.code === CLAWHUB_INSTALL_ERROR_CODE.PACKAGE_NOT_FOUND ||
     params.result.code === CLAWHUB_INSTALL_ERROR_CODE.VERSION_NOT_FOUND ||
@@ -1739,6 +1742,7 @@ export async function updateNpmInstalledPlugins(params: {
         shouldFallbackClawHubBridgeToNpm({
           result: probe,
           npmSpec: officialNpmFallbackInstallSpec,
+          trustedSourceLinkedOfficialInstall: true,
         })
       ) {
         channelFallbackSuffix = ` (warning: official ClawHub artifact fallback would use ${officialNpmFallbackInstallSpec}).`;
@@ -1998,6 +2002,7 @@ export async function updateNpmInstalledPlugins(params: {
       shouldFallbackClawHubBridgeToNpm({
         result,
         npmSpec: officialNpmFallbackInstallSpec,
+        trustedSourceLinkedOfficialInstall: true,
       })
     ) {
       logger.warn?.(
@@ -2309,7 +2314,15 @@ export async function syncPluginsForUpdateChannel(params: {
           expectedPluginId: targetPluginId,
           logger,
         });
-        if (!result.ok && npmSpec && shouldFallbackClawHubBridgeToNpm({ result, npmSpec })) {
+        if (
+          !result.ok &&
+          npmSpec &&
+          shouldFallbackClawHubBridgeToNpm({
+            result,
+            npmSpec,
+            trustedSourceLinkedOfficialInstall,
+          })
+        ) {
           const warning = `ClawHub ${clawhubSpec} unavailable for ${targetPluginId}; falling back to npm ${npmSpec}.`;
           summary.warnings.push(warning);
           logger.warn?.(warning);

@@ -44,7 +44,6 @@ describe("official external plugin catalog", () => {
     ] as const;
     const newlyExternalized = [
       ["clickclack", "@openclaw/clickclack"],
-      ["fireworks", "@openclaw/fireworks-provider"],
       ["irc", "@openclaw/irc"],
       ["mattermost", "@openclaw/mattermost"],
       ["moonshot", "@openclaw/moonshot-provider"],
@@ -52,7 +51,6 @@ describe("official external plugin catalog", () => {
       ["signal", "@openclaw/signal"],
       ["sms", "@openclaw/sms"],
       ["tavily", "@openclaw/tavily-plugin"],
-      ["tencent", "@openclaw/tencent-provider"],
       ["venice", "@openclaw/venice-provider"],
       ["vercel-ai-gateway", "@openclaw/vercel-ai-gateway-provider"],
       ["zai", "@openclaw/zai-provider"],
@@ -74,6 +72,26 @@ describe("official external plugin catalog", () => {
         minHostVersion: ">=2026.6.9",
       });
     }
+  });
+
+  it("advertises Fireworks with its current install floor", () => {
+    expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("fireworks"))).toMatchObject({
+      clawhubSpec: "clawhub:@openclaw/fireworks-provider",
+      npmSpec: "@openclaw/fireworks-provider",
+      defaultChoice: "npm",
+      minHostVersion: ">=2026.6.9",
+    });
+  });
+
+  it("prefers ClawHub for Tencent while retaining npm backup metadata", () => {
+    expect(resolveOfficialExternalPluginInstall(expectCatalogEntry("tencent"))).toEqual({
+      clawhubSpec: "clawhub:openclaw-tencent-provider",
+      npmSpec: "openclaw-tencent-provider",
+      defaultChoice: "clawhub",
+      minHostVersion: ">=2026.5.28",
+      expectedIntegrity:
+        "sha512-dwAZYjoBRnZXGM+5tkZIhxue+Zwb5EsqWHRwaOieGsuFqLfO7aMr5O8c6fZkCEaxfzferM8N2t0U0nBlwbm/hA==",
+    });
   });
 
   it("advertises StepFun with its ClawHub package and plugin API floor", () => {

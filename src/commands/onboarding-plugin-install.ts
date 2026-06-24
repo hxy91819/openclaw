@@ -101,12 +101,13 @@ async function markOnboardingPluginInstalled(
 function shouldFallbackClawHubToNpm(params: {
   result: { ok: false; code?: string };
   npmSpec?: string;
+  trustedSourceLinkedOfficialInstall?: boolean;
 }): boolean {
-  if (!isOpenClawOrgNpmSpec(params.npmSpec)) {
+  if (!isOpenClawOrgNpmSpec(params.npmSpec) && !params.trustedSourceLinkedOfficialInstall) {
     return false;
   }
-  // Only official OpenClaw npm packages are safe fallback targets for ClawHub
-  // availability failures; arbitrary npm fallbacks would change trust source.
+  // Fallback is limited to catalog-linked official packages so a ClawHub
+  // availability miss cannot silently redirect users to arbitrary npm code.
   return (
     params.result.code === CLAWHUB_INSTALL_ERROR_CODE.PACKAGE_NOT_FOUND ||
     params.result.code === CLAWHUB_INSTALL_ERROR_CODE.VERSION_NOT_FOUND ||
@@ -1221,7 +1222,14 @@ export async function ensureOnboardingPluginInstalled(params: {
       t("wizard.plugins.installTitle"),
     );
 
-    if (!npmInstallSpec || !shouldFallbackClawHubToNpm({ result, npmSpec: npmInstallSpec })) {
+    if (
+      !npmInstallSpec ||
+      !shouldFallbackClawHubToNpm({
+        result,
+        npmSpec: npmInstallSpec,
+        trustedSourceLinkedOfficialInstall: entry.trustedSourceLinkedOfficialInstall === true,
+      })
+    ) {
       runtime.error?.(`Plugin install failed: ${sanitizeTerminalText(result.error)}`);
       return {
         cfg: next,

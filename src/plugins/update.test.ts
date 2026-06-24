@@ -3249,6 +3249,55 @@ describe("updateNpmInstalledPlugins", () => {
     ]);
   });
 
+  it("falls back to trusted official non-OpenClaw npm packages for ClawHub artifact blocks", async () => {
+    const installPath = createInstalledPackageDir({
+      name: "openclaw-tencent-provider",
+      version: "2026.6.10",
+    });
+    installPluginFromClawHubMock.mockResolvedValueOnce({
+      ok: false,
+      code: "artifact_unavailable",
+      error: "artifact unavailable",
+    });
+    installPluginFromNpmSpecMock.mockResolvedValueOnce(
+      createSuccessfulNpmUpdateResult({
+        pluginId: "tencent",
+        targetDir: "/tmp/openclaw-plugins/tencent",
+        version: "2026.6.10",
+        npmResolution: {
+          name: "openclaw-tencent-provider",
+          version: "2026.6.10",
+          resolvedSpec: "openclaw-tencent-provider@2026.6.10",
+        },
+      }),
+    );
+
+    const result = await updateNpmInstalledPlugins({
+      config: createClawHubInstallConfig({
+        pluginId: "tencent",
+        installPath,
+        clawhubUrl: "https://clawhub.ai",
+        clawhubPackage: "openclaw-tencent-provider",
+        clawhubFamily: "code-plugin",
+        clawhubChannel: "official",
+        spec: "clawhub:openclaw-tencent-provider",
+      }),
+      pluginIds: ["tencent"],
+      updateChannel: "stable",
+    });
+
+    expect(clawHubInstallCall()?.spec).toBe("clawhub:openclaw-tencent-provider");
+    expect(npmInstallCall()?.spec).toBe("openclaw-tencent-provider");
+    expect(npmInstallCall()?.expectedPluginId).toBe("tencent");
+    expect(npmInstallCall()?.trustedSourceLinkedOfficialInstall).toBe(true);
+    expectRecordFields(result.config.plugins?.installs?.tencent, {
+      source: "npm",
+      spec: "openclaw-tencent-provider@2026.6.10",
+      installPath: "/tmp/openclaw-plugins/tencent",
+      version: "2026.6.10",
+    });
+  });
+
   it("uses the default npm spec when beta ClawHub falls back before an artifact block", async () => {
     const warnMessages: string[] = [];
     const installPath = createInstalledPackageDir({
@@ -4315,6 +4364,65 @@ describe("syncPluginsForUpdateChannel", () => {
     expect(result.summary.errors).toEqual([
       "Failed to update legacy-chat: Package not found on ClawHub. (ClawHub clawhub:legacy-chat@2026.5.1-beta.2).",
     ]);
+  });
+
+  it("falls back from ClawHub to catalog-trusted non-OpenClaw npm packages", async () => {
+    resolveBundledPluginSourcesMock.mockReturnValue(new Map());
+    installPluginFromClawHubMock.mockResolvedValue({
+      ok: false,
+      code: "package_not_found",
+      error: "Package not found on ClawHub.",
+    });
+    installPluginFromNpmSpecMock.mockResolvedValue(
+      createSuccessfulNpmUpdateResult({
+        pluginId: "tencent",
+        targetDir: "/tmp/openclaw-plugins/tencent",
+        version: "2026.6.10",
+      }),
+    );
+
+    const result = await syncPluginsForUpdateChannel({
+      channel: "stable",
+      externalizedBundledPluginBridges: [
+        {
+          bundledPluginId: "tencent",
+          preferredSource: "clawhub",
+          clawhubSpec: "clawhub:openclaw-tencent-provider",
+          npmSpec: "openclaw-tencent-provider",
+        },
+      ],
+      config: {
+        plugins: {
+          entries: {
+            tencent: {
+              enabled: true,
+            },
+          },
+          load: { paths: [appBundledPluginRoot("tencent")] },
+          installs: {
+            tencent: {
+              source: "path",
+              sourcePath: appBundledPluginRoot("tencent"),
+              installPath: appBundledPluginRoot("tencent"),
+            },
+          },
+        },
+      },
+    });
+
+    expect(npmInstallCall()?.spec).toBe("openclaw-tencent-provider");
+    expect(npmInstallCall()?.mode).toBe("update");
+    expect(npmInstallCall()?.expectedPluginId).toBe("tencent");
+    expect(npmInstallCall()?.trustedSourceLinkedOfficialInstall).toBe(true);
+    expect(result.changed).toBe(true);
+    expect(result.summary.switchedToNpm).toEqual(["tencent"]);
+    expect(result.summary.errors).toStrictEqual([]);
+    expectRecordFields(result.config.plugins?.installs?.tencent, {
+      source: "npm",
+      spec: "openclaw-tencent-provider",
+      installPath: "/tmp/openclaw-plugins/tencent",
+      version: "2026.6.10",
+    });
   });
 
   it("falls back from official ClawHub artifact misses to trusted npm packages", async () => {
