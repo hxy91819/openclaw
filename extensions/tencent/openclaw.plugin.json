@@ -1,5 +1,6 @@
 {
   "id": "tencent",
+  "name": "Tencent Cloud",
   "activation": {
     "onStartup": false
   },

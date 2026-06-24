@@ -900,6 +900,56 @@ describe("ensureOnboardingPluginInstalled", () => {
     expect(result.installed).toBe(true);
   });
 
+  it("falls back from ClawHub to trusted official non-OpenClaw npm packages", async () => {
+    installPluginFromClawHub.mockResolvedValueOnce({
+      ok: false,
+      code: "artifact_unavailable",
+      error: "ClawHub artifact download is not available yet.",
+    });
+    installPluginFromNpmSpec.mockResolvedValueOnce({
+      ok: true,
+      pluginId: "tencent",
+      targetDir: "/tmp/tencent",
+      version: "2026.6.10",
+      npmResolution: {
+        name: "openclaw-tencent-provider",
+        version: "2026.6.10",
+        resolvedSpec: "openclaw-tencent-provider@2026.6.10",
+        resolvedAt: "2026-06-10T00:00:00.000Z",
+      },
+    });
+
+    const result = await ensureOnboardingPluginInstalled({
+      cfg: {},
+      entry: {
+        pluginId: "tencent",
+        label: "Tencent Cloud",
+        install: {
+          clawhubSpec: "clawhub:openclaw-tencent-provider",
+          npmSpec: "openclaw-tencent-provider",
+          defaultChoice: "clawhub",
+        },
+        trustedSourceLinkedOfficialInstall: true,
+      },
+      prompter: {
+        select: vi.fn(async () => "clawhub"),
+        confirm: vi.fn(async () => true),
+        note: vi.fn(async () => {}),
+        progress: vi.fn(() => ({ update: vi.fn(), stop: vi.fn() })),
+      } as never,
+      runtime: {} as never,
+      promptInstall: false,
+    });
+
+    const [npmCall] = readFirstMockCall(installPluginFromNpmSpec, "installPluginFromNpmSpec") as [
+      NpmSpecInstallCall,
+    ];
+    expect(npmCall.spec).toBe(expectedNpmInstallSpec("openclaw-tencent-provider"));
+    expect(npmCall.expectedPluginId).toBe("tencent");
+    expect(npmCall.trustedSourceLinkedOfficialInstall).toBe(true);
+    expect(result.installed).toBe(true);
+  });
+
   it("does not fall back from ClawHub to non-OpenClaw npm packages", async () => {
     const confirm = vi.fn(async () => true);
     const runtimeError = vi.fn();

@@ -319,6 +319,29 @@ function resolveSurface(manifest) {
   return parts.join("; ");
 }
 
+function formatInstallRouteFromSpecs(packageJson) {
+  const install = packageJson.openclaw?.install;
+  const clawhubSpec =
+    typeof install?.clawhubSpec === "string" ? `: \`${install.clawhubSpec}\`` : "";
+  const npmSpec =
+    typeof install?.npmSpec === "string" && install.npmSpec !== packageJson.name
+      ? `: \`${install.npmSpec}\``
+      : "";
+  if (install?.clawhubSpec && install?.npmSpec) {
+    if (install?.defaultChoice === "clawhub") {
+      return clawhubSpec ? `ClawHub${clawhubSpec}; npm${npmSpec}` : `ClawHub + npm${npmSpec}`;
+    }
+    return clawhubSpec ? `npm${npmSpec}; ClawHub${clawhubSpec}` : `npm${npmSpec}; ClawHub`;
+  }
+  if (install?.clawhubSpec) {
+    return `ClawHub${clawhubSpec}`;
+  }
+  if (typeof install?.npmSpec === "string") {
+    return `npm${npmSpec}`;
+  }
+  return null;
+}
+
 function resolveInstallRoute(packageJson, status) {
   if (status === "source") {
     return "source checkout only";
@@ -330,8 +353,8 @@ function resolveInstallRoute(packageJson, status) {
     }
     return "included in OpenClaw";
   }
-  const install = packageJson.openclaw?.install;
   const release = packageJson.openclaw?.release;
+  const install = packageJson.openclaw?.install;
   const clawhubSpec =
     typeof install?.clawhubSpec === "string" ? `: \`${install.clawhubSpec}\`` : "";
   const npmSpec =
@@ -347,8 +370,12 @@ function resolveInstallRoute(packageJson, status) {
   if (release?.publishToClawHub === true) {
     return `ClawHub${clawhubSpec || npmSpec}`;
   }
-  if (release?.publishToNpm === true || typeof install?.npmSpec === "string") {
+  if (release?.publishToNpm === true) {
     return `npm${npmSpec}`;
+  }
+  const installRoute = formatInstallRouteFromSpecs(packageJson);
+  if (installRoute) {
+    return installRoute;
   }
   return "installable plugin";
 }
@@ -361,6 +388,8 @@ function resolveStatus({ dirName, packageJson, excludedDirs }) {
   if (!excludedDirs.has(dirName)) {
     return "core";
   }
+  // Install metadata is the user-facing distribution contract; release flags
+  // only mean this monorepo owns publishing automation for that package.
   if (release?.publishToClawHub === true || release?.publishToNpm === true || hasInstallSpec) {
     return "external";
   }

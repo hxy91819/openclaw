@@ -493,7 +493,67 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     expect(result.warnings).toStrictEqual([]);
   });
 
-  it("does not fall back from ClawHub to non-OpenClaw npm packages", async () => {
+  it("falls back from ClawHub to npm for trusted official packages outside the OpenClaw npm org", async () => {
+    mocks.installPluginFromClawHub.mockResolvedValueOnce({
+      ok: false,
+      code: "artifact_download_unavailable",
+      error: "ClawHub artifact download is not available yet.",
+    });
+    mocks.listOfficialExternalPluginCatalogEntries.mockReturnValue([
+      {
+        id: "tencent",
+        label: "Tencent Cloud",
+        name: "openclaw-tencent-provider",
+        kind: "provider",
+        install: {
+          clawhubSpec: "clawhub:openclaw-tencent-provider",
+          npmSpec: "openclaw-tencent-provider",
+          defaultChoice: "clawhub",
+        },
+        openclaw: {
+          plugin: { id: "tencent", label: "Tencent Cloud" },
+          providers: [{ id: "tencent-tokenhub", envVars: ["TOKENHUB_API_KEY"] }],
+          install: {
+            clawhubSpec: "clawhub:openclaw-tencent-provider",
+            npmSpec: "openclaw-tencent-provider",
+            defaultChoice: "clawhub",
+          },
+        },
+      },
+    ]);
+    mocks.resolveOfficialExternalProviderPluginIdsForEnv.mockReturnValue(["tencent"]);
+    mocks.installPluginFromNpmSpec.mockResolvedValueOnce({
+      ok: true,
+      pluginId: "tencent",
+      targetDir: "/tmp/openclaw-plugins/tencent",
+      version: "2026.6.10",
+      npmResolution: {
+        name: "openclaw-tencent-provider",
+        version: "2026.6.10",
+        resolvedSpec: "openclaw-tencent-provider@2026.6.10",
+      },
+    });
+
+    const { repairMissingConfiguredPluginInstalls } =
+      await import("./missing-configured-plugin-install.js");
+    const result = await repairMissingConfiguredPluginInstalls({
+      cfg: {},
+      env: { TOKENHUB_API_KEY: "tokenhub-key" },
+    });
+
+    expectRecordFields(mockCallArg(mocks.installPluginFromNpmSpec), {
+      spec: expectedNpmInstallSpec("openclaw-tencent-provider"),
+      expectedPluginId: "tencent",
+      trustedSourceLinkedOfficialInstall: true,
+    });
+    expect(result.changes).toEqual([
+      `ClawHub clawhub:openclaw-tencent-provider unavailable for "tencent"; falling back to npm ${expectedNpmInstallSpec("openclaw-tencent-provider")}.`,
+      `Installed missing configured plugin "tencent" from ${expectedNpmInstallSpec("openclaw-tencent-provider")}.`,
+    ]);
+    expect(result.warnings).toStrictEqual([]);
+  });
+
+  it("does not fall back from ClawHub to untrusted non-OpenClaw npm packages", async () => {
     mocks.installPluginFromClawHub.mockResolvedValueOnce({
       ok: false,
       code: "artifact_download_unavailable",

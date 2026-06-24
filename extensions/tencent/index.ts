@@ -20,7 +20,7 @@ function buildStaticCatalogEntries(providerId: string, catalog: typeof TOKENHUB_
 export default definePluginEntry({
   id: "tencent",
   name: "Tencent Cloud Provider",
-  description: "Bundled Tencent Cloud provider plugin (TokenHub)",
+  description: "Tencent Cloud provider plugin (TokenHub)",
   register(api) {
     api.registerProvider({
       id: TOKENHUB_PROVIDER_ID,
