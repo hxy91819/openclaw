@@ -394,7 +394,9 @@ function updateSessionStoreWriteCaches(params: {
     storePath: params.storePath,
     store: params.store,
     ctimeMs: fileStat?.ctimeMs,
+    ctimeNs: fileStat?.ctimeNs,
     mtimeMs: fileStat?.mtimeMs,
+    mtimeNs: fileStat?.mtimeNs,
     sizeBytes: fileStat?.sizeBytes,
     serialized: params.serialized,
     serializedPromptRefs: params.serializedPromptRefs,
@@ -415,7 +417,9 @@ function restoreUnchangedSessionStoreCache(
   const currentFileStat = getFileStatSnapshot(storePath) ?? null;
   if (
     loadedFileStat?.ctimeMs !== currentFileStat?.ctimeMs ||
+    loadedFileStat?.ctimeNs !== currentFileStat?.ctimeNs ||
     loadedFileStat?.mtimeMs !== currentFileStat?.mtimeMs ||
+    loadedFileStat?.mtimeNs !== currentFileStat?.mtimeNs ||
     loadedFileStat?.sizeBytes !== currentFileStat?.sizeBytes
   ) {
     invalidateSessionStoreCache(storePath);
@@ -428,7 +432,9 @@ function restoreUnchangedSessionStoreCache(
     storePath,
     store,
     ctimeMs: loadedFileStat?.ctimeMs,
+    ctimeNs: loadedFileStat?.ctimeNs,
     mtimeMs: loadedFileStat?.mtimeMs,
+    mtimeNs: loadedFileStat?.mtimeNs,
     sizeBytes: loadedFileStat?.sizeBytes,
     serialized,
     serializedPromptRefs,
@@ -629,7 +635,9 @@ function loadMutableSessionStoreForWriter(storePath: string): Record<string, Ses
     const cached = takeMutableSessionStoreCache({
       storePath,
       ctimeMs: currentFileStat?.ctimeMs,
+      ctimeNs: currentFileStat?.ctimeNs,
       mtimeMs: currentFileStat?.mtimeMs,
+      mtimeNs: currentFileStat?.mtimeNs,
       sizeBytes: currentFileStat?.sizeBytes,
     });
     if (cached) {
