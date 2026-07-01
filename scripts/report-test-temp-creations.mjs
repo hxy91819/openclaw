@@ -143,6 +143,33 @@ function readDiff(args, cwd = process.cwd()) {
   });
 }
 
+function readWorktreeSource(filePath, cwd) {
+  try {
+    return fs.readFileSync(path.join(cwd, filePath), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function readStagedSource(filePath, cwd) {
+  try {
+    return execFileSync("git", ["show", `:${filePath}`], {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    return "";
+  }
+}
+
+function readSourceForDiff(filePath, args, cwd) {
+  // Staged checks must parse the index blob. Reading the worktree mixes in
+  // unstaged edits and can warn on code that will not be committed.
+  return args.staged ? readStagedSource(filePath, cwd) : readWorktreeSource(filePath, cwd);
+}
+
 function stripKnownExtension(filePath) {
   return filePath.replace(/\.(?:c|m)?[jt]sx?$/u, "");
 }
@@ -419,13 +446,10 @@ export async function main(argv, io) {
     return 0;
   }
 
-  const findings = collectTempCreationFindingsFromDiff(readDiff(args), {
+  const cwd = process.cwd();
+  const findings = collectTempCreationFindingsFromDiff(readDiff(args, cwd), {
     readFile(filePath) {
-      try {
-        return fs.readFileSync(path.join(process.cwd(), filePath), "utf8");
-      } catch {
-        return "";
-      }
+      return readSourceForDiff(filePath, args, cwd);
     },
   });
   if (args.json) {

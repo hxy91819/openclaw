@@ -116,11 +116,11 @@ describe("report-test-temp-creations", () => {
 
   it("reports repository-observed mkdtemp call forms", () => {
     const sources = [
-      'const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "case-"));',
-      'const root = await fs.mkdtemp(path.join(os.tmpdir(), "case-"));',
-      'const root = await fsPromises.mkdtemp("/tmp/openclaw-case-");',
-      'const root = await mkdtemp(path.join(tmpdir(), "case-"));',
-      'const root = mkdtempSync(join(tmpdir(), "case-"));',
+      ["const root = await fs.promises.", "mkdtemp", '(path.join(os.tmpdir(), "case-"));'].join(""),
+      ["const root = await fs.", "mkdtemp", '(path.join(os.tmpdir(), "case-"));'].join(""),
+      ["const root = await fsPromises.", "mkdtemp", '("/tmp/openclaw-case-");'].join(""),
+      ["const root = await ", "mkdtemp", '(path.join(tmpdir(), "case-"));'].join(""),
+      ["const root = ", "mkdtemp", 'Sync(join(tmpdir(), "case-"));'].join(""),
     ];
     const diff = [
       "diff --git a/test/scripts/temp-patterns.test.ts b/test/scripts/temp-patterns.test.ts",
@@ -392,6 +392,72 @@ describe("report-test-temp-creations", () => {
     ).toBe(
       "::warning file=test/helpers/temp%2Cfixture.ts,line=12::new mkdtemp temp directory creation: prefer useAutoCleanupTempDirTracker() from test/helpers/temp-dir.ts for new test-owned temp directories.",
     );
+  });
+
+  it("reads staged source for manual helper scans", () => {
+    const root = tempDirs.make("openclaw-temp-report-staged-source-");
+    const env = createNestedGitEnv();
+    execFileSync("git", ["init", "-q", "--initial-branch=main"], { cwd: root, env });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=Test User",
+        "commit",
+        "--allow-empty",
+        "-q",
+        "-m",
+        "initial",
+      ],
+      { cwd: root, env },
+    );
+
+    fs.mkdirSync(path.join(root, "test", "scripts"), { recursive: true });
+    const stagedManualFile = path.join(root, "test", "scripts", "staged-manual.test.ts");
+    const stagedAutoFile = path.join(root, "test", "scripts", "staged-auto.test.ts");
+    const manualSource = [
+      'import { makeTempDir } from "../helpers/temp-dir.js";',
+      "const tempDirs = new Set<string>();",
+      'const workspace = makeTempDir(tempDirs, "case-");',
+    ].join("\n");
+    const autoSource = [
+      'import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";',
+      "const tempDirs = useAutoCleanupTempDirTracker();",
+      'const workspace = tempDirs.make("case-");',
+    ].join("\n");
+    fs.writeFileSync(stagedManualFile, `${manualSource}\n`, "utf8");
+    fs.writeFileSync(stagedAutoFile, `${autoSource}\n`, "utf8");
+    execFileSync("git", ["add", "test/scripts"], { cwd: root, env });
+    fs.writeFileSync(stagedManualFile, `${autoSource}\n`, "utf8");
+    fs.writeFileSync(stagedAutoFile, `${manualSource}\n`, "utf8");
+
+    const result = spawnSync(
+      process.execPath,
+      [path.join(repoRoot, "scripts", "report-test-temp-creations.mjs"), "--staged", "--json"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([
+      {
+        file: "test/scripts/staged-manual.test.ts",
+        line: 1,
+        reason: "new manual temp-dir helper import",
+        source: 'import { makeTempDir } from "../helpers/temp-dir.js";',
+      },
+      {
+        file: "test/scripts/staged-manual.test.ts",
+        line: 3,
+        reason: "new manual temp-dir helper usage",
+        source: 'const workspace = makeTempDir(tempDirs, "case-");',
+      },
+    ]);
   });
 
   it("exits non-zero for staged findings when requested", () => {
