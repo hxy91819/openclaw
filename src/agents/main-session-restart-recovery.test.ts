@@ -1612,6 +1612,37 @@ describe("main-session-restart-recovery", () => {
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(1);
+  });
+
+  it("quarantines the final unresumable transcript failure", async () => {
+    const sessionsDir = await makeSessionsDir();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        restartRecoveryAttempts: 2,
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "partial answer" },
+    ]);
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 0, failed: 1, skipped: 0 });
+    expect(callGateway).not.toHaveBeenCalled();
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.status).toBe("failed");
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
+    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
+    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
+      "exceeded_restart_retry_budget",
+    );
   });
 
   it.each([

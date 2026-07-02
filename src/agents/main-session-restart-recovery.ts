@@ -1301,6 +1301,7 @@ async function recoverStore(params: {
         sessionKey,
         reason: resumePolicy.blockReason,
       });
+      await quarantineIfBudgetExhausted();
       result.failed++;
       continue;
     }
