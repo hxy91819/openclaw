@@ -8,23 +8,21 @@ read_when:
 
 Install the official Tencent Cloud provider plugin to access Tencent Hy3 through two endpoints — TokenHub (`tencent-tokenhub`) and TokenPlan (`tencent-tokenplan`) — using an OpenAI-compatible API.
 
-| Property                   | Value                                                 |
-| -------------------------- | ----------------------------------------------------- |
-| Provider ids               | `tencent-tokenhub`, `tencent-tokenplan`               |
-| Package                    | `@openclaw/tencent-provider`                          |
-| TokenHub auth env var      | `TOKENHUB_API_KEY`                                    |
-| TokenHub auth env alias    | `TENCENT_TOKENHUB_API_KEY`                            |
-| TokenPlan auth env var     | `TENCENT_TOKENPLAN_API_KEY`                           |
-| TokenHub onboarding flag   | `--auth-choice tokenhub-api-key`                      |
-| TokenPlan onboarding flag  | `--auth-choice tencent-tokenplan-api-key`             |
-| TokenHub direct CLI flag   | `--tokenhub-api-key <key>`                            |
-| TokenHub direct flag alias | `--tencent-tokenhub-api-key <key>`                    |
-| TokenPlan direct CLI flag  | `--tencent-tokenplan-api-key <key>`                   |
-| API                        | OpenAI-compatible (`openai-completions`)              |
-| TokenHub base URL          | `https://tokenhub.tencentmaas.com/v1`                 |
-| TokenHub global base URL   | `https://tokenhub-intl.tencentmaas.com/v1` (override) |
-| TokenPlan base URL         | `https://api.lkeap.cloud.tencent.com/plan/v3`         |
-| Default model              | `tencent-tokenhub/hy3`                                |
+| Property                  | Value                                                 |
+| ------------------------- | ----------------------------------------------------- |
+| Provider ids              | `tencent-tokenhub`, `tencent-tokenplan`               |
+| Package                   | `@openclaw/tencent-provider`                          |
+| TokenHub auth env var     | `TOKENHUB_API_KEY`                                    |
+| TokenPlan auth env var    | `TOKENPLAN_API_KEY`                                   |
+| TokenHub onboarding flag  | `--auth-choice tokenhub-api-key`                      |
+| TokenPlan onboarding flag | `--auth-choice tokenplan-api-key`                     |
+| TokenHub direct CLI flag  | `--tokenhub-api-key <key>`                            |
+| TokenPlan direct CLI flag | `--tokenplan-api-key <key>`                           |
+| API                       | OpenAI-compatible (`openai-completions`)              |
+| TokenHub base URL         | `https://tokenhub.tencentmaas.com/v1`                 |
+| TokenHub global base URL  | `https://tokenhub-intl.tencentmaas.com/v1` (override) |
+| TokenPlan base URL        | `https://api.lkeap.cloud.tencent.com/plan/v3`         |
+| Default model             | `tencent-tokenhub/hy3`                                |
 
 ## Quick start
 
@@ -46,18 +44,18 @@ openclaw onboard --non-interactive \
 ```
 
 ```bash TokenPlan onboarding
-openclaw onboard --auth-choice tencent-tokenplan-api-key
+openclaw onboard --auth-choice tokenplan-api-key
 ```
 
 ```bash TokenPlan direct flag
 openclaw onboard --non-interactive \
-  --auth-choice tencent-tokenplan-api-key \
-  --tencent-tokenplan-api-key "$TENCENT_TOKENPLAN_API_KEY"
+  --auth-choice tokenplan-api-key \
+  --tokenplan-api-key "$TOKENPLAN_API_KEY"
 ```
 
 ```bash Env only
 export TOKENHUB_API_KEY=...
-export TENCENT_TOKENPLAN_API_KEY=...
+export TOKENPLAN_API_KEY=...
 ```
 
     </CodeGroup>
@@ -85,8 +83,8 @@ openclaw onboard --non-interactive \
 # TokenPlan
 openclaw onboard --non-interactive \
   --mode local \
-  --auth-choice tencent-tokenplan-api-key \
-  --tencent-tokenplan-api-key "$TENCENT_TOKENPLAN_API_KEY" \
+  --auth-choice tokenplan-api-key \
+  --tokenplan-api-key "$TOKENPLAN_API_KEY" \
   --skip-health \
   --accept-risk
 ```
@@ -105,18 +103,6 @@ hy3 is Tencent Hunyuan's large MoE language model for reasoning, long-context in
   The model id is `hy3`. Do not confuse it with Tencent's `HY-3D-*` models, which are 3D generation APIs and are not the OpenClaw chat model configured by this provider.
 </Tip>
 
-## Tiered pricing
-
-The provider catalog ships tiered cost metadata that scales with input window length, so cost estimates are populated without manual overrides.
-
-| Input tokens range | Input rate | Output rate | Cache read |
-| ------------------ | ---------- | ----------- | ---------- |
-| 0 - 16,000         | 0.176      | 0.587       | 0.059      |
-| 16,000 - 32,000    | 0.235      | 0.939       | 0.088      |
-| 32,000+            | 0.293      | 1.173       | 0.117      |
-
-Rates are per million tokens in USD as advertised by Tencent. Override pricing under `models.providers.tencent-tokenhub` only when you need a different surface.
-
 ## Advanced configuration
 
 <AccordionGroup>
@@ -132,7 +118,7 @@ Rates are per million tokens in USD as advertised by Tencent. Override pricing u
   </Accordion>
 
   <Accordion title="Environment availability for the daemon">
-    If the Gateway runs as a managed service (launchd, systemd, Docker), `TOKENHUB_API_KEY` (or the `TENCENT_TOKENHUB_API_KEY` alias) and `TENCENT_TOKENPLAN_API_KEY` must be visible to that process. Set them in `~/.openclaw/.env` or via `env.shellEnv` so launchd, systemd, or Docker exec environments can read them.
+    If the Gateway runs as a managed service (launchd, systemd, Docker), `TOKENHUB_API_KEY` and `TOKENPLAN_API_KEY` must be visible to that process. Set them in `~/.openclaw/.env` or via `env.shellEnv` so launchd, systemd, or Docker exec environments can read them.
 
     <Warning>
       Keys exported only in an interactive shell are not visible to managed gateway processes. Use the env file or config seam for persistent availability.
