@@ -3,6 +3,8 @@ package ai.openclaw.app.ui
 import ai.openclaw.app.BuildConfig
 import ai.openclaw.app.GatewayAgentSummary
 import ai.openclaw.app.GatewayChannelsSummary
+import ai.openclaw.app.GatewayConnectionDisplay
+import ai.openclaw.app.GatewayConnectionProblem
 import ai.openclaw.app.GatewayDreamingSummary
 import ai.openclaw.app.GatewayNodeApprovalState
 import ai.openclaw.app.GatewayNodesDevicesSummary
@@ -333,10 +335,10 @@ private fun OverviewScreen(
   onOpenSettingsRoute: (SettingsRoute) -> Unit,
   onOpenCommand: () -> Unit,
 ) {
-  val isConnected by viewModel.isConnected.collectAsState()
   val sessions by viewModel.chatSessions.collectAsState()
   val pendingRunCount by viewModel.pendingRunCount.collectAsState()
-  val statusText by viewModel.statusText.collectAsState()
+  val gatewayConnectionDisplay by viewModel.gatewayConnectionDisplay.collectAsState()
+  val isConnected = gatewayConnectionDisplay.isConnected
   val models by viewModel.modelCatalog.collectAsState()
   val providers by viewModel.modelAuthProviders.collectAsState()
   val execApprovals by viewModel.execApprovals.collectAsState()
@@ -409,8 +411,8 @@ private fun OverviewScreen(
           OverviewPrimaryPanel(
             agentName = activeAgentName,
             agentBadge = activeAgentBadge,
-            statusText = gatewaySummary(statusText, isConnected),
-            isConnected = isConnected,
+            statusText = gatewaySummary(gatewayConnectionDisplay),
+            isConnected = gatewayConnectionDisplay.isConnected,
             pendingRunCount = pendingRunCount,
             sessionCount = sessions.size,
             cronJobCount = cronStatus.jobs,
@@ -1339,8 +1341,8 @@ private fun SettingsShellScreen(
   onOpenCommand: () -> Unit,
 ) {
   val displayName by viewModel.displayName.collectAsState()
-  val isConnected by viewModel.isConnected.collectAsState()
-  val statusText by viewModel.statusText.collectAsState()
+  val gatewayConnectionDisplay by viewModel.gatewayConnectionDisplay.collectAsState()
+  val isConnected = gatewayConnectionDisplay.isConnected
   val models by viewModel.modelCatalog.collectAsState()
   val providers by viewModel.modelAuthProviders.collectAsState()
   val cameraEnabled by viewModel.cameraEnabled.collectAsState()
@@ -1412,7 +1414,13 @@ private fun SettingsShellScreen(
 
       val settingsRows =
         listOf(
-          SettingsRow("Gateway", gatewaySummary(statusText, isConnected), Icons.Default.Cloud, status = isConnected, route = SettingsRoute.Gateway),
+          SettingsRow(
+            "Gateway",
+            gatewaySummary(gatewayConnectionDisplay),
+            Icons.Default.Cloud,
+            status = gatewayConnectionDisplay.isConnected,
+            route = SettingsRoute.Gateway,
+          ),
           SettingsRow("Nodes & Devices", nodesDevicesSummaryText(nodesDevicesSummary), Icons.Default.Cloud, status = nodesDevicesStatus(nodesDevicesSummary), route = SettingsRoute.NodesDevices),
           SettingsRow("Channels", channelsSummaryText(channelsSummary), Icons.Default.Notifications, status = channelsStatus(channelsSummary), route = SettingsRoute.Channels),
           SettingsRow("Agents", if (agents.isEmpty()) "Load from gateway" else "${agents.size} available", Icons.Default.Person, status = agents.isNotEmpty(), route = SettingsRoute.Agents),
@@ -1451,9 +1459,19 @@ private fun SettingsShellScreen(
       }
       item {
         SettingsGroup(
-          rows = listOf(SettingsRow("Sign Out", "Disconnect", Icons.AutoMirrored.Filled.ExitToApp)),
+          rows = listOf(SettingsRow("Sign Out", "Return to setup", Icons.AutoMirrored.Filled.ExitToApp)),
           onOpen = { },
-          onAction = { viewModel.disconnect() },
+          onAction = { viewModel.pairNewGateway() },
+        )
+      }
+
+      item {
+        SettingsSectionTitle("Licenses")
+      }
+      item {
+        SettingsGroup(
+          rows = listOf(SettingsRow("Licenses", "", Icons.Default.Storage, route = SettingsRoute.Licenses)),
+          onOpen = onRouteChange,
         )
       }
 
@@ -1635,6 +1653,7 @@ internal fun settingsSectionTitleForRoute(route: SettingsRoute): String =
     SettingsRoute.Profile,
     SettingsRoute.Appearance,
     SettingsRoute.About,
+    SettingsRoute.Licenses,
     -> "Profile & device"
 
     SettingsRoute.Health -> "Diagnostics"
@@ -1705,6 +1724,7 @@ private fun SettingsGroup(
       rows.forEachIndexed { index, row ->
         SettingsListRow(
           row = row,
+          showDisclosure = row.route != null || onAction != null,
           onClick = {
             val rowRoute = row.route
             if (rowRoute == null) {
@@ -1725,6 +1745,7 @@ private fun SettingsGroup(
 @Composable
 private fun SettingsListRow(
   row: SettingsRow,
+  showDisclosure: Boolean,
   onClick: () -> Unit,
 ) {
   Row(
@@ -1741,14 +1762,16 @@ private fun SettingsListRow(
     Icon(imageVector = row.icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = ClawTheme.colors.text)
     Text(text = row.title, style = ClawTheme.type.body, color = ClawTheme.colors.text, modifier = Modifier.weight(1f), maxLines = 1)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-      Text(text = row.value, style = ClawTheme.type.caption.copy(fontSize = 13.sp, lineHeight = 17.sp), color = ClawTheme.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      if (row.value.isNotBlank()) {
+        Text(text = row.value, style = ClawTheme.type.caption.copy(fontSize = 13.sp, lineHeight = 17.sp), color = ClawTheme.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      }
       row.status?.let { active ->
         Box(modifier = Modifier.size(4.5.dp).clip(CircleShape).background(if (active) ClawTheme.colors.success else ClawTheme.colors.textSubtle))
       }
-      if (row.route != null) {
+      if (showDisclosure) {
         Icon(
           imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-          contentDescription = "Open ${row.title}",
+          contentDescription = if (row.route != null) "Open ${row.title}" else row.title,
           modifier = Modifier.size(17.dp),
           tint = ClawTheme.colors.text,
         )
@@ -1769,19 +1792,22 @@ private fun relativeSessionTime(updatedAtMs: Long): String {
 
 private fun displaySessionTitle(displayName: String?): String = displayName?.takeIf { it.isNotBlank() } ?: "Main session"
 
-private fun gatewaySummary(
+internal fun gatewaySummary(
   statusText: String,
   isConnected: Boolean,
+  gatewayConnectionProblem: GatewayConnectionProblem? = null,
 ): String {
   if (isConnected) return "Online and ready"
   val status = statusText.trim().lowercase()
   return when {
     status.contains("connecting") || status.contains("reconnecting") -> "Connecting..."
     status.contains("pairing") -> "Waiting for pairing"
-    status.contains("auth") -> "Authentication needed"
+    status.contains("auth") || status.contains("device identity") -> gatewayAuthRecoveryLabel(gatewayConnectionProblem) ?: "Authentication needed"
     status.contains("fingerprint verification timed out") -> "TLS timed out"
     status.contains("no tls endpoint") -> "No TLS endpoint"
     status.contains("certificate") || status.contains("tls") -> "Certificate review needed"
     else -> "Not connected"
   }
 }
+
+internal fun gatewaySummary(display: GatewayConnectionDisplay): String = gatewaySummary(display.statusText, display.isConnected, display.problem)
