@@ -895,6 +895,66 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(1);
   });
 
+  it("charges the retry budget when the transcript path cannot be read", async () => {
+    const sessionsDir = await makeSessionsDir();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        restartRecoveryAttempts: 2,
+      },
+    });
+    await fs.mkdir(path.join(sessionsDir, "main-session.jsonl"));
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 0, failed: 1, skipped: 0 });
+    expect(callGateway).not.toHaveBeenCalled();
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
+    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
+    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
+      "exceeded_restart_retry_budget",
+    );
+  });
+
+  it("quarantines old released rows whose restart recovery run markers are already exhausted", async () => {
+    const sessionsDir = await makeSessionsDir();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        restartRecoveryRuns: [
+          { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+          { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+          { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
+          { runId: "recovery-run-3", lifecycleGeneration: "gen-4" },
+        ],
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 0, failed: 0, skipped: 1 });
+    expect(callGateway).not.toHaveBeenCalled();
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
+    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
+    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
+      "exceeded_restart_retry_budget",
+    );
+  });
+
   it("quarantines after the final scheduled recovery failure", async () => {
     vi.mocked(callGateway)
       .mockRejectedValueOnce(new Error("gateway unavailable"))
@@ -1107,6 +1167,9 @@ describe("main-session-restart-recovery", () => {
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBeUndefined();
+    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toBeUndefined();
+    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBeUndefined();
   });
 
   it("resumes marked sessions with a durable pending final delivery payload (Phase 2)", async () => {
@@ -1612,10 +1675,12 @@ describe("main-session-restart-recovery", () => {
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(1);
+    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBeUndefined();
+    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toBeUndefined();
+    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBeUndefined();
   });
 
-  it("quarantines the final unresumable transcript failure", async () => {
+  it("does not charge the retry budget for an unresumable transcript tail", async () => {
     const sessionsDir = await makeSessionsDir();
     await writeStore(sessionsDir, {
       "agent:main:main": {
@@ -1637,12 +1702,10 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("failed");
-    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
-      "exceeded_restart_retry_budget",
-    );
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(2);
+    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toBeUndefined();
+    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBeUndefined();
   });
 
   it.each([
