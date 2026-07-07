@@ -1654,6 +1654,41 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(state.updateSessionStoreAfterAgentRunMock).toHaveBeenCalledTimes(1);
   });
 
+  it("clears stale automatic recovery state when a local user run is admitted", async () => {
+    setupSingleAttemptFallback();
+    state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("openai", "gpt-5.4"));
+    setupSessionTouchStore();
+    const entry = (state.sessionStoreMock as Record<string, SessionEntry>)["agent:main:main"];
+    entry.abortedLastRun = true;
+    entry.restartRecoveryRuns = [
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+      { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
+    ];
+    entry.restartRecoveryAttempts = 3;
+    entry.restartRecoveryQuarantinedAt = 2;
+    entry.restartRecoveryQuarantineReason = "exceeded_restart_retry_budget";
+    entry.subagentRecovery = {
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    };
+
+    await runBasicAgentCommand();
+
+    const firstPersistedEntry = (
+      state.persistSessionEntryMock.mock.calls[0]?.[0] as { entry?: SessionEntry } | undefined
+    )?.entry;
+    expect(firstPersistedEntry?.abortedLastRun).toBe(false);
+    expect(firstPersistedEntry?.restartRecoveryRuns).toBeUndefined();
+    expect(firstPersistedEntry?.restartRecoveryAttempts).toBeUndefined();
+    expect(firstPersistedEntry?.restartRecoveryQuarantinedAt).toBeUndefined();
+    expect(firstPersistedEntry?.restartRecoveryQuarantineReason).toBeUndefined();
+    expect(firstPersistedEntry?.subagentRecovery).toBeUndefined();
+    expect(state.updateSessionStoreAfterAgentRunMock).toHaveBeenCalledTimes(1);
+  });
+
   it("threads lifecycle ownership into normal delivery", async () => {
     setupSingleAttemptFallback();
     state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("openai", "gpt-5.4"));
@@ -1795,6 +1830,12 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     setupSingleAttemptFallback();
     state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("openai", "gpt-5.4"));
     setupSessionTouchStore();
+    const entry = (state.sessionStoreMock as Record<string, SessionEntry>)["agent:main:main"];
+    entry.abortedLastRun = true;
+    entry.restartRecoveryRuns = [{ runId: "initial-wedged-run", lifecycleGeneration: "gen-1" }];
+    entry.restartRecoveryAttempts = 1;
+    entry.restartRecoveryQuarantinedAt = 2;
+    entry.restartRecoveryQuarantineReason = "exceeded_restart_retry_budget";
 
     await agentCommand({
       message: "hello",
@@ -1806,10 +1847,23 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     });
 
     const touchWrites = state.persistSessionEntryMock.mock.calls.filter((call) => {
-      const entry = (call[0] as { entry?: Record<string, unknown> } | undefined)?.entry;
-      return entry?.lastInteractionAt !== undefined;
+      const touchEntry = (call[0] as { entry?: Record<string, unknown> } | undefined)?.entry;
+      return touchEntry?.lastInteractionAt !== undefined;
     });
     expect(touchWrites).toHaveLength(0);
+    const persistedEntries = state.persistSessionEntryMock.mock.calls
+      .map((call) => (call[0] as { entry?: SessionEntry } | undefined)?.entry)
+      .filter((value): value is SessionEntry => Boolean(value));
+    expect(persistedEntries.length).toBeGreaterThan(0);
+    for (const persistedEntry of persistedEntries) {
+      expect(persistedEntry.abortedLastRun).toBe(true);
+      expect(persistedEntry.restartRecoveryRuns).toEqual([
+        { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      ]);
+      expect(persistedEntry.restartRecoveryAttempts).toBe(1);
+      expect(persistedEntry.restartRecoveryQuarantinedAt).toBe(2);
+      expect(persistedEntry.restartRecoveryQuarantineReason).toBe("exceeded_restart_retry_budget");
+    }
     expectRecordFields(mockCallArg(state.updateSessionStoreAfterAgentRunMock), {
       touchInteraction: false,
     });

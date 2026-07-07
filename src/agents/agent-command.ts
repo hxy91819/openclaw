@@ -14,7 +14,10 @@ import { formatCliCommand } from "../cli/command-format.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import { getRuntimeConfig } from "../config/io.js";
 import { resolveSessionWorkStartError } from "../config/sessions/lifecycle.js";
-import type { SessionEntry } from "../config/sessions/types.js";
+import {
+  buildAutomaticRestartRecoveryClearPatch,
+  type SessionEntry,
+} from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withLocalGatewayRequestScope } from "../gateway/local-request-context.js";
 import {
@@ -1154,8 +1157,12 @@ async function agentCommandInternal(
           sessionEntry: entry,
         });
         assertAgentRunLifecycleGenerationCurrent(lifecycleGeneration);
+        const automaticRecoveryClearPatch = isRestartRecoveryResumeRun
+          ? {}
+          : buildAutomaticRestartRecoveryClearPatch(entry);
         const next: SessionEntry = {
           ...entry,
+          ...automaticRecoveryClearPatch,
           sessionId,
           updatedAt: now,
           sessionStartedAt: isSessionRollover ? now : entry.sessionStartedAt,
@@ -1474,8 +1481,12 @@ async function agentCommandInternal(
           updatedAt: now,
           sessionStartedAt: now,
         };
+        const automaticRecoveryClearPatch = isRestartRecoveryResumeRun
+          ? {}
+          : buildAutomaticRestartRecoveryClearPatch(current);
         const next: SessionEntry = {
           ...current,
+          ...automaticRecoveryClearPatch,
           sessionId,
           updatedAt: now,
           sessionStartedAt: current.sessionStartedAt ?? now,
@@ -1508,8 +1519,12 @@ async function agentCommandInternal(
         const now = Date.now();
         const entry = sessionStore[sessionKey] ??
           sessionEntry ?? { sessionId, updatedAt: now, sessionStartedAt: now };
+        const automaticRecoveryClearPatch = isRestartRecoveryResumeRun
+          ? {}
+          : buildAutomaticRestartRecoveryClearPatch(entry);
         const next: SessionEntry = {
           ...entry,
+          ...automaticRecoveryClearPatch,
           sessionId,
           updatedAt: now,
           sessionStartedAt: entry.sessionStartedAt ?? now,
