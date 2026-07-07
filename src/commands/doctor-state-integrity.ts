@@ -31,6 +31,7 @@ import {
   resolveSessionTranscriptsDirForAgent,
   resolveStorePath,
 } from "../config/sessions/paths.js";
+import { patchSessionEntry } from "../config/sessions/session-accessor.js";
 import { loadSessionStore } from "../config/sessions/store-load.js";
 import { updateSessionStore } from "../config/sessions/store.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -1333,15 +1334,22 @@ export async function noteStateIntegrity(
       if (repairWedged) {
         let repaired = 0;
         const repairedAt = Date.now();
-        await updateSessionStore(absoluteStorePath, (currentStore) => {
-          for (const [key] of wedgedMainSessions) {
-            const current = currentStore[key];
-            if (current && clearWedgedMainRestartRecoveryAbort(current, repairedAt)) {
-              repaired += 1;
-              currentStore[key] = current;
+        for (const [key] of wedgedMainSessions) {
+          let repairedCurrent = false;
+          await patchSessionEntry({ storePath: absoluteStorePath, sessionKey: key }, (entry) => {
+            if (!clearWedgedMainRestartRecoveryAbort(entry, repairedAt)) {
+              return null;
             }
+            repairedCurrent = true;
+            return {
+              abortedLastRun: entry.abortedLastRun,
+              updatedAt: entry.updatedAt,
+            };
+          });
+          if (repairedCurrent) {
+            repaired += 1;
           }
-        });
+        }
         if (repaired > 0) {
           changes.push(
             `- Cleared aborted restart-recovery flags for ${countLabel(
