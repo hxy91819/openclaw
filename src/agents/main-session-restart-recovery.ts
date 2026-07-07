@@ -148,6 +148,9 @@ function prepareMainRestartRecovery(entry: SessionEntry): void {
 
 function quarantineMainRestartRecoveryBudgetExceeded(entry: SessionEntry, now: number): void {
   entry.abortedLastRun = false;
+  entry.status = "failed";
+  entry.endedAt = now;
+  entry.runtimeMs = Math.max(0, now - (entry.startedAt ?? now));
   entry.restartRecoveryQuarantinedAt = now;
   entry.restartRecoveryQuarantineReason = RESTART_RECOVERY_BUDGET_QUARANTINE_REASON;
   entry.updatedAt = now;
