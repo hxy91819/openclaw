@@ -806,6 +806,9 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.status).toBe("failed");
+    expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
+    expect(store["agent:main:main"]?.runtimeMs).toBe(0);
     expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
     expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
@@ -848,6 +851,9 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
     const store = loadSessionStore(storePath, { skipCache: true });
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.status).toBe("failed");
+    expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
+    expect(store["agent:main:main"]?.runtimeMs).toBe(0);
     expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
     expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
@@ -898,6 +904,9 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.status).toBe("failed");
+    expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
+    expect(store["agent:main:main"]?.runtimeMs).toBe(0);
     expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
     expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
@@ -932,6 +941,9 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.status).toBe("failed");
+    expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
+    expect(store["agent:main:main"]?.runtimeMs).toBe(0);
     expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
     expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
@@ -978,6 +990,9 @@ describe("main-session-restart-recovery", () => {
 
     expect(callGateway).toHaveBeenCalledTimes(3);
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.status).toBe("failed");
+    expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
+    expect(store["agent:main:main"]?.runtimeMs).toBe(0);
     expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
     expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
