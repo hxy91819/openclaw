@@ -1810,6 +1810,12 @@ describe("updateSessionStoreAfterAgentRun", () => {
           sessionId,
           updatedAt: 1,
           abortedLastRun: true,
+          restartRecoveryRuns: [
+            { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+            { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+            { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
+            { runId: "recovery-run-3", lifecycleGeneration: "gen-4" },
+          ],
           restartRecoveryAttempts: 4,
           restartRecoveryQuarantinedAt: 2,
           restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
@@ -1845,12 +1851,14 @@ describe("updateSessionStoreAfterAgentRun", () => {
       });
 
       expect(sessionStore[sessionKey]?.abortedLastRun).toBe(false);
+      expect(sessionStore[sessionKey]?.restartRecoveryRuns).toBeUndefined();
       expect(sessionStore[sessionKey]?.restartRecoveryAttempts).toBeUndefined();
       expect(sessionStore[sessionKey]?.restartRecoveryQuarantinedAt).toBeUndefined();
       expect(sessionStore[sessionKey]?.restartRecoveryQuarantineReason).toBeUndefined();
       expect(sessionStore[sessionKey]?.subagentRecovery).toBeUndefined();
       const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
       expect(persisted?.abortedLastRun).toBe(false);
+      expect(persisted?.restartRecoveryRuns).toBeUndefined();
       expect(persisted?.restartRecoveryAttempts).toBeUndefined();
       expect(persisted?.restartRecoveryQuarantinedAt).toBeUndefined();
       expect(persisted?.restartRecoveryQuarantineReason).toBeUndefined();

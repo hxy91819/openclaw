@@ -514,6 +514,7 @@ export type SessionEntry = {
 type AutomaticRestartRecoveryStateFields = Pick<
   SessionEntry,
   | "abortedLastRun"
+  | "restartRecoveryRuns"
   | "restartRecoveryAttempts"
   | "restartRecoveryQuarantinedAt"
   | "restartRecoveryQuarantineReason"
@@ -525,6 +526,7 @@ export function buildAutomaticRestartRecoveryClearPatch(
 ): Partial<SessionEntry> {
   if (
     entry?.abortedLastRun !== true &&
+    entry?.restartRecoveryRuns === undefined &&
     entry?.restartRecoveryAttempts === undefined &&
     entry?.restartRecoveryQuarantinedAt === undefined &&
     entry?.restartRecoveryQuarantineReason === undefined &&
@@ -534,6 +536,7 @@ export function buildAutomaticRestartRecoveryClearPatch(
   }
   return {
     abortedLastRun: false,
+    restartRecoveryRuns: undefined,
     restartRecoveryAttempts: undefined,
     restartRecoveryQuarantinedAt: undefined,
     restartRecoveryQuarantineReason: undefined,

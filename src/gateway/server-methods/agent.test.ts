@@ -2076,6 +2076,10 @@ describe("gateway agent handler", () => {
       sessionStartedAt: 0,
       lastInteractionAt: 0,
       abortedLastRun: true,
+      restartRecoveryRuns: [
+        { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+        { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+      ],
       restartRecoveryAttempts: 3,
       restartRecoveryQuarantinedAt: 1,
       restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
@@ -2092,6 +2096,7 @@ describe("gateway agent handler", () => {
 
     expect(capturedEntry.sessionId).not.toBe("quarantined-session-id");
     expect(capturedEntry.abortedLastRun).toBeUndefined();
+    expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
     expect(capturedEntry.restartRecoveryAttempts).toBeUndefined();
     expect(capturedEntry.restartRecoveryQuarantinedAt).toBeUndefined();
     expect(capturedEntry.restartRecoveryQuarantineReason).toBeUndefined();
