@@ -217,6 +217,10 @@ describe("session store key normalization", () => {
             sessionId: "recovered-session",
             updatedAt: 1,
             abortedLastRun: true,
+            restartRecoveryRuns: [
+              { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+              { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+            ],
             restartRecoveryAttempts: 4,
             restartRecoveryQuarantinedAt: 2,
             restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
@@ -243,6 +247,7 @@ describe("session store key normalization", () => {
 
     const store = loadSessionStore(storePath, { skipCache: true });
     expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(false);
+    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toBeUndefined();
     expect(store[CANONICAL_KEY]?.restartRecoveryAttempts).toBeUndefined();
     expect(store[CANONICAL_KEY]?.restartRecoveryQuarantinedAt).toBeUndefined();
     expect(store[CANONICAL_KEY]?.restartRecoveryQuarantineReason).toBeUndefined();
@@ -259,6 +264,10 @@ describe("session store key normalization", () => {
             sessionId: "outbound-session",
             updatedAt: 1,
             abortedLastRun: true,
+            restartRecoveryRuns: [
+              { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+              { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+            ],
             restartRecoveryAttempts: 2,
             restartRecoveryQuarantinedAt: 3,
             restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
@@ -280,6 +289,10 @@ describe("session store key normalization", () => {
 
     const store = loadSessionStore(storePath, { skipCache: true });
     expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(true);
+    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toEqual([
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+    ]);
     expect(store[CANONICAL_KEY]?.restartRecoveryAttempts).toBe(2);
     expect(store[CANONICAL_KEY]?.restartRecoveryQuarantinedAt).toBe(3);
     expect(store[CANONICAL_KEY]?.restartRecoveryQuarantineReason).toBe(
@@ -297,6 +310,10 @@ describe("session store key normalization", () => {
             sessionId: "route-session",
             updatedAt: 1,
             abortedLastRun: true,
+            restartRecoveryRuns: [
+              { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+              { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+            ],
             restartRecoveryAttempts: 4,
             restartRecoveryQuarantinedAt: 2,
             restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
@@ -324,6 +341,7 @@ describe("session store key normalization", () => {
 
     const store = loadSessionStore(storePath, { skipCache: true });
     expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(false);
+    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toBeUndefined();
     expect(store[CANONICAL_KEY]?.restartRecoveryAttempts).toBeUndefined();
     expect(store[CANONICAL_KEY]?.restartRecoveryQuarantinedAt).toBeUndefined();
     expect(store[CANONICAL_KEY]?.restartRecoveryQuarantineReason).toBeUndefined();

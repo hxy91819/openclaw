@@ -1588,6 +1588,10 @@ describe("gateway agent handler", () => {
   it("clears automatic recovery state for a user-driven agent turn", async () => {
     mockMainSessionEntry({
       abortedLastRun: true,
+      restartRecoveryRuns: [
+        { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+        { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+      ],
       restartRecoveryAttempts: 4,
       restartRecoveryQuarantinedAt: 2,
       restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
@@ -1602,6 +1606,7 @@ describe("gateway agent handler", () => {
     const capturedEntry = await runMainAgentAndCaptureEntry("test-idem-clear-automatic-recovery");
 
     expect(capturedEntry.abortedLastRun).toBe(false);
+    expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
     expect(capturedEntry.restartRecoveryAttempts).toBeUndefined();
     expect(capturedEntry.restartRecoveryQuarantinedAt).toBeUndefined();
     expect(capturedEntry.restartRecoveryQuarantineReason).toBeUndefined();
@@ -1611,6 +1616,7 @@ describe("gateway agent handler", () => {
   it("preserves automatic recovery state for restart-recovery resume turns", async () => {
     mockMainSessionEntry({
       abortedLastRun: true,
+      restartRecoveryRuns: [{ runId: "initial-wedged-run", lifecycleGeneration: "gen-1" }],
       restartRecoveryAttempts: 2,
       lastInteractionAt: 1,
     });
@@ -1647,6 +1653,9 @@ describe("gateway agent handler", () => {
     const entry = requireValue(capturedEntry, "updated session entry missing");
     const call = await waitForAgentCommandCall();
     expect(entry.abortedLastRun).toBe(true);
+    expect(entry.restartRecoveryRuns).toEqual([
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+    ]);
     expect(entry.restartRecoveryAttempts).toBe(2);
     expect(entry.lastInteractionAt).toBe(1);
     expect(call.skipInitialSessionTouch).toBe(true);
@@ -1701,6 +1710,10 @@ describe("gateway agent handler", () => {
       sessionStartedAt: 0,
       lastInteractionAt: 0,
       abortedLastRun: true,
+      restartRecoveryRuns: [
+        { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+        { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+      ],
       restartRecoveryAttempts: 3,
       restartRecoveryQuarantinedAt: 1,
       restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
@@ -1717,6 +1730,7 @@ describe("gateway agent handler", () => {
 
     expect(capturedEntry.sessionId).not.toBe("quarantined-session-id");
     expect(capturedEntry.abortedLastRun).toBeUndefined();
+    expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
     expect(capturedEntry.restartRecoveryAttempts).toBeUndefined();
     expect(capturedEntry.restartRecoveryQuarantinedAt).toBeUndefined();
     expect(capturedEntry.restartRecoveryQuarantineReason).toBeUndefined();
