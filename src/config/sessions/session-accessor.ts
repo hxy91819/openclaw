@@ -1516,6 +1516,8 @@ export async function updateSessionEntry(
 }
 
 export type RecordInboundSessionMetaParams = {
+  /** Set false to keep automatic recovery markers on outbound metadata refreshes. */
+  clearAutomaticRecoveryState?: boolean;
   /** Set false to only patch existing entries; missing sessions stay absent. */
   createIfMissing?: boolean;
   /** Inbound message context whose stable metadata is derived and persisted. */
