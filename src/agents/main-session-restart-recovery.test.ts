@@ -191,7 +191,7 @@ describe("main-session-restart-recovery", () => {
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(result).toEqual({ marked: 1, skipped: 1 });
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBeUndefined();
+    expect(store["agent:main:main"]?.mainRestartRecovery).toBeUndefined();
     expect(store["agent:main:completed"]?.abortedLastRun).toBeUndefined();
     expect(store["agent:main:subagent:child"]?.abortedLastRun).toBeUndefined();
     expect(store["cron:nightly"]?.abortedLastRun).toBeUndefined();
@@ -487,7 +487,11 @@ describe("main-session-restart-recovery", () => {
         updatedAt: Date.now() - 10_000,
         status: "running",
         abortedLastRun: true,
-        restartRecoveryAttempts: 2,
+        mainRestartRecovery: {
+          automaticAttempts: 2,
+          lastAttemptAt: 1_700,
+          lastRunId: "previous-recovery-run",
+        },
       },
     });
 
@@ -508,7 +512,11 @@ describe("main-session-restart-recovery", () => {
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(result).toEqual({ marked: 1, skipped: 0 });
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(2);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 1_700,
+      lastRunId: "previous-recovery-run",
+    });
   });
 
   it("preserves current-generation markers across repeated restart marking", async () => {
@@ -682,7 +690,7 @@ describe("main-session-restart-recovery", () => {
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(result).toEqual({ marked: 1, skipped: 1 });
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBeUndefined();
+    expect(store["agent:main:main"]?.mainRestartRecovery).toBeUndefined();
     expect(store["agent:main:subagent:child"]?.abortedLastRun).toBeUndefined();
     expect(store["agent:main:other"]?.abortedLastRun).toBeUndefined();
   });
@@ -804,15 +812,20 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
   });
 
-  it("quarantines over-budget restart-aborted sessions before resume", async () => {
+  it("tombstones exhausted restart-aborted sessions before resume", async () => {
     const sessionsDir = await makeSessionsDir();
+    const lastAttemptAt = Date.now() - 1_000;
     await writeStore(sessionsDir, {
       "agent:main:main": {
         sessionId: "main-session",
         updatedAt: Date.now() - 10_000,
         status: "running",
         abortedLastRun: true,
-        restartRecoveryAttempts: 3,
+        mainRestartRecovery: {
+          automaticAttempts: 2,
+          lastAttemptAt,
+          lastRunId: "recovery-run-2",
+        },
       },
     });
 
@@ -825,14 +838,54 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.runtimeMs).toBe(0);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
-      "exceeded_restart_retry_budget",
-    );
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      lastAttemptAt,
+      lastRunId: "recovery-run-2",
+      wedgedAt: expect.any(Number),
+      wedgedReason: expect.stringContaining("blocked after 2 rapid accepted resume attempts"),
+    });
   });
 
-  it("quarantines when reservation observes an exhausted retry budget", async () => {
+  it("resets the rapid-attempt window before accepting another recovery", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const lastAttemptAt = Date.now() - 3 * 60_000;
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          automaticAttempts: 2,
+          lastAttemptAt,
+          lastRunId: "old-recovery-run",
+        },
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    expect(callGateway).toHaveBeenCalledOnce();
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
+      lastAttemptAt: expect.any(Number),
+      lastRunId: "run-resumed",
+    });
+    expect(store["agent:main:main"]?.mainRestartRecovery?.wedgedAt).toBeUndefined();
+  });
+
+  it("tombstones after two accepted automatic recoveries within two minutes", async () => {
+    vi.mocked(callGateway)
+      .mockResolvedValueOnce({ runId: "recovery-run-1" })
+      .mockResolvedValueOnce({ runId: "recovery-run-2" });
     const sessionsDir = await makeSessionsDir();
     const storePath = path.join(sessionsDir, "sessions.json");
     await writeStore(sessionsDir, {
@@ -841,43 +894,67 @@ describe("main-session-restart-recovery", () => {
         updatedAt: Date.now() - 10_000,
         status: "running",
         abortedLastRun: true,
-        restartRecoveryAttempts: 2,
       },
     });
-    loadSessionStore(storePath);
-    const cachedFileStat = await fs.stat(storePath);
-    await writeStore(sessionsDir, {
-      "agent:main:main": {
-        sessionId: "main-session",
-        updatedAt: Date.now() - 10_000,
-        status: "running",
-        abortedLastRun: true,
-        restartRecoveryAttempts: 3,
-      },
-    });
-    await fs.utimes(storePath, cachedFileStat.atimeMs / 1000, cachedFileStat.mtimeMs / 1000);
     await writeTranscript(sessionsDir, "main-session", [
       { role: "user", content: "run the tool" },
       { role: "toolResult", content: "done" },
     ]);
 
-    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+    expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+      recovered: 1,
+      failed: 0,
+      skipped: 0,
+    });
+    let store = loadSessionStore(storePath, { skipCache: true });
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
+      lastRunId: "recovery-run-1",
+    });
 
-    expect(result).toEqual({ recovered: 0, failed: 0, skipped: 1 });
-    expect(callGateway).not.toHaveBeenCalled();
-    const store = loadSessionStore(storePath, { skipCache: true });
+    store["agent:main:main"] = {
+      ...store["agent:main:main"]!,
+      status: "running",
+      abortedLastRun: true,
+    };
+    await writeSessionStoreForTestAsync(storePath, store);
+
+    expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+      recovered: 1,
+      failed: 0,
+      skipped: 0,
+    });
+    store = loadSessionStore(storePath, { skipCache: true });
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      lastRunId: "recovery-run-2",
+    });
+
+    store["agent:main:main"] = {
+      ...store["agent:main:main"]!,
+      status: "running",
+      abortedLastRun: true,
+    };
+    await writeSessionStoreForTestAsync(storePath, store);
+
+    expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+      recovered: 0,
+      failed: 0,
+      skipped: 1,
+    });
+    expect(callGateway).toHaveBeenCalledTimes(2);
+    store = loadSessionStore(storePath, { skipCache: true });
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
     expect(store["agent:main:main"]?.status).toBe("failed");
-    expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.runtimeMs).toBe(0);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
-      "exceeded_restart_retry_budget",
-    );
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      lastRunId: "recovery-run-2",
+      wedgedAt: expect.any(Number),
+      wedgedReason: expect.stringContaining("blocked after 2 rapid accepted resume attempts"),
+    });
   });
 
-  it("persists a recovery attempt when the resume call fails", async () => {
+  it("does not persist a durable attempt when the resume call fails before acceptance", async () => {
     vi.mocked(callGateway).mockRejectedValueOnce(new Error("gateway unavailable"));
     const sessionsDir = await makeSessionsDir();
     await writeStore(sessionsDir, {
@@ -898,18 +975,23 @@ describe("main-session-restart-recovery", () => {
     expect(result).toEqual({ recovered: 0, failed: 1, skipped: 0 });
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(1);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toBeUndefined();
   });
 
-  it("charges the retry budget when the transcript path cannot be read", async () => {
+  it("fails unreadable transcript paths without charging the durable fuse", async () => {
     const sessionsDir = await makeSessionsDir();
+    const lastAttemptAt = Date.now() - 1_000;
     await writeStore(sessionsDir, {
       "agent:main:main": {
         sessionId: "main-session",
         updatedAt: Date.now() - 10_000,
         status: "running",
         abortedLastRun: true,
-        restartRecoveryAttempts: 2,
+        mainRestartRecovery: {
+          automaticAttempts: 1,
+          lastAttemptAt,
+          lastRunId: "previous-recovery-run",
+        },
       },
     });
     await fs.mkdir(path.join(sessionsDir, "main-session.jsonl"));
@@ -919,18 +1001,17 @@ describe("main-session-restart-recovery", () => {
     expect(result).toEqual({ recovered: 0, failed: 1, skipped: 0 });
     expect(callGateway).not.toHaveBeenCalled();
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
-    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.runtimeMs).toBe(0);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
-      "exceeded_restart_retry_budget",
-    );
+    expect(store["agent:main:main"]?.mainRestartRecovery).toEqual({
+      automaticAttempts: 1,
+      lastAttemptAt,
+      lastRunId: "previous-recovery-run",
+    });
   });
 
-  it("quarantines old released rows whose restart recovery run markers are already exhausted", async () => {
+  it("tombstones old released rows whose restart recovery run markers are already exhausted", async () => {
     const sessionsDir = await makeSessionsDir();
     await writeStore(sessionsDir, {
       "agent:main:main": {
@@ -960,14 +1041,14 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.runtimeMs).toBe(0);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
-      "exceeded_restart_retry_budget",
-    );
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      wedgedAt: expect.any(Number),
+      wedgedReason: expect.stringContaining("blocked after 3 rapid accepted resume attempts"),
+    });
   });
 
-  it("quarantines after the final scheduled recovery failure", async () => {
+  it("does not charge the durable fuse after scheduled dispatch failures", async () => {
     vi.mocked(callGateway)
       .mockRejectedValueOnce(new Error("gateway unavailable"))
       .mockRejectedValueOnce(new Error("gateway unavailable"))
@@ -997,7 +1078,7 @@ describe("main-session-restart-recovery", () => {
     }
 
     let store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
-    for (let i = 0; i < 100 && store["agent:main:main"]?.abortedLastRun !== false; i++) {
+    for (let i = 0; i < 100 && vi.mocked(callGateway).mock.calls.length < 3; i++) {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 10);
       });
@@ -1005,15 +1086,9 @@ describe("main-session-restart-recovery", () => {
     }
 
     expect(callGateway).toHaveBeenCalledTimes(3);
-    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
-    expect(store["agent:main:main"]?.status).toBe("failed");
-    expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.runtimeMs).toBe(0);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(3);
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toEqual(expect.any(Number));
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBe(
-      "exceeded_restart_retry_budget",
-    );
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.status).toBe("running");
+    expect(store["agent:main:main"]?.mainRestartRecovery).toBeUndefined();
   });
 
   it("resumes marked sessions with a tool-result transcript tail", async () => {
@@ -1047,7 +1122,11 @@ describe("main-session-restart-recovery", () => {
     });
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(1);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
+      lastAttemptAt: expect.any(Number),
+      lastRunId: "run-resumed",
+    });
   });
 
   it("delivers resumed marked sessions through the current run recovery context", async () => {
@@ -1182,9 +1261,7 @@ describe("main-session-restart-recovery", () => {
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBeUndefined();
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toBeUndefined();
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBeUndefined();
+    expect(store["agent:main:main"]?.mainRestartRecovery).toBeUndefined();
   });
 
   it("resumes marked sessions with a durable pending final delivery payload (Phase 2)", async () => {
@@ -1524,7 +1601,11 @@ describe("main-session-restart-recovery", () => {
         updatedAt: cutoff - 10_000,
         status: "running",
         abortedLastRun: true,
-        restartRecoveryAttempts: 2,
+        mainRestartRecovery: {
+          automaticAttempts: 1,
+          lastAttemptAt: cutoff - 5_000,
+          lastRunId: "previous-recovery-run",
+        },
         restartRecoveryRuns: [
           {
             runId: "marked-prior-process-run",
@@ -1559,8 +1640,12 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:cron:nightly"]?.abortedLastRun).toBeUndefined();
     expect(store["agent:main:completed"]?.abortedLastRun).toBeUndefined();
     expect(store["agent:main:already-marked"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBeUndefined();
-    expect(store["agent:main:already-marked"]?.restartRecoveryAttempts).toBe(2);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toBeUndefined();
+    expect(store["agent:main:already-marked"]?.mainRestartRecovery).toEqual({
+      automaticAttempts: 1,
+      lastAttemptAt: cutoff - 5_000,
+      lastRunId: "previous-recovery-run",
+    });
     expect(store["agent:main:completed"]?.restartRecoveryRuns).toHaveLength(1);
     expect(store["agent:main:already-marked"]?.restartRecoveryRuns).toHaveLength(1);
 
@@ -1690,9 +1775,7 @@ describe("main-session-restart-recovery", () => {
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBeUndefined();
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toBeUndefined();
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBeUndefined();
+    expect(store["agent:main:main"]?.mainRestartRecovery).toBeUndefined();
   });
 
   it("does not charge the retry budget for an unresumable transcript tail", async () => {
@@ -1703,7 +1786,11 @@ describe("main-session-restart-recovery", () => {
         updatedAt: Date.now() - 10_000,
         status: "running",
         abortedLastRun: true,
-        restartRecoveryAttempts: 2,
+        mainRestartRecovery: {
+          automaticAttempts: 1,
+          lastAttemptAt: 1_700,
+          lastRunId: "previous-recovery-run",
+        },
       },
     });
     await writeTranscript(sessionsDir, "main-session", [
@@ -1718,9 +1805,11 @@ describe("main-session-restart-recovery", () => {
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-    expect(store["agent:main:main"]?.restartRecoveryAttempts).toBe(2);
-    expect(store["agent:main:main"]?.restartRecoveryQuarantinedAt).toBeUndefined();
-    expect(store["agent:main:main"]?.restartRecoveryQuarantineReason).toBeUndefined();
+    expect(store["agent:main:main"]?.mainRestartRecovery).toEqual({
+      automaticAttempts: 1,
+      lastAttemptAt: 1_700,
+      lastRunId: "previous-recovery-run",
+    });
   });
 
   it.each([

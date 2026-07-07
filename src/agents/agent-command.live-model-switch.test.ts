@@ -1665,9 +1665,12 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
       { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
     ];
-    entry.restartRecoveryAttempts = 3;
-    entry.restartRecoveryQuarantinedAt = 2;
-    entry.restartRecoveryQuarantineReason = "exceeded_restart_retry_budget";
+    entry.mainRestartRecovery = {
+      automaticAttempts: 2,
+      lastAttemptAt: 2,
+      wedgedAt: 4,
+      wedgedReason: "main-session restart recovery blocked",
+    };
     entry.subagentRecovery = {
       automaticAttempts: 2,
       lastAttemptAt: 3,
@@ -1682,9 +1685,7 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     )?.entry;
     expect(firstPersistedEntry?.abortedLastRun).toBe(false);
     expect(firstPersistedEntry?.restartRecoveryRuns).toBeUndefined();
-    expect(firstPersistedEntry?.restartRecoveryAttempts).toBeUndefined();
-    expect(firstPersistedEntry?.restartRecoveryQuarantinedAt).toBeUndefined();
-    expect(firstPersistedEntry?.restartRecoveryQuarantineReason).toBeUndefined();
+    expect(firstPersistedEntry?.mainRestartRecovery).toBeUndefined();
     expect(firstPersistedEntry?.subagentRecovery).toBeUndefined();
     expect(state.updateSessionStoreAfterAgentRunMock).toHaveBeenCalledTimes(1);
   });
@@ -1833,9 +1834,11 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     const entry = (state.sessionStoreMock as Record<string, SessionEntry>)["agent:main:main"];
     entry.abortedLastRun = true;
     entry.restartRecoveryRuns = [{ runId: "initial-wedged-run", lifecycleGeneration: "gen-1" }];
-    entry.restartRecoveryAttempts = 1;
-    entry.restartRecoveryQuarantinedAt = 2;
-    entry.restartRecoveryQuarantineReason = "exceeded_restart_retry_budget";
+    entry.mainRestartRecovery = {
+      automaticAttempts: 1,
+      lastAttemptAt: 2,
+      lastRunId: "recovery-run-1",
+    };
 
     await agentCommand({
       message: "hello",
@@ -1860,9 +1863,11 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       expect(persistedEntry.restartRecoveryRuns).toEqual([
         { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
       ]);
-      expect(persistedEntry.restartRecoveryAttempts).toBe(1);
-      expect(persistedEntry.restartRecoveryQuarantinedAt).toBe(2);
-      expect(persistedEntry.restartRecoveryQuarantineReason).toBe("exceeded_restart_retry_budget");
+      expect(persistedEntry.mainRestartRecovery).toEqual({
+        automaticAttempts: 1,
+        lastAttemptAt: 2,
+        lastRunId: "recovery-run-1",
+      });
     }
     expectRecordFields(mockCallArg(state.updateSessionStoreAfterAgentRunMock), {
       touchInteraction: false,
