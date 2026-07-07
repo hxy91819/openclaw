@@ -153,6 +153,19 @@ export type SessionPluginNextTurnInjection = {
   metadata?: SessionPluginJsonValue;
 };
 
+export type MainRestartRecoveryState = {
+  /** Consecutive accepted automatic main-session recovery resumes in the rapid re-wedge window. */
+  automaticAttempts?: number;
+  /** Timestamp (ms) of the latest accepted automatic main-session recovery resume. */
+  lastAttemptAt?: number;
+  /** Run id accepted for the latest automatic main-session recovery resume. */
+  lastRunId?: string;
+  /** Timestamp (ms) when automatic main-session recovery was tombstoned. */
+  wedgedAt?: number;
+  /** Human-readable reason automatic main-session recovery was tombstoned. */
+  wedgedReason?: string;
+};
+
 export type SubagentRecoveryState = {
   /** Consecutive accepted automatic orphan-recovery resumes in the rapid re-wedge window. */
   automaticAttempts?: number;
@@ -301,12 +314,8 @@ export type SessionEntry = {
   abortedLastRun?: boolean;
   /** Interrupted run generations whose late lifecycle events must be ignored. */
   restartRecoveryRuns?: RestartRecoveryRun[];
-  /** Consecutive restart-recovery attempts for the current interrupted main-session turn. */
-  restartRecoveryAttempts?: number;
-  /** Timestamp (ms) when automatic main-session restart recovery was quarantined. */
-  restartRecoveryQuarantinedAt?: number;
-  /** Human-readable reason automatic main-session restart recovery was quarantined. */
-  restartRecoveryQuarantineReason?: string;
+  /** Durable fuse state for automatic main-session restart recovery. */
+  mainRestartRecovery?: MainRestartRecoveryState;
   /** Durable guard state for automatic subagent orphan recovery. */
   subagentRecovery?: SubagentRecoveryState;
   /** Quota cascade protection and state-aware failover status. */
@@ -500,12 +509,7 @@ export type SessionEntry = {
 
 type AutomaticRestartRecoveryStateFields = Pick<
   SessionEntry,
-  | "abortedLastRun"
-  | "restartRecoveryRuns"
-  | "restartRecoveryAttempts"
-  | "restartRecoveryQuarantinedAt"
-  | "restartRecoveryQuarantineReason"
-  | "subagentRecovery"
+  "abortedLastRun" | "restartRecoveryRuns" | "mainRestartRecovery" | "subagentRecovery"
 >;
 
 export function buildAutomaticRestartRecoveryClearPatch(
@@ -514,9 +518,7 @@ export function buildAutomaticRestartRecoveryClearPatch(
   if (
     entry?.abortedLastRun !== true &&
     entry?.restartRecoveryRuns === undefined &&
-    entry?.restartRecoveryAttempts === undefined &&
-    entry?.restartRecoveryQuarantinedAt === undefined &&
-    entry?.restartRecoveryQuarantineReason === undefined &&
+    entry?.mainRestartRecovery === undefined &&
     entry?.subagentRecovery === undefined
   ) {
     return {};
@@ -524,9 +526,7 @@ export function buildAutomaticRestartRecoveryClearPatch(
   return {
     abortedLastRun: false,
     restartRecoveryRuns: undefined,
-    restartRecoveryAttempts: undefined,
-    restartRecoveryQuarantinedAt: undefined,
-    restartRecoveryQuarantineReason: undefined,
+    mainRestartRecovery: undefined,
     subagentRecovery: undefined,
   };
 }

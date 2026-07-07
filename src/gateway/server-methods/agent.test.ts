@@ -1592,9 +1592,12 @@ describe("gateway agent handler", () => {
         { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
         { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
       ],
-      restartRecoveryAttempts: 4,
-      restartRecoveryQuarantinedAt: 2,
-      restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
+      mainRestartRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 2,
+        wedgedAt: 4,
+        wedgedReason: "main-session restart recovery blocked",
+      },
       subagentRecovery: {
         automaticAttempts: 2,
         lastAttemptAt: 3,
@@ -1607,9 +1610,7 @@ describe("gateway agent handler", () => {
 
     expect(capturedEntry.abortedLastRun).toBe(false);
     expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
-    expect(capturedEntry.restartRecoveryAttempts).toBeUndefined();
-    expect(capturedEntry.restartRecoveryQuarantinedAt).toBeUndefined();
-    expect(capturedEntry.restartRecoveryQuarantineReason).toBeUndefined();
+    expect(capturedEntry.mainRestartRecovery).toBeUndefined();
     expect(capturedEntry.subagentRecovery).toBeUndefined();
   });
 
@@ -1617,7 +1618,11 @@ describe("gateway agent handler", () => {
     mockMainSessionEntry({
       abortedLastRun: true,
       restartRecoveryRuns: [{ runId: "initial-wedged-run", lifecycleGeneration: "gen-1" }],
-      restartRecoveryAttempts: 2,
+      mainRestartRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 2,
+        lastRunId: "recovery-run-1",
+      },
       lastInteractionAt: 1,
     });
     const loaded = mocks.loadSessionEntry();
@@ -1656,7 +1661,11 @@ describe("gateway agent handler", () => {
     expect(entry.restartRecoveryRuns).toEqual([
       { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
     ]);
-    expect(entry.restartRecoveryAttempts).toBe(2);
+    expect(entry.mainRestartRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 2,
+      lastRunId: "recovery-run-1",
+    });
     expect(entry.lastInteractionAt).toBe(1);
     expect(call.skipInitialSessionTouch).toBe(true);
   });
@@ -1664,7 +1673,10 @@ describe("gateway agent handler", () => {
   it("clears automatic recovery state when a public request forges restart-recovery provenance", async () => {
     mockMainSessionEntry({
       abortedLastRun: true,
-      restartRecoveryAttempts: 2,
+      mainRestartRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 2,
+      },
       lastInteractionAt: 1,
     });
     const loaded = mocks.loadSessionEntry();
@@ -1696,7 +1708,7 @@ describe("gateway agent handler", () => {
 
     const entry = requireValue(capturedEntry, "updated session entry missing");
     expect(entry.abortedLastRun).toBe(false);
-    expect(entry.restartRecoveryAttempts).toBeUndefined();
+    expect(entry.mainRestartRecovery).toBeUndefined();
     expect(entry.lastInteractionAt).not.toBe(1);
   });
 
@@ -1714,9 +1726,12 @@ describe("gateway agent handler", () => {
         { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
         { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
       ],
-      restartRecoveryAttempts: 3,
-      restartRecoveryQuarantinedAt: 1,
-      restartRecoveryQuarantineReason: "exceeded_restart_retry_budget",
+      mainRestartRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 2,
+        wedgedAt: 4,
+        wedgedReason: "main-session restart recovery blocked",
+      },
       subagentRecovery: {
         automaticAttempts: 2,
         lastAttemptAt: 3,
@@ -1731,9 +1746,7 @@ describe("gateway agent handler", () => {
     expect(capturedEntry.sessionId).not.toBe("quarantined-session-id");
     expect(capturedEntry.abortedLastRun).toBeUndefined();
     expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
-    expect(capturedEntry.restartRecoveryAttempts).toBeUndefined();
-    expect(capturedEntry.restartRecoveryQuarantinedAt).toBeUndefined();
-    expect(capturedEntry.restartRecoveryQuarantineReason).toBeUndefined();
+    expect(capturedEntry.mainRestartRecovery).toBeUndefined();
     expect(capturedEntry.subagentRecovery).toBeUndefined();
   });
 
