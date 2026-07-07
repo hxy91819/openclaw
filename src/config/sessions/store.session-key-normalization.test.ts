@@ -235,7 +235,7 @@ describe("session store key normalization", () => {
     );
     clearSessionStoreCacheForTest();
 
-    await recordSessionMetaFromInbound({
+    await recordInboundSessionMeta({
       storePath,
       sessionKey: MIXED_CASE_KEY,
       ctx: createInboundContext(),
@@ -271,7 +271,7 @@ describe("session store key normalization", () => {
     );
     clearSessionStoreCacheForTest();
 
-    await recordSessionMetaFromInbound({
+    await recordInboundSessionMeta({
       storePath,
       sessionKey: MIXED_CASE_KEY,
       ctx: createInboundContext(),
@@ -315,7 +315,7 @@ describe("session store key normalization", () => {
     );
     clearSessionStoreCacheForTest();
 
-    await updateLastRoute({
+    await updateSessionLastRoute({
       storePath,
       sessionKey: CANONICAL_KEY,
       channel: "webchat",
