@@ -1624,6 +1624,30 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(state.updateSessionStoreAfterAgentRunMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps restart-recovery resumes non-interactive through session updates", async () => {
+    setupSingleAttemptFallback();
+    state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("openai", "gpt-5.4"));
+    setupSessionTouchStore();
+
+    await agentCommand({
+      message: "hello",
+      to: "+1234567890",
+      inputProvenance: {
+        kind: "internal_system",
+        sourceTool: "main_session_restart_recovery",
+      },
+    });
+
+    const touchWrites = state.persistSessionEntryMock.mock.calls.filter((call) => {
+      const entry = (call[0] as { entry?: Record<string, unknown> } | undefined)?.entry;
+      return entry?.lastInteractionAt !== undefined;
+    });
+    expect(touchWrites).toHaveLength(0);
+    expectRecordFields(mockCallArg(state.updateSessionStoreAfterAgentRunMock), {
+      touchInteraction: false,
+    });
+  });
+
   it("uses channel model override as the initial run model for channel-backed sessions", async () => {
     setupSingleAttemptFallback();
     state.runtimeConfigMock = {

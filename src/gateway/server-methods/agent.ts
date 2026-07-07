@@ -3169,7 +3169,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           if (abortForLifecycleRotation({ sessionKey: canonicalSessionKey, agentId })) {
             return;
           }
-          skipAgentInitialSessionTouch = touchInteraction;
+          skipAgentInitialSessionTouch = touchInteraction || isRestartRecoveryResumeRun;
           if (deniedBySendPolicy) {
             respond(
               false,

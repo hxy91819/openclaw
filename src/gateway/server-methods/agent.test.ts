@@ -1645,9 +1645,11 @@ describe("gateway agent handler", () => {
     );
 
     const entry = requireValue(capturedEntry, "updated session entry missing");
+    const call = await waitForAgentCommandCall();
     expect(entry.abortedLastRun).toBe(true);
     expect(entry.restartRecoveryAttempts).toBe(2);
     expect(entry.lastInteractionAt).toBe(1);
+    expect(call.skipInitialSessionTouch).toBe(true);
   });
 
   it("clears automatic recovery state when a public request forges restart-recovery provenance", async () => {
