@@ -52,6 +52,7 @@ import {
   isValidAgentHarnessSessionStoreEntry,
   resolveAgentHarnessSessionContextError,
 } from "../sessions/agent-harness-session-key.js";
+import { isMainSessionRestartRecoveryInputProvenance } from "../sessions/input-provenance.js";
 import { applyVerboseOverride } from "../sessions/level-overrides.js";
 import {
   applyModelOverrideToSessionEntry,
@@ -996,6 +997,9 @@ async function agentCommandInternal(
       ? AbortSignal.any([prepared.opts.abortSignal, lifecycleAbortController.signal])
       : lifecycleAbortController.signal,
   };
+  const isRestartRecoveryResumeRun = isMainSessionRestartRecoveryInputProvenance(
+    opts.inputProvenance,
+  );
   const {
     body,
     transcriptBody,
@@ -1490,13 +1494,16 @@ async function agentCommandInternal(
       // Persist non-model-dependent command state before provider/model resolution.
       // Thinking is written only after the selected runtime validates it below.
       const hasInitialSessionOverrides = Boolean(verboseOverride);
-      const shouldPersistInitialSessionTouch =
-        opts.skipInitialSessionTouch !== true || hasInitialSessionOverrides;
+      const shouldWriteInitialSessionTouch =
+        !isRestartRecoveryResumeRun &&
+        (opts.skipInitialSessionTouch !== true || hasInitialSessionOverrides);
+      const shouldPersistInitialSessionState =
+        shouldWriteInitialSessionTouch || hasInitialSessionOverrides;
       if (
         sessionStore &&
         sessionKey &&
         !suppressVisibleSessionEffects &&
-        shouldPersistInitialSessionTouch
+        shouldPersistInitialSessionState
       ) {
         const now = Date.now();
         const entry = sessionStore[sessionKey] ??
@@ -1506,7 +1513,7 @@ async function agentCommandInternal(
           sessionId,
           updatedAt: now,
           sessionStartedAt: entry.sessionStartedAt ?? now,
-          lastInteractionAt: now,
+          ...(shouldWriteInitialSessionTouch ? { lastInteractionAt: now } : {}),
         };
         applyVerboseOverride(next, verboseOverride);
         const persisted = await persistSessionEntry({
@@ -2636,6 +2643,7 @@ async function agentCommandInternal(
             fallbackModel,
             result,
             touchInteraction:
+              !isRestartRecoveryResumeRun &&
               opts.bootstrapContextRunKind !== "cron" &&
               !isHeartbeatLifecycleRun &&
               !opts.internalEvents?.length,
