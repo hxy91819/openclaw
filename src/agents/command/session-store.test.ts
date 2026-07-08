@@ -1816,12 +1816,6 @@ describe("updateSessionStoreAfterAgentRun", () => {
             { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
             { runId: "recovery-run-3", lifecycleGeneration: "gen-4" },
           ],
-          mainRestartRecovery: {
-            automaticAttempts: 2,
-            lastAttemptAt: 2,
-            wedgedAt: 4,
-            wedgedReason: "main-session restart recovery blocked",
-          },
           subagentRecovery: {
             automaticAttempts: 2,
             lastAttemptAt: 3,
@@ -1855,12 +1849,12 @@ describe("updateSessionStoreAfterAgentRun", () => {
 
       expect(sessionStore[sessionKey]?.abortedLastRun).toBe(false);
       expect(sessionStore[sessionKey]?.restartRecoveryRuns).toBeUndefined();
-      expect(sessionStore[sessionKey]?.mainRestartRecovery).toBeUndefined();
+      expect(sessionStore[sessionKey]).not.toHaveProperty("mainRestartRecovery");
       expect(sessionStore[sessionKey]?.subagentRecovery).toBeUndefined();
       const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
       expect(persisted?.abortedLastRun).toBe(false);
       expect(persisted?.restartRecoveryRuns).toBeUndefined();
-      expect(persisted?.mainRestartRecovery).toBeUndefined();
+      expect(persisted).not.toHaveProperty("mainRestartRecovery");
       expect(persisted?.subagentRecovery).toBeUndefined();
     });
   });

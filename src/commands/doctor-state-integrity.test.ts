@@ -449,57 +449,6 @@ describe("doctor state integrity oauth dir checks", () => {
     expect(doctorChangesText()).toContain("Cleared aborted restart-recovery flags");
   });
 
-  it("clears stale aborted recovery flags for tombstoned main sessions when approved", async () => {
-    const cfg: OpenClawConfig = {};
-    const sessionKey = "agent:main";
-    const wedgedAt = Date.now() - 20_000;
-    const wedgedReason =
-      "main-session restart recovery blocked after 2 rapid accepted resume attempts";
-    writeSessionStore(cfg, {
-      [sessionKey]: {
-        sessionId: "session-wedged-main",
-        updatedAt: 0,
-        abortedLastRun: true,
-        mainRestartRecovery: {
-          automaticAttempts: 2,
-          lastAttemptAt: Date.now() - 30_000,
-          lastRunId: "run-wedged-main",
-          wedgedAt,
-          wedgedReason,
-        },
-      },
-    });
-
-    const confirmRuntimeRepair = vi.fn(async (params: { message: string }) =>
-      params.message.includes("Clear stale aborted recovery flags"),
-    );
-    await noteStateIntegrity(cfg, { confirmRuntimeRepair, note: noteMock });
-
-    const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
-    const persisted = JSON.parse(fs.readFileSync(storePath, "utf8")) as Record<
-      string,
-      {
-        abortedLastRun?: boolean;
-        mainRestartRecovery?: {
-          automaticAttempts?: number;
-          lastRunId?: string;
-          wedgedAt?: number;
-          wedgedReason?: string;
-        };
-        updatedAt?: number;
-      }
-    >;
-    expect(persisted[sessionKey]?.abortedLastRun).toBe(false);
-    expect(persisted[sessionKey]?.updatedAt).toBeGreaterThan(0);
-    expect(persisted[sessionKey]?.mainRestartRecovery).toMatchObject({
-      automaticAttempts: 2,
-      lastRunId: "run-wedged-main",
-      wedgedAt,
-      wedgedReason,
-    });
-    expect(doctorChangesText()).toContain("Cleared aborted restart-recovery flags");
-  });
-
   it("warns when a case-mismatched agent dir does not resolve to the configured agent path", async () => {
     createAgentDir("Research");
 

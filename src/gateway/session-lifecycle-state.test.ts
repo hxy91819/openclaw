@@ -209,12 +209,6 @@ describe("session lifecycle state", () => {
       entry: {
         status: "running",
         abortedLastRun: true,
-        mainRestartRecovery: {
-          automaticAttempts: 2,
-          lastAttemptAt: 1_600,
-          wedgedAt: 1_700,
-          wedgedReason: "main-session restart recovery blocked",
-        },
         subagentRecovery: {
           automaticAttempts: 2,
           lastAttemptAt: 1_600,
@@ -229,7 +223,6 @@ describe("session lifecycle state", () => {
       },
       expected: {
         ...terminalPatch(1_200, 1_900, "done", false),
-        mainRestartRecovery: undefined,
         subagentRecovery: undefined,
       },
     });

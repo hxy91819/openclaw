@@ -9,11 +9,6 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import { note } from "../../packages/terminal-core/src/note.js";
 import { listAgentEntries, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import {
-  clearWedgedMainRestartRecoveryAbort,
-  formatMainRestartRecoveryWedgedReason,
-  isMainRestartRecoveryWedgedEntry,
-} from "../agents/main-session-recovery-state.js";
-import {
   clearWedgedSubagentRecoveryAbort,
   formatSubagentRecoveryWedgedReason,
   isSubagentRecoveryWedgedEntry,
@@ -1309,64 +1304,6 @@ export async function noteStateIntegrity(
           `  Prune missing entries: ${formatCliCommand(`openclaw sessions cleanup --store "${absoluteStorePath}" --enforce --fix-missing`)}`,
         ].join("\n"),
       );
-    }
-
-    const wedgedMainSessions = entries.filter(([, entry]) =>
-      isMainRestartRecoveryWedgedEntry(entry),
-    );
-    if (wedgedMainSessions.length > 0) {
-      const wedgedCount = countLabel(wedgedMainSessions.length, "wedged main session");
-      warnings.push(
-        [
-          `- Found ${wedgedCount} with main-session restart recovery tombstoned.`,
-          "  OpenClaw will not auto-resume these main sessions on restart; inspect the transcript before retrying manually.",
-          `  Examples: ${wedgedMainSessions
-            .slice(0, 3)
-            .map(([key]) => key)
-            .join(", ")}`,
-          `  Fix: ${formatCliCommand("openclaw doctor --fix")}`,
-        ].join("\n"),
-      );
-      const repairWedged = await prompter.confirmRuntimeRepair({
-        message: `Clear stale aborted recovery flags for ${wedgedCount}?`,
-        initialValue: true,
-      });
-      if (repairWedged) {
-        let repaired = 0;
-        const repairedAt = Date.now();
-        for (const [key] of wedgedMainSessions) {
-          let repairedCurrent = false;
-          await patchSessionEntry({ storePath: absoluteStorePath, sessionKey: key }, (entry) => {
-            if (!clearWedgedMainRestartRecoveryAbort(entry, repairedAt)) {
-              return null;
-            }
-            repairedCurrent = true;
-            return {
-              abortedLastRun: entry.abortedLastRun,
-              updatedAt: entry.updatedAt,
-            };
-          });
-          if (repairedCurrent) {
-            repaired += 1;
-          }
-        }
-        if (repaired > 0) {
-          changes.push(
-            `- Cleared aborted restart-recovery flags for ${countLabel(
-              repaired,
-              "wedged main session",
-            )}.`,
-          );
-        }
-      }
-
-      const wedgedReasons = wedgedMainSessions.map(([, entry]) =>
-        formatMainRestartRecoveryWedgedReason(entry),
-      );
-      const visibleWedgedReasons = uniqueStrings(wedgedReasons).slice(0, 2);
-      if (visibleWedgedReasons.length > 0) {
-        warnings.push(visibleWedgedReasons.map((reason) => `  Reason: ${reason}`).join("\n"));
-      }
     }
 
     const wedgedSubagentSessions = entries.filter(([, entry]) =>
