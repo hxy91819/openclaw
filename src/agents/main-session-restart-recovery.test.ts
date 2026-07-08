@@ -868,13 +868,35 @@ describe("main-session-restart-recovery", () => {
           { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
           { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
         ],
+        restartRecoveryDeliveryContext: {
+          channel: "discord",
+          to: "discord:dm:123",
+          accountId: "main",
+          threadId: "thread-1",
+        },
       },
     });
 
     const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
 
     expect(result).toEqual({ recovered: 0, failed: 0, skipped: 1 });
-    expect(callGateway).not.toHaveBeenCalled();
+    expect(callGateway).toHaveBeenCalledOnce();
+    const gatewayCall = vi.mocked(callGateway).mock.calls[0]?.[0] as
+      | { method?: string; params?: Record<string, unknown> }
+      | undefined;
+    expect(gatewayCall?.method).toBe("message.action");
+    expect(gatewayCall?.params).toMatchObject({
+      channel: "discord",
+      action: "send",
+      accountId: "main",
+      sessionKey: "agent:main:main",
+      sessionId: "main-session",
+    });
+    expect(gatewayCall?.params?.params).toMatchObject({
+      to: "discord:dm:123",
+      threadId: "thread-1",
+      bestEffort: true,
+    });
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
     expect(store["agent:main:main"]?.status).toBe("failed");
