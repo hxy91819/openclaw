@@ -221,6 +221,11 @@ describe("session store key normalization", () => {
               { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
               { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
             ],
+            mainRestartRecovery: {
+              automaticAttempts: 2,
+              lastAttemptAt: 3,
+              lastRunId: "recovery-run-1",
+            },
             subagentRecovery: {
               automaticAttempts: 2,
               lastAttemptAt: 3,
@@ -268,6 +273,11 @@ describe("session store key normalization", () => {
               { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
               { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
             ],
+            mainRestartRecovery: {
+              automaticAttempts: 2,
+              lastAttemptAt: 3,
+              lastRunId: "recovery-run-1",
+            },
           },
         },
         null,
@@ -290,7 +300,11 @@ describe("session store key normalization", () => {
       { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
       { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
     ]);
-    expect(store[CANONICAL_KEY]).not.toHaveProperty("mainRestartRecovery");
+    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-1",
+    });
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
@@ -307,6 +321,11 @@ describe("session store key normalization", () => {
               { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
               { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
             ],
+            mainRestartRecovery: {
+              automaticAttempts: 2,
+              lastAttemptAt: 3,
+              lastRunId: "recovery-run-1",
+            },
             subagentRecovery: {
               automaticAttempts: 2,
               lastAttemptAt: 3,

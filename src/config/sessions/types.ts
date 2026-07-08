@@ -153,6 +153,19 @@ export type SessionPluginNextTurnInjection = {
   metadata?: SessionPluginJsonValue;
 };
 
+export type MainRestartRecoveryState = {
+  /** Consecutive accepted automatic main-session recovery resumes in the rapid re-wedge window. */
+  automaticAttempts?: number;
+  /** Timestamp (ms) of the latest accepted automatic main-session recovery resume. */
+  lastAttemptAt?: number;
+  /** Registry run id that triggered the latest automatic main-session recovery resume. */
+  lastRunId?: string;
+  /** Timestamp (ms) when automatic recovery was tombstoned for this session. */
+  wedgedAt?: number;
+  /** Human-readable reason automatic recovery was tombstoned. */
+  wedgedReason?: string;
+};
+
 export type SubagentRecoveryState = {
   /** Consecutive accepted automatic orphan-recovery resumes in the rapid re-wedge window. */
   automaticAttempts?: number;
@@ -301,6 +314,8 @@ export type SessionEntry = {
   abortedLastRun?: boolean;
   /** Interrupted run generations whose late lifecycle events must be ignored. */
   restartRecoveryRuns?: RestartRecoveryRun[];
+  /** Durable fuse state for automatic main-session restart recovery. */
+  mainRestartRecovery?: MainRestartRecoveryState;
   /** Durable guard state for automatic subagent orphan recovery. */
   subagentRecovery?: SubagentRecoveryState;
   /** Quota cascade protection and state-aware failover status. */
@@ -494,18 +509,23 @@ export type SessionEntry = {
 
 type AutomaticRestartRecoveryStateFields = Pick<
   SessionEntry,
-  "abortedLastRun" | "restartRecoveryRuns"
+  "abortedLastRun" | "restartRecoveryRuns" | "mainRestartRecovery"
 >;
 
 export function buildAutomaticRestartRecoveryClearPatch(
   entry?: Partial<AutomaticRestartRecoveryStateFields> | null,
 ): Partial<SessionEntry> {
-  if (entry?.abortedLastRun !== true && entry?.restartRecoveryRuns === undefined) {
+  if (
+    entry?.abortedLastRun !== true &&
+    entry?.restartRecoveryRuns === undefined &&
+    entry?.mainRestartRecovery === undefined
+  ) {
     return {};
   }
   return {
     abortedLastRun: false,
     restartRecoveryRuns: undefined,
+    mainRestartRecovery: undefined,
   };
 }
 

@@ -1592,6 +1592,11 @@ describe("gateway agent handler", () => {
         { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
         { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
       ],
+      mainRestartRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 3,
+        lastRunId: "recovery-run-1",
+      },
       subagentRecovery: {
         automaticAttempts: 2,
         lastAttemptAt: 3,
@@ -1604,14 +1609,24 @@ describe("gateway agent handler", () => {
 
     expect(capturedEntry.abortedLastRun).toBe(false);
     expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
-    expect(capturedEntry).not.toHaveProperty("mainRestartRecovery");
-    expect(capturedEntry.subagentRecovery).toBeUndefined();
+    expect(capturedEntry.mainRestartRecovery).toBeUndefined();
+    expect(capturedEntry.subagentRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    });
   });
 
   it("preserves automatic recovery state for restart-recovery resume turns", async () => {
     mockMainSessionEntry({
       abortedLastRun: true,
       restartRecoveryRuns: [{ runId: "initial-wedged-run", lifecycleGeneration: "gen-1" }],
+      mainRestartRecovery: {
+        automaticAttempts: 1,
+        lastAttemptAt: 3,
+        lastRunId: "recovery-run-1",
+      },
       lastInteractionAt: 1,
     });
     const loaded = mocks.loadSessionEntry();
@@ -1650,7 +1665,11 @@ describe("gateway agent handler", () => {
     expect(entry.restartRecoveryRuns).toEqual([
       { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
     ]);
-    expect(entry).not.toHaveProperty("mainRestartRecovery");
+    expect(entry.mainRestartRecovery).toEqual({
+      automaticAttempts: 1,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-1",
+    });
     expect(entry.lastInteractionAt).toBe(1);
     expect(call.skipInitialSessionTouch).toBe(true);
   });
@@ -1658,6 +1677,11 @@ describe("gateway agent handler", () => {
   it("clears automatic recovery state when a public request forges restart-recovery provenance", async () => {
     mockMainSessionEntry({
       abortedLastRun: true,
+      mainRestartRecovery: {
+        automaticAttempts: 1,
+        lastAttemptAt: 3,
+        lastRunId: "recovery-run-1",
+      },
       lastInteractionAt: 1,
     });
     const loaded = mocks.loadSessionEntry();
@@ -1689,7 +1713,7 @@ describe("gateway agent handler", () => {
 
     const entry = requireValue(capturedEntry, "updated session entry missing");
     expect(entry.abortedLastRun).toBe(false);
-    expect(entry).not.toHaveProperty("mainRestartRecovery");
+    expect(entry.mainRestartRecovery).toBeUndefined();
     expect(entry.lastInteractionAt).not.toBe(1);
   });
 
@@ -1707,6 +1731,11 @@ describe("gateway agent handler", () => {
         { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
         { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
       ],
+      mainRestartRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 3,
+        lastRunId: "recovery-run-1",
+      },
       subagentRecovery: {
         automaticAttempts: 2,
         lastAttemptAt: 3,
@@ -1721,8 +1750,13 @@ describe("gateway agent handler", () => {
     expect(capturedEntry.sessionId).not.toBe("quarantined-session-id");
     expect(capturedEntry.abortedLastRun).toBeUndefined();
     expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
-    expect(capturedEntry).not.toHaveProperty("mainRestartRecovery");
-    expect(capturedEntry.subagentRecovery).toBeUndefined();
+    expect(capturedEntry.mainRestartRecovery).toBeUndefined();
+    expect(capturedEntry.subagentRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    });
   });
 
   it("disables single-entry persistence when admission prunes legacy store keys", async () => {

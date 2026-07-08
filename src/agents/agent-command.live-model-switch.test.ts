@@ -1498,6 +1498,11 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
       { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
     ];
+    entry.mainRestartRecovery = {
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-2",
+    };
     entry.subagentRecovery = {
       automaticAttempts: 2,
       lastAttemptAt: 3,
@@ -1512,8 +1517,13 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     )?.entry;
     expect(firstPersistedEntry?.abortedLastRun).toBe(false);
     expect(firstPersistedEntry?.restartRecoveryRuns).toBeUndefined();
-    expect(firstPersistedEntry).not.toHaveProperty("mainRestartRecovery");
-    expect(firstPersistedEntry?.subagentRecovery).toBeUndefined();
+    expect(firstPersistedEntry?.mainRestartRecovery).toBeUndefined();
+    expect(firstPersistedEntry?.subagentRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    });
     expect(state.updateSessionStoreAfterAgentRunMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1661,6 +1671,11 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     const entry = (state.sessionStoreMock as Record<string, SessionEntry>)["agent:main:main"];
     entry.abortedLastRun = true;
     entry.restartRecoveryRuns = [{ runId: "initial-wedged-run", lifecycleGeneration: "gen-1" }];
+    entry.mainRestartRecovery = {
+      automaticAttempts: 1,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-1",
+    };
 
     await agentCommand({
       message: "hello",
@@ -1685,7 +1700,11 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       expect(persistedEntry.restartRecoveryRuns).toEqual([
         { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
       ]);
-      expect(persistedEntry).not.toHaveProperty("mainRestartRecovery");
+      expect(persistedEntry.mainRestartRecovery).toEqual({
+        automaticAttempts: 1,
+        lastAttemptAt: 3,
+        lastRunId: "recovery-run-1",
+      });
     }
     expectRecordFields(mockCallArg(state.updateSessionStoreAfterAgentRunMock), {
       touchInteraction: false,

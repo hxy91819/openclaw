@@ -126,11 +126,16 @@ vi.mock("../../config/sessions.js", async () => {
       return true;
     },
     clearAutomaticRestartRecoveryState: (entry: SessionEntry) => {
-      if (entry.abortedLastRun !== true && entry.restartRecoveryRuns === undefined) {
+      if (
+        entry.abortedLastRun !== true &&
+        entry.restartRecoveryRuns === undefined &&
+        entry.mainRestartRecovery === undefined
+      ) {
         return false;
       }
       entry.abortedLastRun = false;
       entry.restartRecoveryRuns = undefined;
+      entry.mainRestartRecovery = undefined;
       return true;
     },
     updateSessionStore: sessionStoreMocks.updateSessionStore,
@@ -1809,6 +1814,11 @@ describe("updateSessionStoreAfterAgentRun", () => {
             { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
             { runId: "recovery-run-3", lifecycleGeneration: "gen-4" },
           ],
+          mainRestartRecovery: {
+            automaticAttempts: 2,
+            lastAttemptAt: 3,
+            lastRunId: "recovery-run-2",
+          },
           subagentRecovery: {
             automaticAttempts: 2,
             lastAttemptAt: 3,
