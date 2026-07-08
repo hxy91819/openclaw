@@ -880,7 +880,11 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.runtimeMs).toBe(0);
-    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      wedgedAt: expect.any(Number),
+      wedgedReason: expect.stringContaining("rapid accepted resume attempts"),
+    });
   });
 
   it("resumes when restart-recovery markers have not reached the retry ceiling", async () => {
@@ -908,7 +912,11 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).toHaveBeenCalledOnce();
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
-    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      lastAttemptAt: expect.any(Number),
+      lastRunId: "run-resumed",
+    });
   });
 
   it("charges accepted recovery dispatches with a restart recovery marker", async () => {
@@ -940,7 +948,11 @@ describe("main-session-restart-recovery", () => {
       { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
       { runId: "run-resumed", lifecycleGeneration },
     ]);
-    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      lastAttemptAt: expect.any(Number),
+      lastRunId: "run-resumed",
+    });
   });
 
   it("does not persist a durable attempt when the resume call fails before acceptance", async () => {
@@ -1024,7 +1036,11 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.status).toBe("failed");
     expect(store["agent:main:main"]?.endedAt).toEqual(expect.any(Number));
     expect(store["agent:main:main"]?.runtimeMs).toBe(0);
-    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      wedgedAt: expect.any(Number),
+      wedgedReason: expect.stringContaining("rapid accepted resume attempts"),
+    });
   });
 
   it("does not charge the durable fuse after scheduled dispatch failures", async () => {
@@ -1101,7 +1117,11 @@ describe("main-session-restart-recovery", () => {
     });
     const store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
-    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
+      lastAttemptAt: expect.any(Number),
+      lastRunId: "run-resumed",
+    });
   });
 
   it("delivers resumed marked sessions through the current run recovery context", async () => {
@@ -1621,7 +1641,15 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).toHaveBeenCalledTimes(2);
     store = readStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
+      lastRunId: "run-resumed",
+    });
     expect(store["agent:main:already-marked"]?.abortedLastRun).toBe(false);
+    expect(store["agent:main:already-marked"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
+      lastRunId: "run-resumed",
+    });
   });
 
   it("tombstones startup-orphaned main sessions after two accepted recovery dispatches", async () => {
@@ -1648,12 +1676,17 @@ describe("main-session-restart-recovery", () => {
       updatedBeforeMs: cutoff,
     });
     let store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
-    expect(store["agent:main:main"]?.restartRecoveryRuns).toHaveLength(1);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toBeUndefined();
 
     expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
       recovered: 1,
       failed: 0,
       skipped: 0,
+    });
+    store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
+      lastRunId: "recovery-run-1",
     });
     await markStartupOrphanedMainSessionsForRecovery({
       stateDir: tmpDir,
@@ -1663,6 +1696,11 @@ describe("main-session-restart-recovery", () => {
       recovered: 1,
       failed: 0,
       skipped: 0,
+    });
+    store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      lastRunId: "recovery-run-2",
     });
     await markStartupOrphanedMainSessionsForRecovery({
       stateDir: tmpDir,
@@ -1677,7 +1715,12 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).toHaveBeenCalledTimes(2);
     store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("failed");
-    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      lastRunId: "recovery-run-2",
+      wedgedAt: expect.any(Number),
+      wedgedReason: expect.stringContaining("rapid accepted resume attempts"),
+    });
   });
 
   it("recovers only the configured store for duplicate startup-orphaned session keys", async () => {

@@ -1816,6 +1816,11 @@ describe("updateSessionStoreAfterAgentRun", () => {
             { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
             { runId: "recovery-run-3", lifecycleGeneration: "gen-4" },
           ],
+          mainRestartRecovery: {
+            automaticAttempts: 2,
+            lastAttemptAt: 3,
+            lastRunId: "recovery-run-2",
+          },
           subagentRecovery: {
             automaticAttempts: 2,
             lastAttemptAt: 3,

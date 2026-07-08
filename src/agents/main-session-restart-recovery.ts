@@ -55,6 +55,7 @@ import {
 } from "./embedded-agent-runner/run-state.js";
 import {
   evaluateMainRestartRecoveryGate,
+  markMainRestartRecoveryAttempt,
   markMainRestartRecoveryWedged,
 } from "./main-session-recovery-state.js";
 import { resolveAgentSessionDirs } from "./session-dirs.js";
@@ -98,16 +99,6 @@ function recordRestartRecoveryRunMarker(entry: SessionEntry, run: RestartRecover
       ? a.lifecycleGeneration.localeCompare(b.lifecycleGeneration)
       : a.runId.localeCompare(b.runId),
   );
-}
-
-function recordStartupOrphanInitialRunMarker(entry: SessionEntry, sessionKey: string): void {
-  if ((entry.restartRecoveryRuns?.length ?? 0) > 0) {
-    return;
-  }
-  recordRestartRecoveryRunMarker(entry, {
-    runId: `startup-orphan:${sessionKey}`,
-    lifecycleGeneration: getAgentEventLifecycleGeneration(),
-  });
 }
 
 function normalizeStringSet(values: Iterable<string> | undefined): Set<string> {
@@ -383,7 +374,6 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
           ) {
             continue;
           }
-          recordStartupOrphanInitialRunMarker(entry, sessionKey);
           entry.abortedLastRun = true;
           entry.updatedAt = Date.now();
           replacements.push({ sessionKey, entry });
@@ -943,6 +933,12 @@ async function resumeMainSession(params: {
         }
         const now = Date.now();
         if (acceptedRunId) {
+          markMainRestartRecoveryAttempt({
+            entry,
+            now,
+            runId: acceptedRunId,
+            attempt: params.recoveryAttempt,
+          });
           recordRestartRecoveryRunMarker(entry, {
             runId: acceptedRunId,
             lifecycleGeneration: getAgentEventLifecycleGeneration(),

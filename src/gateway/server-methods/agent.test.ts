@@ -2080,6 +2080,11 @@ describe("gateway agent handler", () => {
         { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
         { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
       ],
+      mainRestartRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 3,
+        lastRunId: "recovery-run-1",
+      },
       subagentRecovery: {
         automaticAttempts: 2,
         lastAttemptAt: 3,
@@ -2094,8 +2099,13 @@ describe("gateway agent handler", () => {
     expect(capturedEntry.sessionId).not.toBe("quarantined-session-id");
     expect(capturedEntry.abortedLastRun).toBeUndefined();
     expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
-    expect(capturedEntry).not.toHaveProperty("mainRestartRecovery");
-    expect(capturedEntry.subagentRecovery).toBeUndefined();
+    expect(capturedEntry.mainRestartRecovery).toBeUndefined();
+    expect(capturedEntry.subagentRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    });
   });
 
   it("preserves ACP metadata from the current stored session entry", async () => {
