@@ -278,9 +278,7 @@ export async function markRestartAbortedMainSessions(params: {
           }
           const recoveryRuns = new Map<string, RestartRecoveryRun>();
           for (const run of entry.restartRecoveryRuns ?? []) {
-            if (run.lifecycleGeneration === currentLifecycleGeneration) {
-              recoveryRuns.set(`${run.runId}\u0000${run.lifecycleGeneration}`, run);
-            }
+            recoveryRuns.set(`${run.runId}\u0000${run.lifecycleGeneration}`, run);
           }
           const replaceActiveRunMarker = (run: RestartRecoveryRun) => {
             for (const [key, existingRun] of recoveryRuns) {
