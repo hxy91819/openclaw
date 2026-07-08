@@ -153,19 +153,6 @@ export type SessionPluginNextTurnInjection = {
   metadata?: SessionPluginJsonValue;
 };
 
-export type MainRestartRecoveryState = {
-  /** Consecutive accepted automatic main-session recovery resumes in the rapid re-wedge window. */
-  automaticAttempts?: number;
-  /** Timestamp (ms) of the latest accepted automatic main-session recovery resume. */
-  lastAttemptAt?: number;
-  /** Run id accepted for the latest automatic main-session recovery resume. */
-  lastRunId?: string;
-  /** Timestamp (ms) when automatic main-session recovery was tombstoned. */
-  wedgedAt?: number;
-  /** Human-readable reason automatic main-session recovery was tombstoned. */
-  wedgedReason?: string;
-};
-
 export type SubagentRecoveryState = {
   /** Consecutive accepted automatic orphan-recovery resumes in the rapid re-wedge window. */
   automaticAttempts?: number;
@@ -314,8 +301,6 @@ export type SessionEntry = {
   abortedLastRun?: boolean;
   /** Interrupted run generations whose late lifecycle events must be ignored. */
   restartRecoveryRuns?: RestartRecoveryRun[];
-  /** Durable fuse state for automatic main-session restart recovery. */
-  mainRestartRecovery?: MainRestartRecoveryState;
   /** Durable guard state for automatic subagent orphan recovery. */
   subagentRecovery?: SubagentRecoveryState;
   /** Quota cascade protection and state-aware failover status. */
@@ -509,7 +494,7 @@ export type SessionEntry = {
 
 type AutomaticRestartRecoveryStateFields = Pick<
   SessionEntry,
-  "abortedLastRun" | "restartRecoveryRuns" | "mainRestartRecovery" | "subagentRecovery"
+  "abortedLastRun" | "restartRecoveryRuns" | "subagentRecovery"
 >;
 
 export function buildAutomaticRestartRecoveryClearPatch(
@@ -518,7 +503,6 @@ export function buildAutomaticRestartRecoveryClearPatch(
   if (
     entry?.abortedLastRun !== true &&
     entry?.restartRecoveryRuns === undefined &&
-    entry?.mainRestartRecovery === undefined &&
     entry?.subagentRecovery === undefined
   ) {
     return {};
@@ -526,7 +510,6 @@ export function buildAutomaticRestartRecoveryClearPatch(
   return {
     abortedLastRun: false,
     restartRecoveryRuns: undefined,
-    mainRestartRecovery: undefined,
     subagentRecovery: undefined,
   };
 }

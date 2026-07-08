@@ -221,12 +221,6 @@ describe("session store key normalization", () => {
               { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
               { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
             ],
-            mainRestartRecovery: {
-              automaticAttempts: 2,
-              lastAttemptAt: 2,
-              wedgedAt: 4,
-              wedgedReason: "main-session restart recovery blocked",
-            },
             subagentRecovery: {
               automaticAttempts: 2,
               lastAttemptAt: 3,
@@ -251,7 +245,7 @@ describe("session store key normalization", () => {
     const store = loadSessionStore(storePath, { skipCache: true });
     expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(false);
     expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toBeUndefined();
-    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toBeUndefined();
+    expect(store[CANONICAL_KEY]).not.toHaveProperty("mainRestartRecovery");
     expect(store[CANONICAL_KEY]?.subagentRecovery).toBeUndefined();
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
@@ -269,12 +263,6 @@ describe("session store key normalization", () => {
               { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
               { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
             ],
-            mainRestartRecovery: {
-              automaticAttempts: 2,
-              lastAttemptAt: 3,
-              wedgedAt: 4,
-              wedgedReason: "main-session restart recovery blocked",
-            },
           },
         },
         null,
@@ -297,12 +285,7 @@ describe("session store key normalization", () => {
       { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
       { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
     ]);
-    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
-      automaticAttempts: 2,
-      lastAttemptAt: 3,
-      wedgedAt: 4,
-      wedgedReason: "main-session restart recovery blocked",
-    });
+    expect(store[CANONICAL_KEY]).not.toHaveProperty("mainRestartRecovery");
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
@@ -319,12 +302,6 @@ describe("session store key normalization", () => {
               { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
               { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
             ],
-            mainRestartRecovery: {
-              automaticAttempts: 2,
-              lastAttemptAt: 2,
-              wedgedAt: 4,
-              wedgedReason: "main-session restart recovery blocked",
-            },
             subagentRecovery: {
               automaticAttempts: 2,
               lastAttemptAt: 3,
@@ -350,7 +327,7 @@ describe("session store key normalization", () => {
     const store = loadSessionStore(storePath, { skipCache: true });
     expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(false);
     expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toBeUndefined();
-    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toBeUndefined();
+    expect(store[CANONICAL_KEY]).not.toHaveProperty("mainRestartRecovery");
     expect(store[CANONICAL_KEY]?.subagentRecovery).toBeUndefined();
     expect(store[CANONICAL_KEY]?.lastTo).toBe("webchat:user-1");
   });

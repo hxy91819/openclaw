@@ -46,7 +46,6 @@ type PersistedLifecycleSessionShape = Pick<
   | "runtimeMs"
   | "abortedLastRun"
   | "restartRecoveryRuns"
-  | "mainRestartRecovery"
   | "subagentRecovery"
 >;
 

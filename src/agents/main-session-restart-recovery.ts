@@ -47,8 +47,6 @@ import {
 } from "./embedded-agent-runner/run-state.js";
 import {
   evaluateMainRestartRecoveryGate,
-  isMainRestartRecoveryWedgedEntry,
-  markMainRestartRecoveryAttempt,
   markMainRestartRecoveryWedged,
 } from "./main-session-recovery-state.js";
 import { resolveAgentSessionDirs } from "./session-dirs.js";
@@ -254,10 +252,7 @@ export async function markRestartAbortedMainSessions(params: {
           if (!matches) {
             continue;
           }
-          if (
-            shouldSkipMainRecovery(entry, sessionKey) ||
-            isMainRestartRecoveryWedgedEntry(entry)
-          ) {
+          if (shouldSkipMainRecovery(entry, sessionKey)) {
             counts.skipped++;
             continue;
           }
@@ -348,10 +343,7 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
           if (entry.status !== "running" || entry.abortedLastRun === true) {
             continue;
           }
-          if (
-            shouldSkipMainRecovery(entry, sessionKey) ||
-            isMainRestartRecoveryWedgedEntry(entry)
-          ) {
+          if (shouldSkipMainRecovery(entry, sessionKey)) {
             counts.skipped++;
             continue;
           }
@@ -644,12 +636,11 @@ async function resumeMainSession(params: {
         agentParams.threadId = String(deliveryContext.threadId);
       }
     }
-    const accepted = await callGateway<{ runId?: string }>({
+    await callGateway<{ runId?: string }>({
       method: "agent",
       params: agentParams,
       timeoutMs: 10_000,
     });
-    const acceptedRunId = normalizeOptionalString(accepted?.runId) ?? idempotencyKey;
     await applySessionEntryReplacements({
       storePath: params.storePath,
       update: (entries) => {
@@ -659,12 +650,6 @@ async function resumeMainSession(params: {
           return { result: undefined };
         }
         const now = Date.now();
-        markMainRestartRecoveryAttempt({
-          entry,
-          now,
-          runId: acceptedRunId,
-          attempt: params.recoveryAttempt,
-        });
         entry.abortedLastRun = false;
         if (entry.pendingFinalDelivery || entry.pendingFinalDeliveryText) {
           if (sanitizedPendingText) {
@@ -726,7 +711,7 @@ export async function markRestartAbortedMainSessionsFromLocks(params: {
         if (entry.status !== "running") {
           continue;
         }
-        if (shouldSkipMainRecovery(entry, sessionKey) || isMainRestartRecoveryWedgedEntry(entry)) {
+        if (shouldSkipMainRecovery(entry, sessionKey)) {
           counts.skipped++;
           continue;
         }
