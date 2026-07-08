@@ -412,6 +412,35 @@ describe("session lifecycle state", () => {
     });
   });
 
+  it("persists accepted recovery run completion while an initial marker remains", () => {
+    expectPersistedLifecyclePatch({
+      entry: {
+        status: "running",
+        abortedLastRun: false,
+        restartRecoveryRuns: [
+          {
+            runId: "startup-orphan:agent:main:main",
+            lifecycleGeneration: "post-restart",
+          },
+          {
+            runId: "accepted-recovery-run",
+            lifecycleGeneration: "post-restart",
+          },
+        ],
+      },
+      runId: "accepted-recovery-run",
+      lifecycleGeneration: "post-restart",
+      data: {
+        phase: "end",
+        endedAt: 1_800,
+      },
+      expected: {
+        ...terminalPatch(1_050, 1_800, "done", false),
+        restartRecoveryRuns: undefined,
+      },
+    });
+  });
+
   it("persists lifecycle events from a recovery run with a different run id", () => {
     expectPersistedLifecyclePatch({
       entry: {

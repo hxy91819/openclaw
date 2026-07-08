@@ -209,10 +209,12 @@ export function derivePersistedSessionLifecyclePatch(params: {
     const remainingRuns = restartRecoveryRuns.filter(
       (run) => run.runId !== runId || run.lifecycleGeneration !== lifecycleGeneration,
     );
-    if (remainingRuns.length > 0) {
+    if (params.entry?.abortedLastRun === true && remainingRuns.length > 0) {
       return { restartRecoveryRuns: remainingRuns };
     }
-    patch.restartRecoveryRuns = undefined;
+    if (snapshot.status !== "done") {
+      patch.restartRecoveryRuns = remainingRuns.length > 0 ? remainingRuns : undefined;
+    }
   }
   return patch;
 }
