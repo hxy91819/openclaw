@@ -949,6 +949,12 @@ async function recoverStore(params: {
     const recoveryGate = evaluateMainRestartRecoveryGate(entry, Date.now());
     if (!recoveryGate.allowed) {
       if (recoveryGate.shouldMarkWedged) {
+        await sendUnresumableSessionNotice({
+          cfg: params.cfg,
+          entry,
+          sessionKey,
+          reason: recoveryGate.reason,
+        });
         await markMainRestartRecoveryWedgedInStore({
           storePath: params.storePath,
           sessionKey,
