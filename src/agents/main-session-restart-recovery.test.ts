@@ -885,6 +885,9 @@ describe("main-session-restart-recovery", () => {
       wedgedAt: expect.any(Number),
       wedgedReason: expect.stringContaining("rapid accepted resume attempts"),
     });
+    expect(store["agent:main:main"]?.mainRestartRecovery?.wedgedReason).not.toContain(
+      "doctor --fix",
+    );
   });
 
   it("resumes when restart-recovery markers have not reached the retry ceiling", async () => {
@@ -914,6 +917,47 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
     expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
       automaticAttempts: 2,
+      lastAttemptAt: expect.any(Number),
+      lastRunId: "run-resumed",
+    });
+  });
+
+  it("persists the durable recovery attempt before dispatching the accepted run", async () => {
+    const sessionsDir = await makeSessionsDir();
+    let attemptDuringDispatch: SessionEntry["mainRestartRecovery"];
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+    vi.mocked(callGateway).mockImplementationOnce(async () => {
+      const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), {
+        skipCache: true,
+      });
+      attemptDuringDispatch = store["agent:main:main"]?.mainRestartRecovery;
+      return { runId: "run-resumed" };
+    });
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    expect(attemptDuringDispatch).toMatchObject({
+      automaticAttempts: 1,
+      lastAttemptAt: expect.any(Number),
+      lastRunId: expect.any(String),
+    });
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), {
+      skipCache: true,
+    });
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
       lastAttemptAt: expect.any(Number),
       lastRunId: "run-resumed",
     });

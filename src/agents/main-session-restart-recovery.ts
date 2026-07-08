@@ -852,6 +852,86 @@ function resolveRestartRecoveryDeliveryContext(params: {
   };
 }
 
+type MainRestartRecoveryAttemptReservation =
+  | {
+      reserved: true;
+      previousMainRestartRecovery: SessionEntry["mainRestartRecovery"];
+      previousUpdatedAt: SessionEntry["updatedAt"];
+      reservationRunId: string;
+      recoveryAttempt: number;
+    }
+  | { reserved: false };
+
+async function reserveMainRestartRecoveryAttempt(params: {
+  recoveryAttempt: number;
+  reservationRunId: string;
+  sessionKey: string;
+  storePath: string;
+}): Promise<MainRestartRecoveryAttemptReservation> {
+  return await applyRestartRecoveryLifecycle<MainRestartRecoveryAttemptReservation>({
+    storePath: params.storePath,
+    requireWriteSuccess: true,
+    update: (entries) => {
+      const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
+      const entry = current?.entry;
+      if (!entry) {
+        return { result: { reserved: false as const } };
+      }
+      const previousMainRestartRecovery =
+        entry.mainRestartRecovery === undefined
+          ? undefined
+          : structuredClone(entry.mainRestartRecovery);
+      const previousUpdatedAt = entry.updatedAt;
+      markMainRestartRecoveryAttempt({
+        entry,
+        now: Date.now(),
+        runId: params.reservationRunId,
+        attempt: params.recoveryAttempt,
+      });
+      return {
+        result: {
+          reserved: true as const,
+          previousMainRestartRecovery,
+          previousUpdatedAt,
+          reservationRunId: params.reservationRunId,
+          recoveryAttempt: params.recoveryAttempt,
+        },
+        replacements: [{ sessionKey: params.sessionKey, entry }],
+      };
+    },
+  });
+}
+
+async function rollbackMainRestartRecoveryAttempt(params: {
+  reservation: Extract<MainRestartRecoveryAttemptReservation, { reserved: true }>;
+  sessionKey: string;
+  storePath: string;
+}): Promise<void> {
+  await applyRestartRecoveryLifecycle({
+    storePath: params.storePath,
+    update: (entries) => {
+      const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
+      const entry = current?.entry;
+      if (
+        !entry ||
+        entry.mainRestartRecovery?.lastRunId !== params.reservation.reservationRunId ||
+        entry.mainRestartRecovery?.automaticAttempts !== params.reservation.recoveryAttempt
+      ) {
+        return { result: undefined };
+      }
+      entry.mainRestartRecovery =
+        params.reservation.previousMainRestartRecovery === undefined
+          ? undefined
+          : structuredClone(params.reservation.previousMainRestartRecovery);
+      entry.updatedAt = params.reservation.previousUpdatedAt;
+      return {
+        result: undefined,
+        replacements: [{ sessionKey: params.sessionKey, entry }],
+      };
+    },
+  });
+}
+
 async function resumeMainSession(params: {
   cfg?: OpenClawConfig;
   entry: SessionEntry;
@@ -870,8 +950,19 @@ async function resumeMainSession(params: {
     entry: params.entry,
     sessionKey: params.sessionKey,
   });
+  let reservation: MainRestartRecoveryAttemptReservation | undefined;
+  let dispatchAccepted = false;
   try {
     const recoveryRunId = crypto.randomUUID();
+    reservation = await reserveMainRestartRecoveryAttempt({
+      recoveryAttempt: params.recoveryAttempt,
+      reservationRunId: recoveryRunId,
+      sessionKey: params.sessionKey,
+      storePath: params.storePath,
+    });
+    if (!reservation.reserved) {
+      return false;
+    }
     if (params.forceRestartSafeTools) {
       await applySessionEntryReplacements({
         storePath: params.storePath,
@@ -922,6 +1013,7 @@ async function resumeMainSession(params: {
       params: agentParams,
       timeoutMs: 10_000,
     });
+    dispatchAccepted = true;
     const acceptedRunId = normalizeOptionalString(acceptedRun?.runId);
     await applySessionEntryReplacements({
       storePath: params.storePath,
@@ -933,12 +1025,20 @@ async function resumeMainSession(params: {
         }
         const now = Date.now();
         if (acceptedRunId) {
-          markMainRestartRecoveryAttempt({
-            entry,
-            now,
-            runId: acceptedRunId,
-            attempt: params.recoveryAttempt,
-          });
+          if (entry.mainRestartRecovery?.lastRunId === idempotencyKey) {
+            entry.mainRestartRecovery = {
+              ...entry.mainRestartRecovery,
+              lastRunId: acceptedRunId,
+            };
+            entry.updatedAt = now;
+          } else {
+            markMainRestartRecoveryAttempt({
+              entry,
+              now,
+              runId: acceptedRunId,
+              attempt: params.recoveryAttempt,
+            });
+          }
           recordRestartRecoveryRunMarker(entry, {
             runId: acceptedRunId,
             lifecycleGeneration: getAgentEventLifecycleGeneration(),
@@ -975,6 +1075,21 @@ async function resumeMainSession(params: {
     );
     return true;
   } catch (err) {
+    if (!dispatchAccepted && reservation?.reserved) {
+      try {
+        await rollbackMainRestartRecoveryAttempt({
+          reservation,
+          sessionKey: params.sessionKey,
+          storePath: params.storePath,
+        });
+      } catch (rollbackErr) {
+        log.warn(
+          `failed to roll back interrupted main session recovery attempt ${params.sessionKey}: ${String(
+            rollbackErr,
+          )}`,
+        );
+      }
+    }
     log.warn(`failed to resume interrupted main session ${params.sessionKey}: ${String(err)}`);
     return false;
   }
