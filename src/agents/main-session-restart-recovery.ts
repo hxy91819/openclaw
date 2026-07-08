@@ -73,6 +73,21 @@ function shouldSkipMainRecovery(entry: SessionEntry, sessionKey: string): boolea
   );
 }
 
+function recordRestartRecoveryRunMarker(entry: SessionEntry, run: RestartRecoveryRun): void {
+  const recoveryRuns = new Map<string, RestartRecoveryRun>();
+  for (const existingRun of entry.restartRecoveryRuns ?? []) {
+    if (existingRun.runId !== run.runId) {
+      recoveryRuns.set(`${existingRun.runId}\u0000${existingRun.lifecycleGeneration}`, existingRun);
+    }
+  }
+  recoveryRuns.set(`${run.runId}\u0000${run.lifecycleGeneration}`, run);
+  entry.restartRecoveryRuns = [...recoveryRuns.values()].toSorted((a, b) =>
+    a.runId === b.runId
+      ? a.lifecycleGeneration.localeCompare(b.lifecycleGeneration)
+      : a.runId.localeCompare(b.runId),
+  );
+}
+
 function normalizeStringSet(values: Iterable<string> | undefined): Set<string> {
   const normalized = new Set<string>();
   for (const value of values ?? []) {
@@ -264,32 +279,15 @@ export async function markRestartAbortedMainSessions(params: {
             entry.endedAt = undefined;
             entry.runtimeMs = undefined;
           }
-          const recoveryRuns = new Map<string, RestartRecoveryRun>();
-          for (const run of entry.restartRecoveryRuns ?? []) {
-            recoveryRuns.set(`${run.runId}\u0000${run.lifecycleGeneration}`, run);
-          }
-          const replaceActiveRunMarker = (run: RestartRecoveryRun) => {
-            for (const [key, existingRun] of recoveryRuns) {
-              if (existingRun.runId === run.runId) {
-                recoveryRuns.delete(key);
-              }
-            }
-            recoveryRuns.set(`${run.runId}\u0000${run.lifecycleGeneration}`, run);
-          };
           for (const run of registeredActiveRuns) {
-            replaceActiveRunMarker(run);
+            recordRestartRecoveryRunMarker(entry, run);
           }
           for (const run of matchingActiveRuns) {
-            replaceActiveRunMarker({
+            recordRestartRecoveryRunMarker(entry, {
               runId: run.runId,
               lifecycleGeneration: run.lifecycleGeneration,
             });
           }
-          entry.restartRecoveryRuns = [...recoveryRuns.values()].toSorted((a, b) =>
-            a.runId === b.runId
-              ? a.lifecycleGeneration.localeCompare(b.lifecycleGeneration)
-              : a.runId.localeCompare(b.runId),
-          );
           entry.updatedAt = Date.now();
           replacements.push({ sessionKey, entry });
           counts.marked++;
@@ -634,11 +632,12 @@ async function resumeMainSession(params: {
         agentParams.threadId = String(deliveryContext.threadId);
       }
     }
-    await callGateway<{ runId?: string }>({
+    const acceptedRun = await callGateway<{ runId?: string }>({
       method: "agent",
       params: agentParams,
       timeoutMs: 10_000,
     });
+    const acceptedRunId = normalizeOptionalString(acceptedRun?.runId);
     await applySessionEntryReplacements({
       storePath: params.storePath,
       update: (entries) => {
@@ -648,6 +647,12 @@ async function resumeMainSession(params: {
           return { result: undefined };
         }
         const now = Date.now();
+        if (acceptedRunId) {
+          recordRestartRecoveryRunMarker(entry, {
+            runId: acceptedRunId,
+            lifecycleGeneration: getAgentEventLifecycleGeneration(),
+          });
+        }
         entry.abortedLastRun = false;
         if (entry.pendingFinalDelivery || entry.pendingFinalDeliveryText) {
           if (sanitizedPendingText) {

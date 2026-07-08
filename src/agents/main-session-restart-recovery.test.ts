@@ -895,6 +895,38 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
   });
 
+  it("charges accepted recovery dispatches with a restart recovery marker", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const lifecycleGeneration = getAgentEventLifecycleGeneration();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        restartRecoveryRuns: [
+          { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+          { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+        ],
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
+    expect(store["agent:main:main"]?.restartRecoveryRuns).toEqual([
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+      { runId: "run-resumed", lifecycleGeneration },
+    ]);
+    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+  });
+
   it("does not persist a durable attempt when the resume call fails before acceptance", async () => {
     vi.mocked(callGateway).mockRejectedValueOnce(new Error("gateway unavailable"));
     const sessionsDir = await makeSessionsDir();
