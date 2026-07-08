@@ -1624,6 +1624,62 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:already-marked"]?.abortedLastRun).toBe(false);
   });
 
+  it("tombstones startup-orphaned main sessions after two accepted recovery dispatches", async () => {
+    vi.mocked(callGateway)
+      .mockResolvedValueOnce({ runId: "recovery-run-1" })
+      .mockResolvedValueOnce({ runId: "recovery-run-2" })
+      .mockResolvedValueOnce({ runId: "recovery-run-3" });
+    const cutoff = Date.now();
+    const sessionsDir = await makeSessionsDir();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: cutoff - 10_000,
+        status: "running",
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+
+    await markStartupOrphanedMainSessionsForRecovery({
+      stateDir: tmpDir,
+      updatedBeforeMs: cutoff,
+    });
+    let store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.restartRecoveryRuns).toHaveLength(1);
+
+    expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+      recovered: 1,
+      failed: 0,
+      skipped: 0,
+    });
+    await markStartupOrphanedMainSessionsForRecovery({
+      stateDir: tmpDir,
+      updatedBeforeMs: Date.now(),
+    });
+    expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+      recovered: 1,
+      failed: 0,
+      skipped: 0,
+    });
+    await markStartupOrphanedMainSessionsForRecovery({
+      stateDir: tmpDir,
+      updatedBeforeMs: Date.now(),
+    });
+
+    expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+      recovered: 0,
+      failed: 0,
+      skipped: 1,
+    });
+    expect(callGateway).toHaveBeenCalledTimes(2);
+    store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.status).toBe("failed");
+    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+  });
+
   it("recovers only the configured store for duplicate startup-orphaned session keys", async () => {
     const cutoff = Date.now();
     const defaultSessionsDir = await makeSessionsDir();

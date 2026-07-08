@@ -100,6 +100,16 @@ function recordRestartRecoveryRunMarker(entry: SessionEntry, run: RestartRecover
   );
 }
 
+function recordStartupOrphanInitialRunMarker(entry: SessionEntry, sessionKey: string): void {
+  if ((entry.restartRecoveryRuns?.length ?? 0) > 0) {
+    return;
+  }
+  recordRestartRecoveryRunMarker(entry, {
+    runId: `startup-orphan:${sessionKey}`,
+    lifecycleGeneration: getAgentEventLifecycleGeneration(),
+  });
+}
+
 function normalizeStringSet(values: Iterable<string> | undefined): Set<string> {
   const normalized = new Set<string>();
   for (const value of values ?? []) {
@@ -373,6 +383,7 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
           ) {
             continue;
           }
+          recordStartupOrphanInitialRunMarker(entry, sessionKey);
           entry.abortedLastRun = true;
           entry.updatedAt = Date.now();
           replacements.push({ sessionKey, entry });
