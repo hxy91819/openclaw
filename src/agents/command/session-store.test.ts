@@ -1800,7 +1800,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
     });
   });
 
-  it("clears automatic recovery state after a successful normal run", async () => {
+  it("clears main recovery markers but preserves subagent recovery after a successful normal run", async () => {
     await withTempSessionStore(async ({ storePath }) => {
       const cfg = {} as OpenClawConfig;
       const sessionKey = "agent:main:explicit:test-clear-recovery-state";
@@ -1850,12 +1850,22 @@ describe("updateSessionStoreAfterAgentRun", () => {
       expect(sessionStore[sessionKey]?.abortedLastRun).toBe(false);
       expect(sessionStore[sessionKey]?.restartRecoveryRuns).toBeUndefined();
       expect(sessionStore[sessionKey]).not.toHaveProperty("mainRestartRecovery");
-      expect(sessionStore[sessionKey]?.subagentRecovery).toBeUndefined();
+      expect(sessionStore[sessionKey]?.subagentRecovery).toEqual({
+        automaticAttempts: 2,
+        lastAttemptAt: 3,
+        wedgedAt: 4,
+        wedgedReason: "automatic_attempt_budget_exceeded",
+      });
       const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
       expect(persisted?.abortedLastRun).toBe(false);
       expect(persisted?.restartRecoveryRuns).toBeUndefined();
       expect(persisted).not.toHaveProperty("mainRestartRecovery");
-      expect(persisted?.subagentRecovery).toBeUndefined();
+      expect(persisted?.subagentRecovery).toEqual({
+        automaticAttempts: 2,
+        lastAttemptAt: 3,
+        wedgedAt: 4,
+        wedgedReason: "automatic_attempt_budget_exceeded",
+      });
     });
   });
 

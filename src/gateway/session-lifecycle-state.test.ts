@@ -204,7 +204,7 @@ describe("session lifecycle state", () => {
     });
   });
 
-  it("clears automatic recovery state when a normal lifecycle end completes", () => {
+  it("clears main recovery markers but preserves subagent recovery when a normal lifecycle end completes", () => {
     expectPersistedLifecyclePatch({
       entry: {
         status: "running",
@@ -221,10 +221,7 @@ describe("session lifecycle state", () => {
         startedAt: 1_200,
         endedAt: 1_900,
       },
-      expected: {
-        ...terminalPatch(1_200, 1_900, "done", false),
-        subagentRecovery: undefined,
-      },
+      expected: terminalPatch(1_200, 1_900, "done", false),
     });
   });
 

@@ -507,23 +507,18 @@ export type SessionEntry = {
 
 type AutomaticRestartRecoveryStateFields = Pick<
   SessionEntry,
-  "abortedLastRun" | "restartRecoveryRuns" | "subagentRecovery"
+  "abortedLastRun" | "restartRecoveryRuns"
 >;
 
 export function buildAutomaticRestartRecoveryClearPatch(
   entry?: Partial<AutomaticRestartRecoveryStateFields> | null,
 ): Partial<SessionEntry> {
-  if (
-    entry?.abortedLastRun !== true &&
-    entry?.restartRecoveryRuns === undefined &&
-    entry?.subagentRecovery === undefined
-  ) {
+  if (entry?.abortedLastRun !== true && entry?.restartRecoveryRuns === undefined) {
     return {};
   }
   return {
     abortedLastRun: false,
     restartRecoveryRuns: undefined,
-    subagentRecovery: undefined,
   };
 }
 

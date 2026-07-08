@@ -203,7 +203,7 @@ describe("session store key normalization", () => {
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
-  it("clears automatic recovery state when recording inbound metadata", async () => {
+  it("clears main recovery markers but preserves subagent recovery when recording inbound metadata", async () => {
     await fs.writeFile(
       storePath,
       JSON.stringify(
@@ -241,7 +241,12 @@ describe("session store key normalization", () => {
     expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(false);
     expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toBeUndefined();
     expect(store[CANONICAL_KEY]).not.toHaveProperty("mainRestartRecovery");
-    expect(store[CANONICAL_KEY]?.subagentRecovery).toBeUndefined();
+    expect(store[CANONICAL_KEY]?.subagentRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    });
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
@@ -284,7 +289,7 @@ describe("session store key normalization", () => {
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
-  it("clears automatic recovery state when updating the last route", async () => {
+  it("clears main recovery markers but preserves subagent recovery when updating the last route", async () => {
     await fs.writeFile(
       storePath,
       JSON.stringify(
@@ -323,7 +328,12 @@ describe("session store key normalization", () => {
     expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(false);
     expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toBeUndefined();
     expect(store[CANONICAL_KEY]).not.toHaveProperty("mainRestartRecovery");
-    expect(store[CANONICAL_KEY]?.subagentRecovery).toBeUndefined();
+    expect(store[CANONICAL_KEY]?.subagentRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    });
     expect(store[CANONICAL_KEY]?.lastTo).toBe("webchat:user-1");
   });
 
