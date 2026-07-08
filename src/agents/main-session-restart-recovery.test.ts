@@ -522,6 +522,58 @@ describe("main-session-restart-recovery", () => {
     ]);
   });
 
+  it("preserves prior-generation restart recovery markers across repeated restart marking", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const currentLifecycleGeneration = getAgentEventLifecycleGeneration();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        restartRecoveryRuns: [
+          {
+            runId: "initial-wedged-run",
+            lifecycleGeneration: "previous-generation",
+          },
+          {
+            runId: "first-recovery-run",
+            lifecycleGeneration: "previous-recovery-generation",
+          },
+        ],
+      },
+    });
+
+    await markRestartAbortedMainSessions({
+      stateDir: tmpDir,
+      sessionKeys: ["agent:main:main"],
+      sessionIds: ["main-session"],
+      activeRuns: [
+        {
+          runId: "second-recovery-run",
+          lifecycleGeneration: currentLifecycleGeneration,
+          sessionKey: "agent:main:main",
+          sessionId: "main-session",
+        },
+      ],
+    });
+
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.restartRecoveryRuns).toEqual([
+      {
+        runId: "first-recovery-run",
+        lifecycleGeneration: "previous-recovery-generation",
+      },
+      {
+        runId: "initial-wedged-run",
+        lifecycleGeneration: "previous-generation",
+      },
+      {
+        runId: "second-recovery-run",
+        lifecycleGeneration: currentLifecycleGeneration,
+      },
+    ]);
+  });
+
   it("replaces an older marker when the same run id is active after another restart", async () => {
     const sessionsDir = await makeSessionsDir();
     await writeStore(sessionsDir, {
