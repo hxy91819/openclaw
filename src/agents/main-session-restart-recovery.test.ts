@@ -11,6 +11,7 @@ import {
   replaceSessionEntry,
 } from "../config/sessions/session-accessor.js";
 import { callGateway } from "../gateway/call.js";
+import * as sessionTranscriptReaders from "../gateway/session-transcript-readers.js";
 import {
   getAgentEventLifecycleGeneration,
   registerAgentRunContext,
@@ -905,11 +906,67 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
       automaticAttempts: 2,
       wedgedAt: expect.any(Number),
-      wedgedReason: expect.stringContaining("rapid accepted resume attempts"),
+      wedgedReason: expect.stringContaining("accepted resume attempts"),
     });
     expect(store["agent:main:main"]?.mainRestartRecovery?.wedgedReason).not.toContain(
       "doctor --fix",
     );
+  });
+
+  it("does not tombstone a rotated row after exhausted recovery notice", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const storePath = path.join(sessionsDir, "sessions.json");
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          automaticAttempts: 2,
+          lastAttemptAt: Date.now() - 1_000,
+          lastRunId: "recovery-run-2",
+        },
+        restartRecoveryDeliveryContext: {
+          channel: "discord",
+          to: "discord:dm:123",
+          accountId: "main",
+        },
+      },
+    });
+    vi.mocked(callGateway).mockImplementationOnce(async () => {
+      const store = readSessionStoreForTest(storePath);
+      await writeSessionStoreForTestAsync(storePath, {
+        ...store,
+        "agent:main:main": {
+          ...store["agent:main:main"],
+          sessionId: "new-main-session",
+          updatedAt: Date.now(),
+          status: "running",
+          abortedLastRun: true,
+          mainRestartRecovery: {
+            automaticAttempts: 1,
+            lastAttemptAt: Date.now(),
+            lastRunId: "new-recovery-run",
+          },
+        },
+      });
+      return {};
+    });
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 0, failed: 0, skipped: 1 });
+    expect(callGateway).toHaveBeenCalledOnce();
+    const store = readSessionStoreForTest(storePath);
+    expect(store["agent:main:main"]?.sessionId).toBe("new-main-session");
+    expect(store["agent:main:main"]?.status).toBe("running");
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 1,
+      lastRunId: "new-recovery-run",
+    });
+    expect(store["agent:main:main"]?.mainRestartRecovery).not.toHaveProperty("wedgedAt");
   });
 
   it("resumes when restart-recovery markers have not reached the retry ceiling", async () => {
@@ -982,6 +1039,150 @@ describe("main-session-restart-recovery", () => {
       automaticAttempts: 1,
       lastAttemptAt: expect.any(Number),
       lastRunId: "run-resumed",
+    });
+  });
+
+  it("does not recreate main recovery state when the accepted run already cleared it", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const storePath = path.join(sessionsDir, "sessions.json");
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+    vi.mocked(callGateway).mockImplementationOnce(async () => {
+      const store = readSessionStoreForTest(storePath);
+      expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+        automaticAttempts: 1,
+        lastRunId: expect.any(String),
+      });
+      await writeSessionStoreForTestAsync(storePath, {
+        ...store,
+        "agent:main:main": {
+          ...store["agent:main:main"],
+          status: "done",
+          abortedLastRun: false,
+          endedAt: Date.now(),
+          runtimeMs: 1_000,
+          restartRecoveryRuns: undefined,
+          mainRestartRecovery: undefined,
+        },
+      });
+      return { runId: "run-resumed" };
+    });
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    const store = readSessionStoreForTest(storePath);
+    expect(store["agent:main:main"]?.status).toBe("done");
+    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+    expect(store["agent:main:main"]).not.toHaveProperty("restartRecoveryRuns");
+  });
+
+  it("does not reserve recovery when the scanned row was already cleared", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const storePath = path.join(sessionsDir, "sessions.json");
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+    const readSessionMessagesAsync = sessionTranscriptReaders.readSessionMessagesAsync;
+    vi.spyOn(sessionTranscriptReaders, "readSessionMessagesAsync").mockImplementationOnce(
+      async (...args) => {
+        const messages = await readSessionMessagesAsync(...args);
+        const store = readSessionStoreForTest(storePath);
+        await writeSessionStoreForTestAsync(storePath, {
+          ...store,
+          "agent:main:main": {
+            ...store["agent:main:main"],
+            status: "done",
+            abortedLastRun: false,
+            endedAt: Date.now(),
+            runtimeMs: 1_000,
+            restartRecoveryRuns: undefined,
+            mainRestartRecovery: undefined,
+          },
+        });
+        return messages;
+      },
+    );
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 0, failed: 0, skipped: 1 });
+    expect(callGateway).not.toHaveBeenCalled();
+    const store = readSessionStoreForTest(storePath);
+    expect(store["agent:main:main"]?.status).toBe("done");
+    expect(store["agent:main:main"]).not.toHaveProperty("mainRestartRecovery");
+    expect(store["agent:main:main"]).not.toHaveProperty("restartRecoveryRuns");
+  });
+
+  it("does not overwrite a concurrent main recovery reservation", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const storePath = path.join(sessionsDir, "sessions.json");
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          automaticAttempts: 1,
+          lastAttemptAt: Date.now() - 1_000,
+          lastRunId: "recovery-run-1",
+        },
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "run the tool" },
+      { role: "toolResult", content: "done" },
+    ]);
+    const readSessionMessagesAsync = sessionTranscriptReaders.readSessionMessagesAsync;
+    vi.spyOn(sessionTranscriptReaders, "readSessionMessagesAsync").mockImplementationOnce(
+      async (...args) => {
+        const messages = await readSessionMessagesAsync(...args);
+        const store = readSessionStoreForTest(storePath);
+        await writeSessionStoreForTestAsync(storePath, {
+          ...store,
+          "agent:main:main": {
+            ...store["agent:main:main"],
+            mainRestartRecovery: {
+              automaticAttempts: 2,
+              lastAttemptAt: Date.now(),
+              lastRunId: "other-reservation",
+            },
+          },
+        });
+        return messages;
+      },
+    );
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 0, failed: 0, skipped: 1 });
+    expect(callGateway).not.toHaveBeenCalled();
+    const store = readSessionStoreForTest(storePath);
+    expect(store["agent:main:main"]?.status).toBe("running");
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+      automaticAttempts: 2,
+      lastRunId: "other-reservation",
     });
   });
 
@@ -1105,7 +1306,7 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
       automaticAttempts: 2,
       wedgedAt: expect.any(Number),
-      wedgedReason: expect.stringContaining("rapid accepted resume attempts"),
+      wedgedReason: expect.stringContaining("accepted resume attempts"),
     });
   });
 
@@ -1139,7 +1340,13 @@ describe("main-session-restart-recovery", () => {
     }
 
     let store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
-    for (let i = 0; i < 100 && vi.mocked(callGateway).mock.calls.length < 3; i++) {
+    for (
+      let i = 0;
+      i < 100 &&
+      (vi.mocked(callGateway).mock.calls.length < 3 ||
+        store["agent:main:main"]?.mainRestartRecovery !== undefined);
+      i++
+    ) {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 10);
       });
@@ -1785,8 +1992,84 @@ describe("main-session-restart-recovery", () => {
       automaticAttempts: 2,
       lastRunId: "recovery-run-2",
       wedgedAt: expect.any(Number),
-      wedgedReason: expect.stringContaining("rapid accepted resume attempts"),
+      wedgedReason: expect.stringContaining("accepted resume attempts"),
     });
+  });
+
+  it("tombstones startup-orphaned main sessions after slow accepted recovery re-wedges", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const firstBoot = new Date("2026-06-09T10:00:00.000Z");
+      vi.setSystemTime(firstBoot);
+      vi.mocked(callGateway)
+        .mockResolvedValueOnce({ runId: "slow-recovery-run-1" })
+        .mockResolvedValueOnce({ runId: "slow-recovery-run-2" })
+        .mockResolvedValueOnce({ runId: "slow-recovery-run-3" });
+      const sessionsDir = await makeSessionsDir();
+      await writeStore(sessionsDir, {
+        "agent:main:main": {
+          sessionId: "main-session",
+          updatedAt: Date.now() - 10_000,
+          status: "running",
+        },
+      });
+      await writeTranscript(sessionsDir, "main-session", [
+        { role: "user", content: "run the tool" },
+        { role: "toolResult", content: "done" },
+      ]);
+
+      await markStartupOrphanedMainSessionsForRecovery({
+        stateDir: tmpDir,
+        updatedBeforeMs: Date.now(),
+      });
+      expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+        recovered: 1,
+        failed: 0,
+        skipped: 0,
+      });
+      let store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
+      expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+        automaticAttempts: 1,
+        lastRunId: "slow-recovery-run-1",
+      });
+
+      vi.setSystemTime(new Date(firstBoot.getTime() + 5 * 60_000));
+      await markStartupOrphanedMainSessionsForRecovery({
+        stateDir: tmpDir,
+        updatedBeforeMs: Date.now(),
+      });
+      expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+        recovered: 1,
+        failed: 0,
+        skipped: 0,
+      });
+      store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
+      expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+        automaticAttempts: 2,
+        lastRunId: "slow-recovery-run-2",
+      });
+
+      vi.setSystemTime(new Date(firstBoot.getTime() + 10 * 60_000));
+      await markStartupOrphanedMainSessionsForRecovery({
+        stateDir: tmpDir,
+        updatedBeforeMs: Date.now(),
+      });
+      expect(await recoverRestartAbortedMainSessions({ stateDir: tmpDir })).toEqual({
+        recovered: 0,
+        failed: 0,
+        skipped: 1,
+      });
+      expect(callGateway).toHaveBeenCalledTimes(2);
+      store = readSessionStoreForTest(path.join(sessionsDir, "sessions.json"));
+      expect(store["agent:main:main"]?.status).toBe("failed");
+      expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
+        automaticAttempts: 2,
+        lastRunId: "slow-recovery-run-2",
+        wedgedAt: expect.any(Number),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("recovers only the configured store for duplicate startup-orphaned session keys", async () => {

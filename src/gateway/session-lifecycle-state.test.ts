@@ -209,6 +209,17 @@ describe("session lifecycle state", () => {
       entry: {
         status: "running",
         abortedLastRun: true,
+        restartRecoveryRuns: [
+          {
+            runId: "accepted-main-recovery-run",
+            lifecycleGeneration: "post-restart",
+          },
+        ],
+        mainRestartRecovery: {
+          automaticAttempts: 2,
+          lastAttemptAt: 1_600,
+          lastRunId: "accepted-main-recovery-run",
+        },
         subagentRecovery: {
           automaticAttempts: 2,
           lastAttemptAt: 1_600,
@@ -221,7 +232,11 @@ describe("session lifecycle state", () => {
         startedAt: 1_200,
         endedAt: 1_900,
       },
-      expected: terminalPatch(1_200, 1_900, "done", false),
+      expected: {
+        ...terminalPatch(1_200, 1_900, "done", false),
+        restartRecoveryRuns: undefined,
+        mainRestartRecovery: undefined,
+      },
     });
   });
 

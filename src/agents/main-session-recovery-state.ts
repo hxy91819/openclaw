@@ -9,7 +9,6 @@ import {
 } from "./restart-recovery-fuse.js";
 
 export const MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS = 2;
-export const MAIN_RESTART_RECOVERY_REWEDGE_WINDOW_MS = 2 * 60_000;
 
 const MAIN_RESTART_RECOVERY_WEDGED_FALLBACK_REASON =
   "main-session restart recovery is tombstoned for this session";
@@ -73,7 +72,6 @@ export function evaluateMainRestartRecoveryGate(
 ): MainRestartRecoveryGate {
   return evaluateRecoveryFuse(entry.mainRestartRecovery, now, {
     maxAutomaticAttempts: MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS,
-    rewedgeWindowMs: MAIN_RESTART_RECOVERY_REWEDGE_WINDOW_MS,
     ownerLabel: "main-session restart recovery",
     remediationHint: MAIN_RESTART_RECOVERY_REMEDIATION_HINT,
     legacyAttemptFloor: inferLegacyMainRestartRecoveryAttemptFloorFromRunMarkers(entry),
