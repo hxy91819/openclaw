@@ -19,7 +19,7 @@ export type RestartRecoveryFuseGate =
 
 type RecoveryFuseOptions = {
   maxAutomaticAttempts: number;
-  rewedgeWindowMs: number;
+  rewedgeWindowMs?: number;
   ownerLabel: string;
   remediationHint: string;
   legacyAttemptFloor?: number;
@@ -29,11 +29,14 @@ function normalizeAttempts(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-function isRecentRecoveryAttempt(
+function shouldRetainRecoveryAttempts(
   state: RestartRecoveryFuseState | undefined,
   now: number,
-  rewedgeWindowMs: number,
+  rewedgeWindowMs: number | undefined,
 ): boolean {
+  if (rewedgeWindowMs === undefined) {
+    return true;
+  }
   const lastAttemptAt = state?.lastAttemptAt;
   return (
     typeof lastAttemptAt === "number" &&
@@ -68,15 +71,22 @@ export function evaluateRecoveryFuse(
     };
   }
 
-  const recentAttempts = isRecentRecoveryAttempt(state, now, options.rewedgeWindowMs)
+  const retainedAttempts = shouldRetainRecoveryAttempts(state, now, options.rewedgeWindowMs)
     ? normalizeAttempts(state?.automaticAttempts)
     : 0;
-  const previousAttempts = Math.max(recentAttempts, normalizeAttempts(options.legacyAttemptFloor));
+  const previousAttempts = Math.max(
+    retainedAttempts,
+    normalizeAttempts(options.legacyAttemptFloor),
+  );
   if (previousAttempts >= options.maxAutomaticAttempts) {
+    const attemptDescription =
+      options.rewedgeWindowMs === undefined
+        ? "accepted resume attempts"
+        : "rapid accepted resume attempts";
     return {
       allowed: false,
       reason:
-        `${options.ownerLabel} blocked after ${previousAttempts} rapid accepted resume attempts; ` +
+        `${options.ownerLabel} blocked after ${previousAttempts} ${attemptDescription}; ` +
         options.remediationHint,
       shouldMarkWedged: true,
     };
