@@ -22,6 +22,7 @@ export type MainSessionRecoveryObservation = {
 export type MainSessionRecoveryReservation = {
   sessionId: string;
   cycleId: string;
+  lifecycleGeneration: string;
   runId: string;
   attempt: number;
   previousLastAt?: number;
@@ -77,12 +78,12 @@ export type MainSessionRecoveryCommand =
       kind: "observe";
       cycleId: string;
       lifecycleGeneration: string;
-      now: number;
       sessionKey: string;
     }
   | {
       kind: "prepare_attempt";
       attempt: number;
+      lifecycleGeneration: string;
       now: number;
       observation: MainSessionRecoveryObservation;
       runId: string;
@@ -245,7 +246,7 @@ export function inspectMainSessionRecovery(params: {
     return {
       status: "tombstoned",
       reason: state.tombstone.reason.trim() || MAIN_RESTART_RECOVERY_WEDGED_FALLBACK_REASON,
-      repair: entry.abortedLastRun === true ? "clear_stale_abort" : null,
+      repair: "clear_stale_abort",
     };
   }
   if (hasCurrentForegroundClaim(state, params.lifecycleGeneration)) {
@@ -301,6 +302,19 @@ export function transitionMainSessionRecovery(
         // Rows interrupted by an older shipped version acquire identity before scanning.
         entry.mainRestartRecovery = createCycle(command.cycleId);
       }
+      const state = entry.mainRestartRecovery;
+      if (
+        state?.reservation &&
+        state.reservation.lifecycleGeneration !== command.lifecycleGeneration
+      ) {
+        // A process restart makes dispatch outcome unknowable: retain the charge,
+        // but release the stale slot so the next bounded attempt can proceed.
+        entry.mainRestartRecovery = {
+          ...state,
+          revision: nextRevision(state),
+          reservation: undefined,
+        };
+      }
       return {
         kind: "observed",
         view: inspectMainSessionRecovery({
@@ -337,6 +351,7 @@ export function transitionMainSessionRecovery(
           runId: command.runId,
           attempt: command.attempt,
           reservedAt: command.now,
+          lifecycleGeneration: command.lifecycleGeneration,
         },
       };
       entry.updatedAt = command.now;
@@ -345,6 +360,7 @@ export function transitionMainSessionRecovery(
         reservation: {
           sessionId: entry.sessionId,
           cycleId: state.cycleId,
+          lifecycleGeneration: command.lifecycleGeneration,
           runId: command.runId,
           attempt: command.attempt,
           ...(previousLastAt === undefined ? {} : { previousLastAt }),
@@ -359,7 +375,8 @@ export function transitionMainSessionRecovery(
         entry.sessionId !== command.reservation.sessionId ||
         state.cycleId !== command.reservation.cycleId ||
         reserved?.runId !== command.reservation.runId ||
-        reserved.attempt !== command.reservation.attempt
+        reserved.attempt !== command.reservation.attempt ||
+        reserved.lifecycleGeneration !== command.reservation.lifecycleGeneration
       ) {
         return { kind: "rejected", reason: "stale_reservation" };
       }
@@ -384,7 +401,10 @@ export function transitionMainSessionRecovery(
       if (entry.status !== "running" || entry.abortedLastRun !== true || !state) {
         return { kind: "rejected", reason: "not_interrupted" };
       }
-      if (state.reservation?.runId !== command.runId) {
+      if (
+        state.reservation?.runId !== command.runId ||
+        state.reservation.lifecycleGeneration !== command.lifecycleGeneration
+      ) {
         return { kind: "rejected", reason: "stale_reservation" };
       }
       if (hasCurrentForegroundClaim(state, command.lifecycleGeneration)) {

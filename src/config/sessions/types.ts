@@ -183,6 +183,7 @@ export type MainRestartRecoveryState = {
     runId: string;
     attempt: number;
     reservedAt: number;
+    lifecycleGeneration: string;
   };
   foregroundClaims?: {
     lifecycleGeneration: string;

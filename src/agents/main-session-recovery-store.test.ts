@@ -41,7 +41,6 @@ describe("main session recovery store", () => {
         kind: "observe",
         cycleId: "cycle-1",
         lifecycleGeneration: "generation-1",
-        now: 200,
         sessionKey,
       },
       requireWriteSuccess: true,
@@ -75,6 +74,7 @@ describe("main session recovery store", () => {
       command: {
         kind: "prepare_attempt",
         attempt: 1,
+        lifecycleGeneration: "generation-1",
         now: 200,
         observation: { sessionId: "session-1", cycleId: "cycle-1", revision: 1 },
         runId: "recovery-1",
@@ -130,6 +130,7 @@ describe("main session recovery store", () => {
       command: {
         kind: "prepare_attempt",
         attempt: 1,
+        lifecycleGeneration: "generation-1",
         now: 400,
         observation: { sessionId: "session-1", cycleId: "cycle-1", revision: 1 },
         runId: "stale-recovery",
@@ -158,6 +159,7 @@ describe("main session recovery store", () => {
       command: {
         kind: "prepare_attempt",
         attempt: 1,
+        lifecycleGeneration: "generation-1",
         now: 200,
         observation: { sessionId: "session-1", cycleId: "cycle-1", revision: 1 },
         runId: "recovery-1",

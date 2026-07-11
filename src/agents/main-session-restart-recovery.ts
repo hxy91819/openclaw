@@ -821,6 +821,7 @@ async function reserveMainRestartRecoveryAttempt(params: {
     command: {
       kind: "prepare_attempt",
       attempt: params.recoveryAttempt,
+      lifecycleGeneration: getAgentEventLifecycleGeneration(),
       now: Date.now(),
       observation: params.observation,
       runId: params.reservationRunId,
@@ -1097,7 +1098,6 @@ async function recoverStore(params: {
         kind: "observe",
         cycleId: crypto.randomUUID(),
         lifecycleGeneration: getAgentEventLifecycleGeneration(),
-        now: Date.now(),
         sessionKey,
       },
       requireWriteSuccess: true,

@@ -42,7 +42,6 @@ describe("main session recovery state", () => {
       kind: "observe",
       cycleId: "legacy-cycle",
       lifecycleGeneration: "generation-1",
-      now: 200,
       sessionKey,
     });
 
@@ -62,6 +61,7 @@ describe("main session recovery state", () => {
     const prepared = transitionMainSessionRecovery(entry, {
       kind: "prepare_attempt",
       attempt: 1,
+      lifecycleGeneration: "generation-1",
       now: 200,
       observation: { sessionId: "session-1", cycleId: "cycle-1", revision: 1 },
       runId: "recovery-1",
@@ -105,7 +105,12 @@ describe("main session recovery state", () => {
       mainRestartRecovery: recoveryState({
         revision: 2,
         attempts: { charged: 1, lastAt: 200 },
-        reservation: { runId: "recovery-1", attempt: 1, reservedAt: 200 },
+        reservation: {
+          runId: "recovery-1",
+          attempt: 1,
+          reservedAt: 200,
+          lifecycleGeneration: "generation-1",
+        },
       }),
     });
 
@@ -131,12 +136,44 @@ describe("main session recovery state", () => {
     expect(entry.mainRestartRecovery?.reservation).toBeUndefined();
   });
 
+  it("rejects a reservation created by an older lifecycle generation", () => {
+    const entry = interruptedEntry({
+      mainRestartRecovery: recoveryState({
+        revision: 2,
+        attempts: { charged: 1, lastAt: 200 },
+        reservation: {
+          runId: "recovery-1",
+          attempt: 1,
+          reservedAt: 200,
+          lifecycleGeneration: "generation-old",
+        },
+      }),
+    });
+
+    expect(
+      transitionMainSessionRecovery(entry, {
+        kind: "admit_recovery",
+        lifecycleGeneration: "generation-new",
+        now: 300,
+        runId: "recovery-1",
+        sessionId: "session-1",
+      }),
+    ).toEqual({ kind: "rejected", reason: "stale_reservation" });
+    expect(entry.mainRestartRecovery?.reservation).toBeDefined();
+    expect(entry.abortedLastRun).toBe(true);
+  });
+
   it("rejects recovery admission while any current-generation foreground claim remains", () => {
     const entry = interruptedEntry({
       mainRestartRecovery: recoveryState({
         revision: 4,
         attempts: { charged: 1 },
-        reservation: { runId: "recovery-1", attempt: 1, reservedAt: 200 },
+        reservation: {
+          runId: "recovery-1",
+          attempt: 1,
+          reservedAt: 200,
+          lifecycleGeneration: "generation-1",
+        },
         foregroundClaims: {
           lifecycleGeneration: "generation-1",
           tokens: ["foreground-1", "foreground-2"],
@@ -174,6 +211,42 @@ describe("main session recovery state", () => {
     expect(view).toMatchObject({ status: "recoverable", nextAttempt: 1 });
   });
 
+  it("retains the charge but releases a reservation orphaned by process restart", () => {
+    const entry = interruptedEntry({
+      mainRestartRecovery: recoveryState({
+        revision: 2,
+        attempts: { charged: 1, lastAt: 200 },
+        reservation: {
+          runId: "recovery-1",
+          attempt: 1,
+          reservedAt: 200,
+          lifecycleGeneration: "generation-old",
+        },
+      }),
+    });
+
+    expect(
+      transitionMainSessionRecovery(entry, {
+        kind: "observe",
+        cycleId: "unused",
+        lifecycleGeneration: "generation-new",
+        sessionKey,
+      }),
+    ).toEqual({
+      kind: "observed",
+      view: {
+        status: "recoverable",
+        observation: { sessionId: "session-1", cycleId: "cycle-1", revision: 3 },
+        nextAttempt: 2,
+      },
+    });
+    expect(entry.mainRestartRecovery).toMatchObject({
+      revision: 3,
+      attempts: { charged: 1, lastAt: 200 },
+    });
+    expect(entry.mainRestartRecovery?.reservation).toBeUndefined();
+  });
+
   it("rejects an old observation after a healthy clear and a new interrupted cycle", () => {
     const entry = interruptedEntry();
     const oldObservation = { sessionId: "session-1", cycleId: "cycle-1", revision: 1 };
@@ -188,6 +261,7 @@ describe("main session recovery state", () => {
       transitionMainSessionRecovery(entry, {
         kind: "prepare_attempt",
         attempt: 1,
+        lifecycleGeneration: "generation-1",
         now: 500,
         observation: oldObservation,
         runId: "stale-run",
