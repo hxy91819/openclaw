@@ -1827,14 +1827,12 @@ describe("main-session-restart-recovery", () => {
       delayMs: 0,
       maxRetries: 3,
     });
-    for (let i = 0; i < 100 && vi.mocked(callGateway).mock.calls.length < 3; i++) {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 10);
-      });
-    }
-
     let store = loadSessionStore(path.join(sessionsDir, "sessions.json"), { skipCache: true });
-    for (let i = 0; i < 100 && vi.mocked(callGateway).mock.calls.length < 3; i++) {
+    for (let i = 0; i < 100; i++) {
+      const recovery = recoveryTestView(store["agent:main:main"]);
+      if (vi.mocked(callGateway).mock.calls.length === 3 && recovery?.automaticAttempts === 0) {
+        break;
+      }
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 10);
       });

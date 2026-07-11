@@ -112,6 +112,56 @@ describe("main session recovery store", () => {
     });
   });
 
+  it("cancels a reservation after Gateway migrates its legacy session key", async () => {
+    const legacyKey = "main";
+    await saveSessionStore(
+      storePath,
+      {
+        [legacyKey]: {
+          sessionId: "session-1",
+          updatedAt: 100,
+          status: "running",
+          abortedLastRun: true,
+          mainRestartRecovery: {
+            schemaVersion: 1,
+            cycleId: "cycle-1",
+            revision: 1,
+            attempts: { charged: 0 },
+          },
+        },
+      },
+      { skipMaintenance: true },
+    );
+    const reserved = await commitMainSessionRecovery({
+      command: {
+        kind: "prepare_attempt",
+        attempt: 1,
+        lifecycleGeneration: "generation-1",
+        now: 200,
+        observation: { sessionId: "session-1", cycleId: "cycle-1", revision: 1 },
+        runId: "recovery-1",
+      },
+      target: { sessionKey: legacyKey, storePath },
+    });
+    expect(reserved.transition.kind).toBe("reserved");
+    if (reserved.transition.kind !== "reserved") {
+      throw new Error("expected reservation");
+    }
+    const migratedStore = loadSessionStore(storePath, { skipCache: true });
+    migratedStore[sessionKey] = migratedStore[legacyKey]!;
+    delete migratedStore[legacyKey];
+    await saveSessionStore(storePath, migratedStore, { skipMaintenance: true });
+
+    const cancelled = await commitMainSessionRecovery({
+      command: { kind: "cancel_reservation", reservation: reserved.transition.reservation },
+      target: { sessionKey: legacyKey, storePath },
+    });
+
+    expect(cancelled.transition).toEqual({ kind: "reservation_cancelled" });
+    expect(read().mainRestartRecovery).toMatchObject({ attempts: { charged: 0 } });
+    expect(read().mainRestartRecovery?.reservation).toBeUndefined();
+  });
+
   it("rejects an observation after the session is replaced", async () => {
     await write({
       sessionId: "session-2",
