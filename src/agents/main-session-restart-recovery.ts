@@ -52,6 +52,7 @@ import {
 } from "./embedded-agent-runner/run-state.js";
 import {
   evaluateMainRestartRecoveryGate,
+  hasCurrentMainRestartRecoveryOwner,
   isMainRestartRecoveryCandidate,
   markMainRestartRecoveryAttempt,
   markMainRestartRecoveryWedged,
@@ -712,8 +713,7 @@ function matchesMainRestartRecoverySnapshot(
     entry?.sessionId === expected.sessionId &&
     entry.updatedAt === expected.updatedAt &&
     isDeepStrictEqual(entry.mainRestartRecovery, expected.mainRestartRecovery) &&
-    entry.mainRestartRecovery?.nonRecoveryOwner?.lifecycleGeneration !==
-      getAgentEventLifecycleGeneration() &&
+    !hasCurrentMainRestartRecoveryOwner(entry, getAgentEventLifecycleGeneration()) &&
     entry.status === "running" &&
     entry.abortedLastRun === true
   );
@@ -959,15 +959,15 @@ async function rollbackMainRestartRecoveryAttempt(params: {
       ) {
         return { result: undefined };
       }
-      const concurrentOwner = entry.mainRestartRecovery.nonRecoveryOwner;
+      const concurrentOwners = entry.mainRestartRecovery.nonRecoveryOwners;
       const previousMainRestartRecovery = params.reservation.previousMainRestartRecovery;
-      entry.mainRestartRecovery = concurrentOwner
+      entry.mainRestartRecovery = concurrentOwners
         ? {
             ...previousMainRestartRecovery,
-            nonRecoveryOwner: concurrentOwner,
+            nonRecoveryOwners: concurrentOwners,
           }
         : previousMainRestartRecovery;
-      if (!concurrentOwner && entry.updatedAt === params.reservation.reservedUpdatedAt) {
+      if (!concurrentOwners && entry.updatedAt === params.reservation.reservedUpdatedAt) {
         entry.updatedAt = params.reservation.previousUpdatedAt;
       }
       return {

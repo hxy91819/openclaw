@@ -30,6 +30,60 @@ export function isMainRestartRecoveryCandidate(entry: SessionEntry, sessionKey: 
   );
 }
 
+export function hasCurrentMainRestartRecoveryOwner(
+  entry: SessionEntry,
+  lifecycleGeneration: string,
+): boolean {
+  const owners = entry.mainRestartRecovery?.nonRecoveryOwners;
+  return owners?.lifecycleGeneration === lifecycleGeneration && owners.tokens.length > 0;
+}
+
+export function claimMainRestartRecoveryOwner(params: {
+  entry: SessionEntry;
+  lifecycleGeneration: string;
+  token: string;
+}): void {
+  const current = params.entry.mainRestartRecovery?.nonRecoveryOwners;
+  const currentTokens =
+    current?.lifecycleGeneration === params.lifecycleGeneration ? current.tokens : [];
+  const tokens = [...new Set([...currentTokens, params.token])].toSorted();
+  params.entry.mainRestartRecovery = {
+    ...params.entry.mainRestartRecovery,
+    nonRecoveryOwners: {
+      lifecycleGeneration: params.lifecycleGeneration,
+      tokens,
+    },
+  };
+}
+
+export function releaseMainRestartRecoveryOwner(params: {
+  entry: SessionEntry;
+  lifecycleGeneration: string;
+  token: string;
+}): boolean {
+  const recoveryState = params.entry.mainRestartRecovery;
+  const owners = recoveryState?.nonRecoveryOwners;
+  if (
+    !recoveryState ||
+    owners?.lifecycleGeneration !== params.lifecycleGeneration ||
+    !owners.tokens.includes(params.token)
+  ) {
+    return false;
+  }
+  const tokens = owners.tokens.filter((token) => token !== params.token);
+  const { nonRecoveryOwners: _released, ...remainingRecoveryState } = recoveryState;
+  params.entry.mainRestartRecovery =
+    tokens.length > 0
+      ? {
+          ...remainingRecoveryState,
+          nonRecoveryOwners: { lifecycleGeneration: params.lifecycleGeneration, tokens },
+        }
+      : Object.keys(remainingRecoveryState).length > 0
+        ? remainingRecoveryState
+        : undefined;
+  return true;
+}
+
 export function isMainRestartRecoveryWedgedEntry(entry: unknown): boolean {
   return Boolean(
     entry &&

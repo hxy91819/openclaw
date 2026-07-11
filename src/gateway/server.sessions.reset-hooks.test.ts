@@ -360,9 +360,9 @@ test("sessions.reset removes automatic recovery state from the replacement sessi
       automaticAttempts: 3,
       lastAttemptAt: 10,
       lastRunId: "recovery-run",
-      nonRecoveryOwner: {
+      nonRecoveryOwners: {
         lifecycleGeneration: "generation-1",
-        token: "foreground-owner",
+        tokens: ["foreground-owner"],
       },
       wedgedAt: 20,
       wedgedReason: "exhausted",

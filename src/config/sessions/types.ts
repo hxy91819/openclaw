@@ -169,10 +169,10 @@ export type RestartRecoveryFuseState = {
 };
 
 export type MainRestartRecoveryState = RestartRecoveryFuseState & {
-  /** Current Gateway owner that makes an otherwise aborted row ineligible for restart recovery. */
-  nonRecoveryOwner?: {
+  /** Current Gateway admissions that make an otherwise aborted row ineligible for recovery. */
+  nonRecoveryOwners?: {
     lifecycleGeneration: string;
-    token: string;
+    tokens: string[];
   };
 };
 

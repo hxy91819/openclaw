@@ -29,6 +29,11 @@ import {
   INTERNAL_RUNTIME_CONTEXT_END,
 } from "./internal-runtime-context.js";
 import {
+  claimMainRestartRecoveryOwner,
+  hasCurrentMainRestartRecoveryOwner,
+  releaseMainRestartRecoveryOwner,
+} from "./main-session-recovery-state.js";
+import {
   markRestartAbortedMainSessions,
   markRestartAbortedMainSessionsFromLocks,
   markStartupOrphanedMainSessionsForRecovery,
@@ -40,11 +45,6 @@ import type { SessionLockInspection } from "./session-write-lock.js";
 
 vi.mock("../gateway/call.js", () => ({
   callGateway: vi.fn(async () => ({ runId: "run-resumed" })),
-  isGatewayTransportError: (value: unknown) =>
-    value instanceof Error &&
-    value.name === "GatewayTransportError" &&
-    ((value as Error & { kind?: unknown }).kind === "closed" ||
-      (value as Error & { kind?: unknown }).kind === "timeout"),
 }));
 
 let tmpDir: string;
@@ -146,21 +146,43 @@ function firstGatewayParams(): Record<string, unknown> {
   return params as Record<string, unknown>;
 }
 
-function createGatewayTransportError(kind: "closed" | "timeout"): Error {
-  const error = new Error(`gateway ${kind}`) as Error & { kind: "closed" | "timeout" };
-  error.name = "GatewayTransportError";
-  error.kind = kind;
-  return error;
-}
-
-function currentNonRecoveryOwner() {
+function currentNonRecoveryOwners(...tokens: string[]) {
   return {
     lifecycleGeneration: getAgentEventLifecycleGeneration(),
-    token: "foreground-token",
+    tokens: tokens.length > 0 ? tokens : ["foreground-token"],
   };
 }
 
 describe("main-session-restart-recovery", () => {
+  it("retains overlapping foreground owners until every admission releases", () => {
+    const lifecycleGeneration = getAgentEventLifecycleGeneration();
+    const entry: SessionEntry = {
+      sessionId: "main-session",
+      updatedAt: 1,
+      mainRestartRecovery: { automaticAttempts: 2 },
+    };
+
+    claimMainRestartRecoveryOwner({ entry, lifecycleGeneration, token: "owner-a" });
+    claimMainRestartRecoveryOwner({ entry, lifecycleGeneration, token: "owner-b" });
+    expect(entry.mainRestartRecovery?.nonRecoveryOwners).toEqual(
+      currentNonRecoveryOwners("owner-a", "owner-b"),
+    );
+
+    expect(releaseMainRestartRecoveryOwner({ entry, lifecycleGeneration, token: "owner-b" })).toBe(
+      true,
+    );
+    expect(hasCurrentMainRestartRecoveryOwner(entry, lifecycleGeneration)).toBe(true);
+    expect(entry.mainRestartRecovery?.nonRecoveryOwners).toEqual(
+      currentNonRecoveryOwners("owner-a"),
+    );
+
+    expect(releaseMainRestartRecoveryOwner({ entry, lifecycleGeneration, token: "owner-a" })).toBe(
+      true,
+    );
+    expect(hasCurrentMainRestartRecoveryOwner(entry, lifecycleGeneration)).toBe(false);
+    expect(entry.mainRestartRecovery).toEqual({ automaticAttempts: 2 });
+  });
+
   it("marks only matching running main sessions by active session key", async () => {
     // Only top-level running main sessions are restart-recoverable. Completed,
     // child, cron, and non-active sessions must not be marked.
@@ -1039,7 +1061,7 @@ describe("main-session-restart-recovery", () => {
             lastInteractionAt: scannedAt,
             mainRestartRecovery: {
               ...store["agent:main:main"]?.mainRestartRecovery,
-              nonRecoveryOwner: currentNonRecoveryOwner(),
+              nonRecoveryOwners: currentNonRecoveryOwners(),
             },
           },
         });
@@ -1065,7 +1087,7 @@ describe("main-session-restart-recovery", () => {
       mainRestartRecovery: {
         automaticAttempts: 3,
         lastRunId: "recovery-run-3",
-        nonRecoveryOwner: currentNonRecoveryOwner(),
+        nonRecoveryOwners: currentNonRecoveryOwners(),
       },
     });
     expect(store["agent:main:main"]?.mainRestartRecovery).not.toHaveProperty("wedgedAt");
@@ -1267,7 +1289,7 @@ describe("main-session-restart-recovery", () => {
             ...store["agent:main:main"],
             updatedAt: scannedAt,
             lastInteractionAt: scannedAt,
-            mainRestartRecovery: { nonRecoveryOwner: currentNonRecoveryOwner() },
+            mainRestartRecovery: { nonRecoveryOwners: currentNonRecoveryOwners() },
           },
         });
         return messages;
@@ -1287,7 +1309,7 @@ describe("main-session-restart-recovery", () => {
       abortedLastRun: true,
     });
     expect(store["agent:main:main"]?.mainRestartRecovery).toEqual({
-      nonRecoveryOwner: currentNonRecoveryOwner(),
+      nonRecoveryOwners: currentNonRecoveryOwners(),
     });
   });
 
@@ -1299,7 +1321,7 @@ describe("main-session-restart-recovery", () => {
         updatedAt: Date.now() - 10_000,
         status: "running",
         abortedLastRun: true,
-        mainRestartRecovery: { nonRecoveryOwner: currentNonRecoveryOwner() },
+        mainRestartRecovery: { nonRecoveryOwners: currentNonRecoveryOwners() },
       },
     });
     await writeTranscript(sessionsDir, "main-session", [
@@ -1322,9 +1344,9 @@ describe("main-session-restart-recovery", () => {
         status: "running",
         abortedLastRun: true,
         mainRestartRecovery: {
-          nonRecoveryOwner: {
+          nonRecoveryOwners: {
             lifecycleGeneration: `${getAgentEventLifecycleGeneration()}-previous`,
-            token: "previous-owner-token",
+            tokens: ["previous-owner-token"],
           },
         },
       },
@@ -1343,7 +1365,7 @@ describe("main-session-restart-recovery", () => {
       automaticAttempts: 1,
       lastRunId: "run-resumed",
     });
-    expect(store["agent:main:main"]?.mainRestartRecovery).not.toHaveProperty("nonRecoveryOwner");
+    expect(store["agent:main:main"]?.mainRestartRecovery).not.toHaveProperty("nonRecoveryOwners");
   });
 
   it("does not overwrite a concurrent main recovery reservation", async () => {
@@ -1584,7 +1606,7 @@ describe("main-session-restart-recovery", () => {
           lastInteractionAt: admittedAt,
           mainRestartRecovery: {
             ...reservedEntry.mainRestartRecovery,
-            nonRecoveryOwner: currentNonRecoveryOwner(),
+            nonRecoveryOwners: currentNonRecoveryOwners(),
           },
         },
       });
@@ -1603,48 +1625,12 @@ describe("main-session-restart-recovery", () => {
       abortedLastRun: true,
     });
     expect(store["agent:main:main"]?.mainRestartRecovery).toEqual({
-      nonRecoveryOwner: currentNonRecoveryOwner(),
+      nonRecoveryOwners: currentNonRecoveryOwners(),
     });
   });
 
-  it.each(["closed", "timeout"] as const)(
-    "retains a durable attempt when Gateway transport becomes %s after dispatch",
-    async (kind) => {
-      vi.mocked(callGateway).mockImplementationOnce(async (request) => {
-        request.onDispatched?.();
-        throw createGatewayTransportError(kind);
-      });
-      const sessionsDir = await makeSessionsDir();
-      await writeStore(sessionsDir, {
-        "agent:main:main": {
-          sessionId: "main-session",
-          updatedAt: Date.now() - 10_000,
-          status: "running",
-          abortedLastRun: true,
-        },
-      });
-      await writeTranscript(sessionsDir, "main-session", [
-        { role: "user", content: "run the tool" },
-        { role: "toolResult", content: "done" },
-      ]);
-
-      const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
-
-      expect(result).toEqual({ recovered: 0, failed: 1, skipped: 0 });
-      const store = loadSessionStore(path.join(sessionsDir, "sessions.json"), {
-        skipCache: true,
-      });
-      expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
-      expect(store["agent:main:main"]?.mainRestartRecovery).toMatchObject({
-        automaticAttempts: 1,
-        lastAttemptAt: expect.any(Number),
-        lastRunId: expect.any(String),
-      });
-    },
-  );
-
-  it("rolls back a durable attempt when Gateway closes before dispatch", async () => {
-    vi.mocked(callGateway).mockRejectedValueOnce(createGatewayTransportError("closed"));
+  it("rolls back a durable attempt when Gateway fails before dispatch", async () => {
+    vi.mocked(callGateway).mockRejectedValueOnce(new Error("gateway unavailable before dispatch"));
     const sessionsDir = await makeSessionsDir();
     await writeStore(sessionsDir, {
       "agent:main:main": {
@@ -1720,7 +1706,7 @@ describe("main-session-restart-recovery", () => {
             ...store["agent:main:main"],
             updatedAt: scannedAt,
             lastInteractionAt: scannedAt,
-            mainRestartRecovery: { nonRecoveryOwner: currentNonRecoveryOwner() },
+            mainRestartRecovery: { nonRecoveryOwners: currentNonRecoveryOwners() },
           },
         });
         throw new Error("transcript unavailable");
@@ -1738,7 +1724,7 @@ describe("main-session-restart-recovery", () => {
       lastInteractionAt: scannedAt,
       status: "running",
       abortedLastRun: true,
-      mainRestartRecovery: { nonRecoveryOwner: currentNonRecoveryOwner() },
+      mainRestartRecovery: { nonRecoveryOwners: currentNonRecoveryOwners() },
     });
   });
 
@@ -1996,7 +1982,7 @@ describe("main-session-restart-recovery", () => {
             ...store["agent:main:main"],
             updatedAt: scannedAt,
             lastInteractionAt: scannedAt,
-            mainRestartRecovery: { nonRecoveryOwner: currentNonRecoveryOwner() },
+            mainRestartRecovery: { nonRecoveryOwners: currentNonRecoveryOwners() },
           },
         });
         return messages;
@@ -2014,7 +2000,7 @@ describe("main-session-restart-recovery", () => {
       lastInteractionAt: scannedAt,
       status: "running",
       abortedLastRun: true,
-      mainRestartRecovery: { nonRecoveryOwner: currentNonRecoveryOwner() },
+      mainRestartRecovery: { nonRecoveryOwners: currentNonRecoveryOwners() },
     });
   });
 

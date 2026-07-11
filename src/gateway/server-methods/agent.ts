@@ -53,7 +53,12 @@ import {
   hasGeneratedMediaCompletionEvent,
 } from "../../agents/internal-event-contract.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
-import { isMainRestartRecoveryCandidate } from "../../agents/main-session-recovery-state.js";
+import {
+  claimMainRestartRecoveryOwner,
+  hasCurrentMainRestartRecoveryOwner,
+  isMainRestartRecoveryCandidate,
+  releaseMainRestartRecoveryOwner,
+} from "../../agents/main-session-recovery-state.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
@@ -367,19 +372,16 @@ async function releaseMainRestartRecoveryNonRecoveryOwner(params: {
     storePath: params.storePath,
     update: (entries) => {
       const entry = entries[0]?.entry;
-      const recoveryState = entry?.mainRestartRecovery;
-      const owner = recoveryState?.nonRecoveryOwner;
       if (
         !entry ||
-        !recoveryState ||
-        owner?.lifecycleGeneration !== params.lifecycleGeneration ||
-        owner.token !== params.ownerToken
+        !releaseMainRestartRecoveryOwner({
+          entry,
+          lifecycleGeneration: params.lifecycleGeneration,
+          token: params.ownerToken,
+        })
       ) {
         return { result: undefined };
       }
-      const { nonRecoveryOwner: _released, ...remainingRecoveryState } = recoveryState;
-      entry.mainRestartRecovery =
-        Object.keys(remainingRecoveryState).length > 0 ? remainingRecoveryState : undefined;
       return {
         replacements: [{ sessionKey: params.sessionKey, entry }],
         result: undefined,
@@ -2087,6 +2089,15 @@ export const agentHandlers: GatewayRequestHandlers = {
       }
       return released;
     };
+    const settleAgentRunClaims = async (outcome: {
+      terminalOutcome: AgentRunTerminalOutcome;
+      onRecovered?: () => void;
+    }): Promise<boolean> => {
+      // Keep foreground admission fenced through dispatch, but release on every
+      // settlement; command failures can bypass the store update that clears it.
+      await releaseMainRestartRecoveryOwnerClaim("settled");
+      return await releaseCronContinuationClaimWithRecovery(outcome, outcome.onRecovered);
+    };
 
     try {
       const transcriptInputText = (request.message ?? "").trim();
@@ -3182,8 +3193,7 @@ export const agentHandlers: GatewayRequestHandlers = {
                       freshEntry.status === "running" &&
                       freshEntry.abortedLastRun === true &&
                       freshEntry.mainRestartRecovery?.lastRunId === idem &&
-                      freshEntry.mainRestartRecovery.nonRecoveryOwner?.lifecycleGeneration !==
-                        lifecycleGeneration;
+                      !hasCurrentMainRestartRecoveryOwner(freshEntry, lifecycleGeneration);
                     if (!reservationStillOwned) {
                       restartRecoveryReservationConflict =
                         `Session "${canonicalSessionKey}" restart recovery reservation is stale; ` +
@@ -3291,10 +3301,11 @@ export const agentHandlers: GatewayRequestHandlers = {
                     const ownerToken = mainRestartRecoveryOwnerClaim?.ownerToken ?? randomUUID();
                     // Linearize foreground admission with recovery reservation under
                     // the same writer lock; outer cleanup releases pre-dispatch rejects.
-                    merged.mainRestartRecovery = {
-                      ...merged.mainRestartRecovery,
-                      nonRecoveryOwner: { lifecycleGeneration, token: ownerToken },
-                    };
+                    claimMainRestartRecoveryOwner({
+                      entry: merged,
+                      lifecycleGeneration,
+                      token: ownerToken,
+                    });
                     mainRestartRecoveryOwnerClaim = {
                       ownerToken,
                       sessionKey: canonicalSessionKey,
@@ -4176,10 +4187,7 @@ export const agentHandlers: GatewayRequestHandlers = {
             dedupeKeys: agentDedupeKeys,
             abortController: activeRunAbort.controller,
             cleanupAbortController: cleanupAdmittedRun,
-            onSettled: restoredCronContinuation
-              ? async ({ terminalOutcome, onRecovered }) =>
-                  await releaseCronContinuationClaimWithRecovery({ terminalOutcome }, onRecovered)
-              : undefined,
+            onSettled: settleAgentRunClaims,
             respond,
             context,
             taskTrackingMode: dispatchTaskTrackingMode,

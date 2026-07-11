@@ -1800,7 +1800,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
     });
   });
 
-  it("clears main recovery markers but preserves subagent recovery after a successful normal run", async () => {
+  it("clears main recovery markers after settled background progress", async () => {
     await withTempSessionStore(async ({ storePath }) => {
       const cfg = {} as OpenClawConfig;
       const sessionKey = "agent:main:explicit:test-clear-recovery-state";
@@ -1839,6 +1839,9 @@ describe("updateSessionStoreAfterAgentRun", () => {
         sessionStore,
         defaultProvider: "openai",
         defaultModel: "gpt-5.5",
+        touchInteraction: false,
+        touchActivity: false,
+        preserveRuntimeModel: true,
         result: {
           meta: {
             durationMs: 1,

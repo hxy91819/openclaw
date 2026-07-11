@@ -204,6 +204,8 @@ export async function updateSessionStoreAfterAgentRun(params: {
       next.restartRecoveryForceSafeTools = undefined;
     }
     if (!next.abortedLastRun) {
+      // Any settled run on this session proves forward progress; interaction and
+      // activity flags only control user-facing metadata, not fuse reset.
       clearAutomaticRestartRecoveryState(next);
     }
     if (result.meta.systemPromptReport) {

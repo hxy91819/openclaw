@@ -572,17 +572,7 @@ describe("GatewayClient", () => {
   });
 
   test("keeps waiting for a dispatched request when its notification callback throws", async () => {
-    const client = new GatewayClient({ requestTimeoutMs: 25 });
-    const send = vi.fn();
-    (
-      client as unknown as {
-        ws: WebSocket | { readyState: number; send: (data: string) => void; close: () => void };
-      }
-    ).ws = {
-      readyState: WebSocket.OPEN,
-      send,
-      close: vi.fn(),
-    };
+    const { client, send } = createOpenGatewayClient(25);
 
     const requestPromise = client.request<{ ok: boolean }>("status", undefined, {
       onDispatched: () => {
