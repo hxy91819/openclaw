@@ -1,10 +1,4 @@
-export type RestartRecoveryFuseState = {
-  automaticAttempts?: number;
-  lastAttemptAt?: number;
-  lastRunId?: string;
-  wedgedAt?: number;
-  wedgedReason?: string;
-};
+import type { RestartRecoveryFuseState } from "../config/sessions/types.js";
 
 export type RestartRecoveryFuseGate =
   | {

@@ -203,7 +203,7 @@ describe("session store key normalization", () => {
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
-  it("clears main recovery markers but preserves subagent recovery when recording inbound metadata", async () => {
+  it("preserves recovery markers when recording inbound metadata", async () => {
     await fs.writeFile(
       storePath,
       JSON.stringify(
@@ -243,9 +243,16 @@ describe("session store key normalization", () => {
     });
 
     const store = loadSessionStore(storePath, { skipCache: true });
-    expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(false);
-    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toBeUndefined();
-    expect(store[CANONICAL_KEY]).not.toHaveProperty("mainRestartRecovery");
+    expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(true);
+    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toEqual([
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+    ]);
+    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-1",
+    });
     expect(store[CANONICAL_KEY]?.subagentRecovery).toEqual({
       automaticAttempts: 2,
       lastAttemptAt: 3,
@@ -255,7 +262,7 @@ describe("session store key normalization", () => {
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
-  it("preserves automatic recovery state when inbound metadata clear is disabled", async () => {
+  it("preserves automatic recovery state for outbound metadata refreshes", async () => {
     await fs.writeFile(
       storePath,
       JSON.stringify(
@@ -286,7 +293,6 @@ describe("session store key normalization", () => {
       storePath,
       sessionKey: MIXED_CASE_KEY,
       ctx: createInboundContext(),
-      clearAutomaticRecoveryState: false,
     });
 
     const store = loadSessionStore(storePath, { skipCache: true });
@@ -303,7 +309,7 @@ describe("session store key normalization", () => {
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
-  it("clears main recovery markers but preserves subagent recovery when updating the last route", async () => {
+  it("preserves recovery markers when updating the last route", async () => {
     await fs.writeFile(
       storePath,
       JSON.stringify(
@@ -344,9 +350,16 @@ describe("session store key normalization", () => {
     });
 
     const store = loadSessionStore(storePath, { skipCache: true });
-    expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(false);
-    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toBeUndefined();
-    expect(store[CANONICAL_KEY]).not.toHaveProperty("mainRestartRecovery");
+    expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(true);
+    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toEqual([
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+    ]);
+    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-1",
+    });
     expect(store[CANONICAL_KEY]?.subagentRecovery).toEqual({
       automaticAttempts: 2,
       lastAttemptAt: 3,

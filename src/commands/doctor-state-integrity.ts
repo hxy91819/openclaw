@@ -9,6 +9,11 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import { note } from "../../packages/terminal-core/src/note.js";
 import { listAgentEntries, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import {
+  clearWedgedMainRestartRecoveryAbort,
+  formatMainRestartRecoveryWedgedReason,
+  isMainRestartRecoveryWedgedEntry,
+} from "../agents/main-session-recovery-state.js";
+import {
   clearWedgedSubagentRecoveryAbort,
   formatSubagentRecoveryWedgedReason,
   isSubagentRecoveryWedgedEntry,
@@ -1303,6 +1308,62 @@ export async function noteStateIntegrity(
           `  Prune missing entries: ${formatCliCommand(`openclaw sessions cleanup --store "${absoluteStorePath}" --enforce --fix-missing`)}`,
         ].join("\n"),
       );
+    }
+
+    const wedgedMainSessions = entries.filter(([, entry]) =>
+      isMainRestartRecoveryWedgedEntry(entry),
+    );
+    if (wedgedMainSessions.length > 0) {
+      const wedgedCount = countLabel(wedgedMainSessions.length, "wedged main session");
+      warnings.push(
+        [
+          `- Found ${wedgedCount} with automatic restart recovery tombstoned.`,
+          "  OpenClaw will not auto-resume these sessions again; inspect the failed turn, then use /new or reset to replace the session.",
+          `  Examples: ${wedgedMainSessions
+            .slice(0, 3)
+            .map(([key]) => key)
+            .join(", ")}`,
+        ].join("\n"),
+      );
+
+      const visibleWedgedReasons = uniqueStrings(
+        wedgedMainSessions.map(([, entry]) => formatMainRestartRecoveryWedgedReason(entry)),
+      ).slice(0, 2);
+      if (visibleWedgedReasons.length > 0) {
+        warnings.push(visibleWedgedReasons.map((reason) => `  Reason: ${reason}`).join("\n"));
+      }
+
+      const staleAbortedMainSessions = wedgedMainSessions.filter(
+        ([, entry]) => entry.abortedLastRun === true,
+      );
+      if (staleAbortedMainSessions.length > 0) {
+        const staleCount = countLabel(staleAbortedMainSessions.length, "wedged main session");
+        const repairWedged = await prompter.confirmRuntimeRepair({
+          message: `Clear stale aborted recovery flags for ${staleCount}?`,
+          initialValue: true,
+        });
+        if (repairWedged) {
+          let repaired = 0;
+          const repairedAt = Date.now();
+          await updateSessionStore(absoluteStorePath, (currentStore) => {
+            for (const [key] of staleAbortedMainSessions) {
+              const current = currentStore[key];
+              if (current && clearWedgedMainRestartRecoveryAbort(current, repairedAt)) {
+                repaired += 1;
+                currentStore[key] = current;
+              }
+            }
+          });
+          if (repaired > 0) {
+            changes.push(
+              `- Cleared aborted restart-recovery flags for ${countLabel(
+                repaired,
+                "wedged main session",
+              )}.`,
+            );
+          }
+        }
+      }
     }
 
     const wedgedSubagentSessions = entries.filter(([, entry]) =>

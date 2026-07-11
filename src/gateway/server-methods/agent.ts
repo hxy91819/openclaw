@@ -2978,7 +2978,7 @@ export const agentHandlers: GatewayRequestHandlers = {
             freshRecoverTerminalSession &&
             !freshSessionRotatedSinceLoad &&
             patchSessionId === freshEntry?.sessionId;
-          const automaticRecoveryClearPatch = touchInteraction
+          const automaticRecoveryClearPatch = shouldClearRotatedState
             ? buildAutomaticRestartRecoveryClearPatch(freshEntry)
             : {};
           const patch: Partial<SessionEntry> = {

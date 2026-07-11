@@ -155,12 +155,12 @@ export type SessionPluginNextTurnInjection = {
   metadata?: SessionPluginJsonValue;
 };
 
-export type MainRestartRecoveryState = {
-  /** Consecutive accepted automatic main-session recovery resumes in the rapid re-wedge window. */
+export type RestartRecoveryFuseState = {
+  /** Accepted automatic recovery resumes retained by the owning recovery policy. */
   automaticAttempts?: number;
-  /** Timestamp (ms) of the latest accepted automatic main-session recovery resume. */
+  /** Timestamp (ms) of the latest accepted automatic recovery resume. */
   lastAttemptAt?: number;
-  /** Registry run id that triggered the latest automatic main-session recovery resume. */
+  /** Registry run id that triggered the latest automatic recovery resume. */
   lastRunId?: string;
   /** Timestamp (ms) when automatic recovery was tombstoned for this session. */
   wedgedAt?: number;
@@ -168,18 +168,9 @@ export type MainRestartRecoveryState = {
   wedgedReason?: string;
 };
 
-export type SubagentRecoveryState = {
-  /** Consecutive accepted automatic orphan-recovery resumes in the rapid re-wedge window. */
-  automaticAttempts?: number;
-  /** Timestamp (ms) of the latest accepted automatic orphan-recovery resume. */
-  lastAttemptAt?: number;
-  /** Registry run id that triggered the latest automatic orphan-recovery resume. */
-  lastRunId?: string;
-  /** Timestamp (ms) when automatic recovery was tombstoned for this session. */
-  wedgedAt?: number;
-  /** Human-readable reason automatic recovery was tombstoned. */
-  wedgedReason?: string;
-};
+export type MainRestartRecoveryState = RestartRecoveryFuseState;
+
+export type SubagentRecoveryState = RestartRecoveryFuseState;
 
 export type LaneExecutionState =
   | "active"

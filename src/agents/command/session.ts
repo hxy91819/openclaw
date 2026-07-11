@@ -26,7 +26,10 @@ import {
 import { resolveChannelResetConfig, resolveSessionResetType } from "../../config/sessions/reset.js";
 import { listSessionEntries } from "../../config/sessions/session-accessor.js";
 import { resolveSessionKey } from "../../config/sessions/session-key.js";
-import type { SessionEntry } from "../../config/sessions/types.js";
+import {
+  clearAutomaticRestartRecoveryState,
+  type SessionEntry,
+} from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   buildAgentMainSessionKey,
@@ -73,6 +76,7 @@ export function clearRotatedSessionMetadata(entry: SessionEntry): SessionEntry {
     sessionStartedAt: undefined,
     lastInteractionAt: undefined,
   };
+  clearAutomaticRestartRecoveryState(next);
   clearAllCliSessions(next);
   return next;
 }

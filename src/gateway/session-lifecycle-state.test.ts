@@ -13,6 +13,23 @@ vi.mock("../config/sessions/session-accessor.js", () => ({
   updateSessionEntry: persistenceMocks.updateSessionEntry,
 }));
 
+vi.mock("../config/sessions.js", () => ({
+  buildAutomaticRestartRecoveryClearPatch: (entry?: {
+    abortedLastRun?: boolean;
+    restartRecoveryRuns?: unknown;
+    mainRestartRecovery?: unknown;
+  }) =>
+    entry?.abortedLastRun === true ||
+    entry?.restartRecoveryRuns !== undefined ||
+    entry?.mainRestartRecovery !== undefined
+      ? {
+          abortedLastRun: false,
+          restartRecoveryRuns: undefined,
+          mainRestartRecovery: undefined,
+         }
+       : {},
+}));
+
 vi.mock("./session-utils.js", () => ({
   loadSessionEntry: persistenceMocks.loadSessionEntry,
 }));

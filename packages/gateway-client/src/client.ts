@@ -255,6 +255,8 @@ export type GatewayClientRequestOptions = {
   expectFinal?: boolean;
   timeoutMs?: number | null;
   signal?: AbortSignal;
+  /** Called after the request frame has been handed to the WebSocket transport. */
+  onDispatched?: () => void;
   /** Called once for expectFinal requests after an accepted response, before the final result. */
   onAccepted?: (payload: unknown) => void;
 };
@@ -320,6 +322,18 @@ export class GatewayClientRequestError extends Error {
     this.details = error.details;
     this.retryable = error.retryable === true;
     this.retryAfterMs = error.retryAfterMs;
+  }
+}
+
+export class GatewayClientRequestTimeoutError extends Error {
+  readonly method: string;
+  readonly timeoutMs: number;
+
+  constructor(params: { method: string; timeoutMs: number }) {
+    super(`gateway request timeout for ${params.method}`);
+    this.name = "GatewayClientRequestTimeoutError";
+    this.method = params.method;
+    this.timeoutMs = params.timeoutMs;
   }
 }
 
@@ -1619,7 +1633,7 @@ export class GatewayClient {
               const pending = this.pending.get(id);
               this.pending.delete(id);
               pending?.cleanup?.();
-              reject(new Error(`gateway request timeout for ${method}`));
+              reject(new GatewayClientRequestTimeoutError({ method, timeoutMs }));
             }, timeoutMs);
       const cleanup = () => {
         if (timeout) {
@@ -1652,6 +1666,13 @@ export class GatewayClient {
       this.pending.delete(id);
       pending?.cleanup?.();
       throw error;
+    }
+    try {
+      opts?.onDispatched?.();
+    } catch (err) {
+      this.logDebug(
+        `gateway client dispatched callback error: ${formatGatewayClientErrorForLog(err)}`,
+      );
     }
     return p;
   }

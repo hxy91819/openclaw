@@ -10,7 +10,6 @@ import { setMinimalOutboundSessionPluginRegistryForTests } from "./outbound-sess
 type InboundMetadataParams = {
   sessionKey?: string;
   storePath?: string;
-  clearAutomaticRecoveryState?: boolean;
 };
 
 const mocks = vi.hoisted(() => ({
@@ -574,6 +573,6 @@ describe("ensureOutboundSessionEntry", () => {
     const metadata = firstMockArg(mocks.recordInboundSessionMeta, "recordInboundSessionMeta");
     expect(metadata.storePath).toBe("/stores/main.json");
     expect(metadata.sessionKey).toBe("agent:main:workspace:channel:c1");
-    expect(metadata.clearAutomaticRecoveryState).toBe(false);
+    expect(metadata).not.toHaveProperty("clearAutomaticRecoveryState");
   });
 });

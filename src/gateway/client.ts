@@ -29,6 +29,7 @@ import { VERSION } from "../version.js";
 export {
   GATEWAY_CLOSE_CODE_HINTS,
   GatewayClientRequestError,
+  GatewayClientRequestTimeoutError,
   describeGatewayCloseCode,
   isGatewayConnectAssemblyError,
   resolveGatewayClientConnectChallengeTimeoutMs,
