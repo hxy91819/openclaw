@@ -387,6 +387,84 @@ describe("doctor state integrity oauth dir checks", () => {
     expect(text).not.toContain("Examples:");
   });
 
+  it("reports canonical main-session restart recovery tombstones without offering a repair", async () => {
+    const cfg: OpenClawConfig = {};
+    writeSessionStore(cfg, {
+      "agent:main:main": {
+        sessionId: "session-wedged-main",
+        updatedAt: Date.now(),
+        abortedLastRun: false,
+        mainRestartRecovery: {
+          automaticAttempts: 3,
+          lastAttemptAt: Date.now() - 30_000,
+          lastRunId: "run-wedged-main",
+          wedgedAt: Date.now() - 20_000,
+          wedgedReason: "main-session restart recovery blocked after 3 accepted resume attempts",
+        },
+      },
+    });
+
+    const confirmRuntimeRepair = vi.fn(async () => false);
+    await noteStateIntegrity(cfg, { confirmRuntimeRepair, note: noteMock });
+
+    const text = stateIntegrityText();
+    expect(text).toContain("Found 1 wedged main session");
+    expect(text).toContain("agent:main:main");
+    expect(text).toContain("use /new or reset");
+    expect(text).toContain("blocked after 3 accepted resume attempts");
+    expect(hasRepairPromptMessage(confirmRuntimeRepair, "wedged main session")).toBe(false);
+  });
+
+  it("clears only stale aborted flags on tombstoned main sessions when approved", async () => {
+    const cfg: OpenClawConfig = {};
+    const staleKey = "agent:main:stale-tombstone";
+    const canonicalKey = "agent:main:canonical-tombstone";
+    const canonicalUpdatedAt = Date.now();
+    writeSessionStore(cfg, {
+      [staleKey]: {
+        sessionId: "session-stale-main",
+        updatedAt: 0,
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          automaticAttempts: 3,
+          wedgedAt: Date.now() - 20_000,
+          wedgedReason: "stale main tombstone",
+        },
+      },
+      [canonicalKey]: {
+        sessionId: "session-canonical-main",
+        updatedAt: canonicalUpdatedAt,
+        abortedLastRun: false,
+        mainRestartRecovery: {
+          automaticAttempts: 3,
+          wedgedAt: Date.now() - 10_000,
+          wedgedReason: "canonical main tombstone",
+        },
+      },
+    });
+
+    const confirmRuntimeRepair = vi.fn(async (params: { message: string }) =>
+      params.message.includes("wedged main session"),
+    );
+    await noteStateIntegrity(cfg, { confirmRuntimeRepair, note: noteMock });
+
+    const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
+    const persisted = JSON.parse(fs.readFileSync(storePath, "utf8")) as Record<
+      string,
+      {
+        abortedLastRun?: boolean;
+        mainRestartRecovery?: { wedgedAt?: number };
+        updatedAt?: number;
+      }
+    >;
+    expect(persisted[staleKey]?.abortedLastRun).toBe(false);
+    expect(persisted[staleKey]?.mainRestartRecovery?.wedgedAt).toEqual(expect.any(Number));
+    expect(persisted[canonicalKey]?.abortedLastRun).not.toBe(true);
+    expect(persisted[canonicalKey]?.mainRestartRecovery?.wedgedAt).toEqual(expect.any(Number));
+    expect(persisted[canonicalKey]?.updatedAt).toBe(canonicalUpdatedAt);
+    expect(doctorChangesText()).toContain("1 wedged main session");
+  });
+
   it("warns about tombstoned subagent restart recovery sessions", async () => {
     const cfg: OpenClawConfig = {};
     writeSessionStore(cfg, {

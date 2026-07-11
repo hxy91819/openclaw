@@ -10,6 +10,20 @@ const persistenceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../config/sessions.js", () => ({
+  buildAutomaticRestartRecoveryClearPatch: (entry?: {
+    abortedLastRun?: boolean;
+    restartRecoveryRuns?: unknown;
+    mainRestartRecovery?: unknown;
+  }) =>
+    entry?.abortedLastRun === true ||
+    entry?.restartRecoveryRuns !== undefined ||
+    entry?.mainRestartRecovery !== undefined
+      ? {
+          abortedLastRun: false,
+          restartRecoveryRuns: undefined,
+          mainRestartRecovery: undefined,
+        }
+      : {},
   updateSessionStoreEntry: persistenceMocks.updateSessionStoreEntry,
 }));
 

@@ -26,7 +26,10 @@ import {
 import { resolveChannelResetConfig, resolveSessionResetType } from "../../config/sessions/reset.js";
 import { resolveSessionKey } from "../../config/sessions/session-key.js";
 import { loadSessionStore } from "../../config/sessions/store-load.js";
-import type { SessionEntry } from "../../config/sessions/types.js";
+import {
+  clearAutomaticRestartRecoveryState,
+  type SessionEntry,
+} from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   buildAgentMainSessionKey,
@@ -71,6 +74,7 @@ export function clearRotatedSessionMetadata(entry: SessionEntry): SessionEntry {
     sessionStartedAt: undefined,
     lastInteractionAt: undefined,
   };
+  clearAutomaticRestartRecoveryState(next);
   clearAllCliSessions(next);
   return next;
 }
@@ -401,9 +405,8 @@ export function resolveSession(opts: {
   const sessionId =
     requestedSessionId || (fresh ? sessionEntry?.sessionId : undefined) || crypto.randomUUID();
   const isNewSession = !fresh && !requestedSessionId;
-  const resolvedSessionEntry = isNewSession && sessionEntry
-    ? clearRotatedSessionMetadata(sessionEntry)
-    : sessionEntry;
+  const resolvedSessionEntry =
+    isNewSession && sessionEntry ? clearRotatedSessionMetadata(sessionEntry) : sessionEntry;
 
   clearBootstrapSnapshotOnSessionRollover({
     sessionKey,

@@ -1487,7 +1487,7 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(state.updateSessionStoreAfterAgentRunMock).toHaveBeenCalledTimes(1);
   });
 
-  it("clears stale automatic recovery state when a local user run is admitted", async () => {
+  it("preserves automatic recovery state until a local user run completes", async () => {
     setupSingleAttemptFallback();
     state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("openai", "gpt-5.4"));
     setupSessionTouchStore();
@@ -1515,9 +1515,17 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     const firstPersistedEntry = (
       state.persistSessionEntryMock.mock.calls[0]?.[0] as { entry?: SessionEntry } | undefined
     )?.entry;
-    expect(firstPersistedEntry?.abortedLastRun).toBe(false);
-    expect(firstPersistedEntry?.restartRecoveryRuns).toBeUndefined();
-    expect(firstPersistedEntry?.mainRestartRecovery).toBeUndefined();
+    expect(firstPersistedEntry?.abortedLastRun).toBe(true);
+    expect(firstPersistedEntry?.restartRecoveryRuns).toEqual([
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+      { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
+    ]);
+    expect(firstPersistedEntry?.mainRestartRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-2",
+    });
     expect(firstPersistedEntry?.subagentRecovery).toEqual({
       automaticAttempts: 2,
       lastAttemptAt: 3,

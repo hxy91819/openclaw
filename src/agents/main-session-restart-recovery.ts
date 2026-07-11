@@ -18,7 +18,8 @@ import {
 } from "../config/sessions.js";
 import { applySessionEntryReplacements } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { callGateway } from "../gateway/call.js";
+import { callGateway, isGatewayTransportError } from "../gateway/call.js";
+import { GatewayClientRequestTimeoutError } from "../gateway/client.js";
 import { readSessionMessagesAsync } from "../gateway/session-transcript-readers.js";
 import { resolveGatewaySessionStoreTarget } from "../gateway/session-utils.js";
 import {
@@ -445,7 +446,7 @@ async function markMainRestartRecoveryWedgedInStore(params: {
   reason: string;
   runId?: string;
 }): Promise<boolean> {
-  const wedged = await applyRestartRecoveryLifecycle<boolean>({
+  const wedged = await applySessionEntryReplacements<boolean>({
     storePath: params.storePath,
     update: (entries) => {
       const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
@@ -622,7 +623,7 @@ async function reserveMainRestartRecoveryAttempt(params: {
   sessionKey: string;
   storePath: string;
 }): Promise<MainRestartRecoveryAttemptReservation> {
-  return await applyRestartRecoveryLifecycle<MainRestartRecoveryAttemptReservation>({
+  return await applySessionEntryReplacements<MainRestartRecoveryAttemptReservation>({
     storePath: params.storePath,
     requireWriteSuccess: true,
     update: (entries) => {
@@ -671,7 +672,7 @@ async function rollbackMainRestartRecoveryAttempt(params: {
   sessionKey: string;
   storePath: string;
 }): Promise<void> {
-  await applyRestartRecoveryLifecycle({
+  await applySessionEntryReplacements({
     storePath: params.storePath,
     update: (entries) => {
       const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
@@ -716,6 +717,7 @@ async function resumeMainSession(params: {
     sessionKey: params.sessionKey,
   });
   let reservation: MainRestartRecoveryAttemptReservation | undefined;
+  let dispatchStarted = false;
   let dispatchAccepted = false;
   try {
     const idempotencyKey = crypto.randomUUID();
@@ -756,6 +758,9 @@ async function resumeMainSession(params: {
       method: "agent",
       params: agentParams,
       timeoutMs: 10_000,
+      onDispatched: () => {
+        dispatchStarted = true;
+      },
     });
     dispatchAccepted = true;
     const acceptedRunId = normalizeOptionalString(acceptedRun?.runId);
@@ -813,7 +818,14 @@ async function resumeMainSession(params: {
     );
     return "resumed";
   } catch (err) {
-    if (!dispatchAccepted && reservation?.reserved) {
+    // A transport loss can happen after Gateway accepted the request but before
+    // the acknowledgement arrived. Retain that reservation or a lost reply could
+    // reopen the restart loop; only proven pre-accept failures are refundable.
+    const uncertainAfterDispatch =
+      dispatchStarted &&
+      (isGatewayTransportError(err) || err instanceof GatewayClientRequestTimeoutError);
+    const shouldRollbackReservation = !dispatchAccepted && !uncertainAfterDispatch;
+    if (shouldRollbackReservation && reservation?.reserved) {
       try {
         await rollbackMainRestartRecoveryAttempt({
           reservation,

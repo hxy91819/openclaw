@@ -1585,7 +1585,7 @@ describe("gateway agent handler", () => {
     expect(store["agent:main:main"]).toBeUndefined();
   });
 
-  it("clears automatic recovery state for a user-driven agent turn", async () => {
+  it("preserves automatic recovery state while a user-driven turn is only admitted", async () => {
     mockMainSessionEntry({
       abortedLastRun: true,
       restartRecoveryRuns: [
@@ -1607,9 +1607,16 @@ describe("gateway agent handler", () => {
 
     const capturedEntry = await runMainAgentAndCaptureEntry("test-idem-clear-automatic-recovery");
 
-    expect(capturedEntry.abortedLastRun).toBe(false);
-    expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
-    expect(capturedEntry.mainRestartRecovery).toBeUndefined();
+    expect(capturedEntry.abortedLastRun).toBe(true);
+    expect(capturedEntry.restartRecoveryRuns).toEqual([
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+    ]);
+    expect(capturedEntry.mainRestartRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-1",
+    });
     expect(capturedEntry.subagentRecovery).toEqual({
       automaticAttempts: 2,
       lastAttemptAt: 3,
@@ -1674,7 +1681,7 @@ describe("gateway agent handler", () => {
     expect(call.skipInitialSessionTouch).toBe(true);
   });
 
-  it("clears automatic recovery state when a public request forges restart-recovery provenance", async () => {
+  it("treats forged restart-recovery provenance as an ordinary admitted request", async () => {
     mockMainSessionEntry({
       abortedLastRun: true,
       mainRestartRecovery: {
@@ -1712,8 +1719,12 @@ describe("gateway agent handler", () => {
     } as AgentParams);
 
     const entry = requireValue(capturedEntry, "updated session entry missing");
-    expect(entry.abortedLastRun).toBe(false);
-    expect(entry.mainRestartRecovery).toBeUndefined();
+    expect(entry.abortedLastRun).toBe(true);
+    expect(entry.mainRestartRecovery).toEqual({
+      automaticAttempts: 1,
+      lastAttemptAt: 3,
+      lastRunId: "recovery-run-1",
+    });
     expect(entry.lastInteractionAt).not.toBe(1);
   });
 

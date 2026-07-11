@@ -252,7 +252,6 @@ export async function ensureOutboundSessionEntry(params: {
       storePath,
       sessionKey: params.route.sessionKey,
       ctx,
-      clearAutomaticRecoveryState: false,
     });
   } catch {
     // Do not block outbound sends on session meta writes.

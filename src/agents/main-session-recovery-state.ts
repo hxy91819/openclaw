@@ -8,13 +8,12 @@ import {
   type RestartRecoveryFuseGate,
 } from "./restart-recovery-fuse.js";
 
-export const MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS = 2;
+export const MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS = 3;
 
 const MAIN_RESTART_RECOVERY_WEDGED_FALLBACK_REASON =
   "main-session restart recovery is tombstoned for this session";
 const MAIN_RESTART_RECOVERY_REMEDIATION_HINT =
-  "inspect the failed main session and start a clean main-session turn " +
-  "to clear stale restart-recovery flags";
+  "inspect the failed main session and use /new or reset to start a replacement session";
 
 export type MainRestartRecoveryGate = RestartRecoveryFuseGate;
 
