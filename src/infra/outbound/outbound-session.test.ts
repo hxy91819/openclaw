@@ -573,6 +573,5 @@ describe("ensureOutboundSessionEntry", () => {
     const metadata = firstMockArg(mocks.recordInboundSessionMeta, "recordInboundSessionMeta");
     expect(metadata.storePath).toBe("/stores/main.json");
     expect(metadata.sessionKey).toBe("agent:main:workspace:channel:c1");
-    expect(metadata).not.toHaveProperty("clearAutomaticRecoveryState");
   });
 });

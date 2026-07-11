@@ -774,8 +774,8 @@ describe("session store writer queue", () => {
     writeSessionStoreCache({
       storePath,
       store,
-      ctimeMs: 1,
-      mtimeMs: 1,
+      ctimeNs: 1n,
+      mtimeNs: 1n,
       sizeBytes: serialized.length,
       serialized,
       cloneSerialized: serialized,
@@ -785,8 +785,8 @@ describe("session store writer queue", () => {
 
     const cached = readSessionStoreCache({
       storePath,
-      ctimeMs: 1,
-      mtimeMs: 1,
+      ctimeNs: 1n,
+      mtimeNs: 1n,
       sizeBytes: serialized.length,
     });
 
@@ -806,9 +806,8 @@ describe("session store writer queue", () => {
     writeSessionStoreCache({
       storePath,
       store,
-      ctimeMs: 1,
-      mtimeMs: 1,
       ctimeNs: 1_000_000n,
+      mtimeNs: 1_000_000n,
       sizeBytes: serialized.length,
       serialized,
       cloneSerialized: serialized,
@@ -817,9 +816,8 @@ describe("session store writer queue", () => {
 
     const cached = readSessionStoreCache({
       storePath,
-      ctimeMs: 1,
-      mtimeMs: 1,
       ctimeNs: 1_000_001n,
+      mtimeNs: 1_000_000n,
       sizeBytes: serialized.length,
     });
 

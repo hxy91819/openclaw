@@ -11,8 +11,6 @@ import {
 const SUBAGENT_RECOVERY_MAX_AUTOMATIC_ATTEMPTS = 2;
 const SUBAGENT_RECOVERY_REWEDGE_WINDOW_MS = 2 * 60_000;
 
-type SubagentRecoveryGate = RestartRecoveryFuseGate;
-
 export function isSubagentRecoveryWedgedEntry(entry: unknown): boolean {
   return Boolean(
     entry &&
@@ -31,7 +29,7 @@ export function formatSubagentRecoveryWedgedReason(entry: SessionEntry): string 
 export function evaluateSubagentRecoveryGate(
   entry: SessionEntry,
   now: number,
-): SubagentRecoveryGate {
+): RestartRecoveryFuseGate {
   return evaluateRecoveryFuse(entry.subagentRecovery, now, {
     maxAutomaticAttempts: SUBAGENT_RECOVERY_MAX_AUTOMATIC_ATTEMPTS,
     rewedgeWindowMs: SUBAGENT_RECOVERY_REWEDGE_WINDOW_MS,
@@ -47,7 +45,6 @@ export function markSubagentRecoveryAttempt(params: {
   attempt: number;
 }): void {
   params.entry.subagentRecovery = markRecoveryAttempt({
-    state: params.entry.subagentRecovery,
     now: params.now,
     runId: params.runId,
     attempt: params.attempt,

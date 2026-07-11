@@ -649,7 +649,7 @@ describe("subagent-orphan-recovery", () => {
     const store = mockSingleAbortedSession({
       subagentRecovery: {
         automaticAttempts: 2,
-        lastAttemptAt: now - 30_000,
+        lastAttemptAt: now - 2 * 60_000,
         lastRunId: "previous-run",
       },
     });
@@ -679,6 +679,44 @@ describe("subagent-orphan-recovery", () => {
     expect(recovery.lastRunId).toBe("run-1");
     expect(recovery.wedgedAt).toBeTypeOf("number");
     expect(recovery.wedgedReason).toContain("recovery blocked");
+  });
+
+  it("starts a new attempt burst after the two-minute re-wedge window", async () => {
+    const now = Date.now();
+    const expiredRecovery = {
+      automaticAttempts: 2,
+      lastAttemptAt: now - 2 * 60_000 - 1,
+      lastRunId: "previous-run",
+    };
+    mockSingleAbortedSession({ subagentRecovery: expiredRecovery });
+
+    const result = await recoverOrphanedSubagentSessions({
+      getActiveRuns: () => createActiveRuns(createTestRunRecord()),
+    });
+
+    expect(result.recovered).toBe(1);
+    expect(gateway.callGateway).toHaveBeenCalledOnce();
+    const updateCall = requireFirstUpdateSessionStoreCall();
+    const updater = updateCall[1];
+    if (typeof updater !== "function") {
+      throw new Error("expected update session store callback");
+    }
+    const mockStore: ReturnType<typeof sessions.loadSessionStore> = {
+      "agent:main:subagent:test-session-1": {
+        sessionId: "session-abc",
+        updatedAt: 0,
+        abortedLastRun: true,
+        subagentRecovery: expiredRecovery,
+      },
+    };
+    await updater(mockStore);
+    const sessionEntry = requireRecord(
+      mockStore["agent:main:subagent:test-session-1"],
+      "updated session entry",
+    );
+    const recovery = requireRecord(sessionEntry.subagentRecovery, "subagent recovery");
+    expect(recovery.automaticAttempts).toBe(1);
+    expect(recovery.lastRunId).toBe("run-1");
   });
 
   it("skips already tombstoned wedged sessions without rewriting them", async () => {

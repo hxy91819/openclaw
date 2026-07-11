@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   GATEWAY_CLIENT_MODES,
@@ -24,8 +25,8 @@ import {
   listSessionEntries,
 } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { callGateway, isGatewayTransportError } from "../gateway/call.js";
-import { GatewayClientRequestTimeoutError } from "../gateway/client.js";
+import { callGateway } from "../gateway/call.js";
+import { GatewayClientRequestError } from "../gateway/client.js";
 import { readSessionMessagesAsync } from "../gateway/session-transcript-readers.js";
 import { resolveGatewaySessionStoreTarget } from "../gateway/session-utils.js";
 import {
@@ -35,12 +36,7 @@ import {
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { runWithGatewayIndependentRootWorkAdmission } from "../process/gateway-work-admission.js";
 import { CommandLane } from "../process/lanes.js";
-import {
-  isAcpSessionKey,
-  isCronSessionKey,
-  isSubagentSessionKey,
-  resolveAgentIdFromSessionKey,
-} from "../routing/session-key.js";
+import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import { MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL } from "../sessions/input-provenance.js";
 import { resolveSendPolicy } from "../sessions/send-policy.js";
 import {
@@ -56,6 +52,7 @@ import {
 } from "./embedded-agent-runner/run-state.js";
 import {
   evaluateMainRestartRecoveryGate,
+  isMainRestartRecoveryCandidate,
   markMainRestartRecoveryAttempt,
   markMainRestartRecoveryWedged,
 } from "./main-session-recovery-state.js";
@@ -75,19 +72,9 @@ const UNRESUMABLE_SESSION_NOTICE =
   "I was interrupted by a gateway restart and couldn't safely resume the previous turn. " +
   "Please send that last request again and I'll pick it up cleanly.";
 
-function shouldSkipMainRecovery(entry: SessionEntry, sessionKey: string): boolean {
-  if (typeof entry.spawnDepth === "number" && entry.spawnDepth > 0) {
-    return true;
-  }
-  if (entry.subagentRole != null) {
-    return true;
-  }
-  return (
-    isSubagentSessionKey(sessionKey) || isCronSessionKey(sessionKey) || isAcpSessionKey(sessionKey)
-  );
-}
-
 function recordRestartRecoveryRunMarker(entry: SessionEntry, run: RestartRecoveryRun): void {
+  // Keep unmatched markers until their own lifecycle event consumes them;
+  // durable attempt history remains exclusively in mainRestartRecovery.
   const recoveryRuns = new Map<string, RestartRecoveryRun>();
   for (const existingRun of entry.restartRecoveryRuns ?? []) {
     if (existingRun.runId !== run.runId) {
@@ -281,7 +268,7 @@ export async function markRestartAbortedMainSessions(params: {
           if (!matches) {
             continue;
           }
-          if (shouldSkipMainRecovery(entry, sessionKey)) {
+          if (!isMainRestartRecoveryCandidate(entry, sessionKey)) {
             counts.skipped++;
             continue;
           }
@@ -353,7 +340,7 @@ export async function markStartupOrphanedMainSessionsForRecovery(params: {
           if (entry.status !== "running" || entry.abortedLastRun === true) {
             continue;
           }
-          if (shouldSkipMainRecovery(entry, sessionKey)) {
+          if (!isMainRestartRecoveryCandidate(entry, sessionKey)) {
             counts.skipped++;
             continue;
           }
@@ -698,62 +685,92 @@ function buildResumeMessage(pendingFinalDeliveryText?: string | null): string {
   return RESTART_RECOVERY_RESUME_MESSAGE;
 }
 
-async function markMainRestartRecoveryWedgedInStore(params: {
-  expectedSessionId?: string;
+type MainRestartRecoveryTombstoneClaim = {
+  entry: SessionEntry;
+  reason: string;
+};
+
+type MainRestartRecoverySnapshot = Pick<SessionEntry, "sessionId" | "updatedAt"> & {
+  mainRestartRecovery: SessionEntry["mainRestartRecovery"];
+};
+
+function createMainRestartRecoverySnapshot(entry: SessionEntry): MainRestartRecoverySnapshot {
+  return {
+    sessionId: entry.sessionId,
+    updatedAt: entry.updatedAt,
+    mainRestartRecovery: entry.mainRestartRecovery,
+  };
+}
+
+function matchesMainRestartRecoverySnapshot(
+  entry: SessionEntry | undefined,
+  expected: MainRestartRecoverySnapshot,
+): entry is SessionEntry {
+  // Non-recovery admission advances a generation-scoped owner under the same
+  // writer lock. Old owners expire on restart; current owners fence every scan.
+  return (
+    entry?.sessionId === expected.sessionId &&
+    entry.updatedAt === expected.updatedAt &&
+    isDeepStrictEqual(entry.mainRestartRecovery, expected.mainRestartRecovery) &&
+    entry.mainRestartRecovery?.nonRecoveryOwner?.lifecycleGeneration !==
+      getAgentEventLifecycleGeneration() &&
+    entry.status === "running" &&
+    entry.abortedLastRun === true
+  );
+}
+
+async function claimMainRestartRecoveryTombstone(params: {
+  expected: MainRestartRecoverySnapshot;
   storePath: string;
   sessionKey: string;
-  reason: string;
-  runId?: string;
-}): Promise<boolean> {
-  const wedged = await applySessionEntryReplacements<boolean>({
+}): Promise<MainRestartRecoveryTombstoneClaim | null> {
+  const claim = await applySessionEntryReplacements<MainRestartRecoveryTombstoneClaim | null>({
+    requireWriteSuccess: true,
+    sessionKeys: [params.sessionKey],
     storePath: params.storePath,
     update: (entries) => {
-      const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
-      const entry = current?.entry;
+      const entry = entries[0]?.entry;
       const now = Date.now();
-      if (
-        !entry ||
-        entry.sessionId !== params.expectedSessionId ||
-        entry.status !== "running" ||
-        entry.abortedLastRun !== true
-      ) {
-        return { result: false };
+      if (!matchesMainRestartRecoverySnapshot(entry, params.expected)) {
+        return { result: null };
       }
       const gate = evaluateMainRestartRecoveryGate(entry, now);
       if (gate.allowed || !gate.shouldMarkWedged) {
-        return { result: false };
+        return { result: null };
       }
       markMainRestartRecoveryWedged({
         entry,
         now,
-        runId: params.runId,
         reason: gate.reason,
       });
       return {
-        result: true,
+        result: { entry, reason: gate.reason },
         replacements: [{ sessionKey: params.sessionKey, entry }],
       };
     },
   });
-  if (wedged) {
-    log.warn(`tombstoned main-session restart recovery: ${params.sessionKey} (${params.reason})`);
+  if (claim) {
+    log.warn(`tombstoned main-session restart recovery: ${params.sessionKey} (${claim.reason})`);
   }
-  return wedged;
+  return claim;
 }
 
-async function markSessionFailed(params: {
+async function claimMainRestartRecoveryFailure(params: {
+  expected: MainRestartRecoverySnapshot;
   storePath: string;
   sessionKey: string;
   reason: string;
-}): Promise<void> {
-  await applySessionEntryReplacements({
+}): Promise<SessionEntry | null> {
+  const noticeEntry = await applySessionEntryReplacements<SessionEntry | null>({
+    requireWriteSuccess: true,
+    sessionKeys: [params.sessionKey],
     storePath: params.storePath,
     update: (entries) => {
-      const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
-      const entry = current?.entry;
-      if (!entry || entry.status !== "running") {
-        return { result: undefined };
+      const entry = entries[0]?.entry;
+      if (!matchesMainRestartRecoverySnapshot(entry, params.expected)) {
+        return { result: null };
       }
+      const snapshot = structuredClone(entry);
       entry.status = "failed";
       entry.abortedLastRun = true;
       entry.endedAt = Date.now();
@@ -768,12 +785,15 @@ async function markSessionFailed(params: {
       entry.restartRecoveryDeliveryContext = undefined;
       entry.restartRecoveryDeliveryRunId = undefined;
       return {
-        result: undefined,
+        result: snapshot,
         replacements: [{ sessionKey: params.sessionKey, entry }],
       };
     },
   });
-  log.warn(`marked interrupted main session failed: ${params.sessionKey} (${params.reason})`);
+  if (noticeEntry) {
+    log.warn(`marked interrupted main session failed: ${params.sessionKey} (${params.reason})`);
+  }
+  return noticeEntry;
 }
 
 async function sendUnresumableSessionNotice(params: {
@@ -872,13 +892,14 @@ type MainRestartRecoveryAttemptReservation =
       reserved: true;
       previousMainRestartRecovery: SessionEntry["mainRestartRecovery"];
       previousUpdatedAt: SessionEntry["updatedAt"];
+      reservedUpdatedAt: SessionEntry["updatedAt"];
       reservationRunId: string;
       recoveryAttempt: number;
     }
   | { reserved: false };
 
 async function reserveMainRestartRecoveryAttempt(params: {
-  expectedSessionId?: string;
+  expected: MainRestartRecoverySnapshot;
   recoveryAttempt: number;
   reservationRunId: string;
   sessionKey: string;
@@ -887,15 +908,10 @@ async function reserveMainRestartRecoveryAttempt(params: {
   return await applySessionEntryReplacements<MainRestartRecoveryAttemptReservation>({
     storePath: params.storePath,
     requireWriteSuccess: true,
+    sessionKeys: [params.sessionKey],
     update: (entries) => {
-      const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
-      const entry = current?.entry;
-      if (
-        !entry ||
-        entry.sessionId !== params.expectedSessionId ||
-        entry.status !== "running" ||
-        entry.abortedLastRun !== true
-      ) {
+      const entry = entries[0]?.entry;
+      if (!matchesMainRestartRecoverySnapshot(entry, params.expected)) {
         return { result: { reserved: false as const } };
       }
       const now = Date.now();
@@ -903,10 +919,7 @@ async function reserveMainRestartRecoveryAttempt(params: {
       if (!gate.allowed || gate.nextAttempt !== params.recoveryAttempt) {
         return { result: { reserved: false as const } };
       }
-      const previousMainRestartRecovery =
-        entry.mainRestartRecovery === undefined
-          ? undefined
-          : structuredClone(entry.mainRestartRecovery);
+      const previousMainRestartRecovery = entry.mainRestartRecovery;
       const previousUpdatedAt = entry.updatedAt;
       markMainRestartRecoveryAttempt({
         entry,
@@ -919,6 +932,7 @@ async function reserveMainRestartRecoveryAttempt(params: {
           reserved: true as const,
           previousMainRestartRecovery,
           previousUpdatedAt,
+          reservedUpdatedAt: now,
           reservationRunId: params.reservationRunId,
           recoveryAttempt: params.recoveryAttempt,
         },
@@ -934,10 +948,10 @@ async function rollbackMainRestartRecoveryAttempt(params: {
   storePath: string;
 }): Promise<void> {
   await applySessionEntryReplacements({
+    sessionKeys: [params.sessionKey],
     storePath: params.storePath,
     update: (entries) => {
-      const current = entries.find((entry) => entry.sessionKey === params.sessionKey);
-      const entry = current?.entry;
+      const entry = entries[0]?.entry;
       if (
         !entry ||
         entry.mainRestartRecovery?.lastRunId !== params.reservation.reservationRunId ||
@@ -945,11 +959,17 @@ async function rollbackMainRestartRecoveryAttempt(params: {
       ) {
         return { result: undefined };
       }
-      entry.mainRestartRecovery =
-        params.reservation.previousMainRestartRecovery === undefined
-          ? undefined
-          : structuredClone(params.reservation.previousMainRestartRecovery);
-      entry.updatedAt = params.reservation.previousUpdatedAt;
+      const concurrentOwner = entry.mainRestartRecovery.nonRecoveryOwner;
+      const previousMainRestartRecovery = params.reservation.previousMainRestartRecovery;
+      entry.mainRestartRecovery = concurrentOwner
+        ? {
+            ...previousMainRestartRecovery,
+            nonRecoveryOwner: concurrentOwner,
+          }
+        : previousMainRestartRecovery;
+      if (!concurrentOwner && entry.updatedAt === params.reservation.reservedUpdatedAt) {
+        entry.updatedAt = params.reservation.previousUpdatedAt;
+      }
       return {
         result: undefined,
         replacements: [{ sessionKey: params.sessionKey, entry }],
@@ -984,7 +1004,7 @@ async function resumeMainSession(params: {
   try {
     const recoveryRunId = crypto.randomUUID();
     reservation = await reserveMainRestartRecoveryAttempt({
-      expectedSessionId: params.entry.sessionId,
+      expected: createMainRestartRecoverySnapshot(params.entry),
       recoveryAttempt: params.recoveryAttempt,
       reservationRunId: recoveryRunId,
       sessionKey: params.sessionKey,
@@ -1014,6 +1034,7 @@ async function resumeMainSession(params: {
     const agentParams: Record<string, unknown> = {
       message: buildResumeMessage(sanitizedPendingText),
       sessionKey: params.sessionKey,
+      sessionId: params.entry.sessionId,
       idempotencyKey: recoveryRunId,
       deliver: Boolean(deliveryContext),
       lane: CommandLane.Main,
@@ -1102,12 +1123,9 @@ async function resumeMainSession(params: {
     );
     return "resumed";
   } catch (err) {
-    // A transport loss can happen after Gateway accepted the request but before
-    // the acknowledgement arrived. Retain that reservation or a lost reply could
-    // reopen the restart loop; only proven pre-accept failures are refundable.
-    const uncertainAfterDispatch =
-      dispatchStarted &&
-      (isGatewayTransportError(err) || err instanceof GatewayClientRequestTimeoutError);
+    // After dispatch, only an explicit Gateway request rejection proves the run
+    // was not accepted. Retain all other reservations or a lost reply can replay work.
+    const uncertainAfterDispatch = dispatchStarted && !(err instanceof GatewayClientRequestError);
     const shouldRollbackReservation = !dispatchAccepted && !uncertainAfterDispatch;
     if (shouldRollbackReservation && reservation?.reserved) {
       try {
@@ -1154,7 +1172,7 @@ export async function markRestartAbortedMainSessionsFromLocks(params: {
         if (entry.status !== "running") {
           continue;
         }
-        if (shouldSkipMainRecovery(entry, sessionKey)) {
+        if (!isMainRestartRecoveryCandidate(entry, sessionKey)) {
           counts.skipped++;
           continue;
         }
@@ -1234,7 +1252,7 @@ async function recoverStore(params: {
     if (!entry || entry.status !== "running" || entry.abortedLastRun !== true) {
       continue;
     }
-    if (shouldSkipMainRecovery(entry, sessionKey)) {
+    if (!isMainRestartRecoveryCandidate(entry, sessionKey)) {
       result.skipped++;
       continue;
     }
@@ -1267,18 +1285,21 @@ async function recoverStore(params: {
     const recoveryGate = evaluateMainRestartRecoveryGate(entry, Date.now());
     if (!recoveryGate.allowed) {
       if (recoveryGate.shouldMarkWedged) {
-        await sendUnresumableSessionNotice({
-          cfg: params.cfg,
-          entry,
-          sessionKey,
-          reason: recoveryGate.reason,
-        });
-        await markMainRestartRecoveryWedgedInStore({
-          expectedSessionId: entry.sessionId,
+        const claim = await claimMainRestartRecoveryTombstone({
+          expected: createMainRestartRecoverySnapshot(entry),
           storePath: params.storePath,
           sessionKey,
-          reason: recoveryGate.reason,
         });
+        if (claim) {
+          // Notify only after the exact exhausted row is tombstoned; a stale scan
+          // must not warn after another owner has replaced or repaired the session.
+          await sendUnresumableSessionNotice({
+            cfg: params.cfg,
+            entry: claim.entry,
+            sessionKey,
+            reason: claim.reason,
+          });
+        }
       }
       result.skipped++;
       continue;
@@ -1326,7 +1347,7 @@ async function recoverStore(params: {
         log.warn(
           `transcript unavailable for ${sessionKey}; resuming its durable pending final delivery`,
         );
-        const resumed = await resumeMainSession({
+        const resumeResult = await resumeMainSession({
           cfg: params.cfg,
           entry,
           recoveryAttempt: recoveryGate.nextAttempt,
@@ -1335,9 +1356,11 @@ async function recoverStore(params: {
           pendingFinalDeliveryText: entry.pendingFinalDeliveryText,
           forceRestartSafeTools: true,
         });
-        if (resumed) {
+        if (resumeResult === "resumed") {
           params.resumedSessionKeys.add(resumeDedupeKey);
           result.recovered++;
+        } else if (resumeResult === "skipped") {
+          result.skipped++;
         } else {
           result.failed++;
         }
@@ -1345,14 +1368,19 @@ async function recoverStore(params: {
       }
       const reason = `failed to read transcript for restart recovery: ${String(err)}`;
       log.warn(`${reason} (${sessionKey})`);
-      await sendUnresumableSessionNotice({
-        cfg: params.cfg,
-        entry,
+      const failedEntry = await claimMainRestartRecoveryFailure({
+        expected: createMainRestartRecoverySnapshot(entry),
+        storePath: params.storePath,
         sessionKey,
         reason,
       });
-      await markSessionFailed({
-        storePath: params.storePath,
+      if (!failedEntry) {
+        result.skipped++;
+        continue;
+      }
+      await sendUnresumableSessionNotice({
+        cfg: params.cfg,
+        entry: failedEntry,
         sessionKey,
         reason,
       });
@@ -1361,17 +1389,20 @@ async function recoverStore(params: {
     }
 
     if (entry.pendingFinalDelivery === true && entry.pendingFinalDeliveryText) {
-      const resumed = await resumeMainSession({
+      const resumeResult = await resumeMainSession({
         cfg: params.cfg,
         entry,
+        recoveryAttempt: recoveryGate.nextAttempt,
         storePath: params.storePath,
         sessionKey,
         pendingFinalDeliveryText: entry.pendingFinalDeliveryText,
         forceRestartSafeTools: hasReplaySafeCodeModeCheckpointInCurrentTurn(messages),
       });
-      if (resumed) {
+      if (resumeResult === "resumed") {
         params.resumedSessionKeys.add(resumeDedupeKey);
         result.recovered++;
+      } else if (resumeResult === "skipped") {
+        result.skipped++;
       } else {
         result.failed++;
       }
@@ -1389,14 +1420,19 @@ async function recoverStore(params: {
         transcriptResumePolicy.forceRestartSafeTools,
     };
     if (resumePolicy.blockReason) {
-      await sendUnresumableSessionNotice({
-        cfg: params.cfg,
-        entry,
+      const failedEntry = await claimMainRestartRecoveryFailure({
+        expected: createMainRestartRecoverySnapshot(entry),
+        storePath: params.storePath,
         sessionKey,
         reason: resumePolicy.blockReason,
       });
-      await markSessionFailed({
-        storePath: params.storePath,
+      if (!failedEntry) {
+        result.skipped++;
+        continue;
+      }
+      await sendUnresumableSessionNotice({
+        cfg: params.cfg,
+        entry: failedEntry,
         sessionKey,
         reason: resumePolicy.blockReason,
       });

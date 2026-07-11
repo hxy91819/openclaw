@@ -53,6 +53,7 @@ import {
   hasGeneratedMediaCompletionEvent,
 } from "../../agents/internal-event-contract.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
+import { isMainRestartRecoveryCandidate } from "../../agents/main-session-recovery-state.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
@@ -352,6 +353,39 @@ function resolveCanUseInternalRuntimeHandoff(
   client: GatewayRequestHandlerOptions["client"],
 ): boolean {
   return client?.connect?.client?.mode === GATEWAY_CLIENT_MODES.BACKEND;
+}
+
+async function releaseMainRestartRecoveryNonRecoveryOwner(params: {
+  lifecycleGeneration: string;
+  ownerToken: string;
+  sessionKey: string;
+  storePath: string;
+}): Promise<void> {
+  await applySessionEntryReplacements({
+    requireWriteSuccess: true,
+    sessionKeys: [params.sessionKey],
+    storePath: params.storePath,
+    update: (entries) => {
+      const entry = entries[0]?.entry;
+      const recoveryState = entry?.mainRestartRecovery;
+      const owner = recoveryState?.nonRecoveryOwner;
+      if (
+        !entry ||
+        !recoveryState ||
+        owner?.lifecycleGeneration !== params.lifecycleGeneration ||
+        owner.token !== params.ownerToken
+      ) {
+        return { result: undefined };
+      }
+      const { nonRecoveryOwner: _released, ...remainingRecoveryState } = recoveryState;
+      entry.mainRestartRecovery =
+        Object.keys(remainingRecoveryState).length > 0 ? remainingRecoveryState : undefined;
+      return {
+        replacements: [{ sessionKey: params.sessionKey, entry }],
+        result: undefined,
+      };
+    },
+  });
 }
 
 function resolveCanUseCronRunContinuation(client: GatewayRequestHandlerOptions["client"]): boolean {
@@ -1869,6 +1903,30 @@ export const agentHandlers: GatewayRequestHandlers = {
       : undefined;
     let gatewayWorkAdmission: SessionWorkAdmissionLease | undefined;
     let gatewayAdmissionTransferred = false;
+    let mainRestartRecoveryOwnerClaim:
+      | {
+          ownerToken: string;
+          sessionKey: string;
+          storePath: string;
+        }
+      | undefined;
+    const releaseMainRestartRecoveryOwnerClaim = async (phase: string): Promise<void> => {
+      const claim = mainRestartRecoveryOwnerClaim;
+      if (!claim) {
+        return;
+      }
+      mainRestartRecoveryOwnerClaim = undefined;
+      try {
+        await releaseMainRestartRecoveryNonRecoveryOwner({
+          lifecycleGeneration,
+          ...claim,
+        });
+      } catch (err) {
+        context.logGateway.warn(
+          `failed to release ${phase} main restart recovery owner: ${formatForLog(err)}`,
+        );
+      }
+    };
     let cronContinuationClaim:
       | {
           storePath: string;
@@ -2811,6 +2869,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           freshSessionRotatedSinceLoad: boolean;
           isNewSession: boolean;
           rotatedSessionId: boolean;
+          shouldClaimMainRestartRecoveryOwner: boolean;
           usableRequestedSessionId: string | undefined;
           freshness: typeof freshness;
         };
@@ -2981,6 +3040,16 @@ export const agentHandlers: GatewayRequestHandlers = {
           const automaticRecoveryClearPatch = shouldClearRotatedState
             ? buildAutomaticRestartRecoveryClearPatch(freshEntry)
             : {};
+          const shouldClaimMainRestartRecoveryOwner = Boolean(
+            freshEntry &&
+            !isRestartRecoveryResumeRun &&
+            !shouldClearRotatedState &&
+            !shouldClearTerminalState &&
+            freshEntry.status === "running" &&
+            freshEntry.abortedLastRun === true &&
+            patchSessionId === freshEntry.sessionId &&
+            isMainRestartRecoveryCandidate(freshEntry, canonicalKey),
+          );
           const patch: Partial<SessionEntry> = {
             sessionId: patchSessionId,
             updatedAt: now,
@@ -3033,6 +3102,7 @@ export const agentHandlers: GatewayRequestHandlers = {
             freshSessionRotatedSinceLoad,
             isNewSession: freshIsNewSession,
             rotatedSessionId: freshRotatedSessionId,
+            shouldClaimMainRestartRecoveryOwner,
             usableRequestedSessionId: freshUsableRequestedSessionId,
             freshness: freshFreshness,
           };
@@ -3081,6 +3151,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           let persisted: SessionEntry | undefined;
           let archivedDuringStoreUpdateError: string | undefined;
           let deletedDuringStoreUpdateError: string | undefined;
+          let restartRecoveryReservationConflict: string | undefined;
           try {
             persisted =
               (await patchSessionEntryTarget(
@@ -3104,6 +3175,21 @@ export const agentHandlers: GatewayRequestHandlers = {
                   if (entry && !freshEntry) {
                     deletedDuringStoreUpdateError = `Session "${canonicalSessionKey}" was deleted while starting work. Retry.`;
                     throw new Error(deletedDuringStoreUpdateError);
+                  }
+                  if (isRestartRecoveryResumeRun) {
+                    const reservationStillOwned =
+                      freshEntry?.sessionId === requestedSessionId &&
+                      freshEntry.status === "running" &&
+                      freshEntry.abortedLastRun === true &&
+                      freshEntry.mainRestartRecovery?.lastRunId === idem &&
+                      freshEntry.mainRestartRecovery.nonRecoveryOwner?.lifecycleGeneration !==
+                        lifecycleGeneration;
+                    if (!reservationStillOwned) {
+                      restartRecoveryReservationConflict =
+                        `Session "${canonicalSessionKey}" restart recovery reservation is stale; ` +
+                        "recovery was skipped.";
+                      throw new Error(restartRecoveryReservationConflict);
+                    }
                   }
                   const archivedError = resolveSessionWorkStartError(
                     canonicalSessionKey,
@@ -3201,6 +3287,20 @@ export const agentHandlers: GatewayRequestHandlers = {
                     deniedSessionEntry = merged;
                     return null;
                   }
+                  if (patchBuild.shouldClaimMainRestartRecoveryOwner) {
+                    const ownerToken = mainRestartRecoveryOwnerClaim?.ownerToken ?? randomUUID();
+                    // Linearize foreground admission with recovery reservation under
+                    // the same writer lock; outer cleanup releases pre-dispatch rejects.
+                    merged.mainRestartRecovery = {
+                      ...merged.mainRestartRecovery,
+                      nonRecoveryOwner: { lifecycleGeneration, token: ownerToken },
+                    };
+                    mainRestartRecoveryOwnerClaim = {
+                      ownerToken,
+                      sessionKey: canonicalSessionKey,
+                      storePath,
+                    };
+                  }
                   return merged;
                 },
                 {
@@ -3224,6 +3324,14 @@ export const agentHandlers: GatewayRequestHandlers = {
             }
             if (deletedDuringStoreUpdateError) {
               respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)));
+              return;
+            }
+            if (restartRecoveryReservationConflict) {
+              respond(
+                false,
+                undefined,
+                errorShape(ErrorCodes.UNAVAILABLE, restartRecoveryReservationConflict),
+              );
               return;
             }
             if (restoredCronContinuationError) {
@@ -4100,6 +4208,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           });
         } finally {
           if (!dispatched) {
+            await releaseMainRestartRecoveryOwnerClaim("undispatched");
             try {
               await releaseCronContinuationClaimWithRecovery();
             } finally {
@@ -4110,6 +4219,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       });
     } finally {
       if (!gatewayAdmissionTransferred) {
+        await releaseMainRestartRecoveryOwnerClaim("unaccepted");
         gatewayWorkAdmission?.release();
         await releaseCronContinuationClaimWithRecovery();
       }

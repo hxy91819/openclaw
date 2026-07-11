@@ -168,7 +168,13 @@ export type RestartRecoveryFuseState = {
   wedgedReason?: string;
 };
 
-export type MainRestartRecoveryState = RestartRecoveryFuseState;
+export type MainRestartRecoveryState = RestartRecoveryFuseState & {
+  /** Current Gateway owner that makes an otherwise aborted row ineligible for restart recovery. */
+  nonRecoveryOwner?: {
+    lifecycleGeneration: string;
+    token: string;
+  };
+};
 
 export type SubagentRecoveryState = RestartRecoveryFuseState;
 
@@ -533,13 +539,8 @@ export function buildAutomaticRestartRecoveryClearPatch(
   };
 }
 
-export function clearAutomaticRestartRecoveryState(entry: SessionEntry): boolean {
-  const patch = buildAutomaticRestartRecoveryClearPatch(entry);
-  if (Object.keys(patch).length === 0) {
-    return false;
-  }
-  Object.assign(entry, patch);
-  return true;
+export function clearAutomaticRestartRecoveryState(entry: SessionEntry): void {
+  Object.assign(entry, buildAutomaticRestartRecoveryClearPatch(entry));
 }
 
 export function isTerminalSessionStatus(

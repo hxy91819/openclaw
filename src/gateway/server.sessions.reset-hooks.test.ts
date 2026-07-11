@@ -350,6 +350,43 @@ test("sessions.reset emits internal command hook with reason", async () => {
   expect(event.context?.previousSessionEntry?.sessionId).toBe("sess-main");
 });
 
+test("sessions.reset removes automatic recovery state from the replacement session", async () => {
+  const { dir } = await createSessionStoreDir();
+  await writeSingleLineSession(dir, "sess-recovery", "hello");
+  await writeMainSessionEntry("sess-recovery", {
+    abortedLastRun: true,
+    restartRecoveryRuns: [{ runId: "recovery-run", lifecycleGeneration: "generation-1" }],
+    mainRestartRecovery: {
+      automaticAttempts: 3,
+      lastAttemptAt: 10,
+      lastRunId: "recovery-run",
+      nonRecoveryOwner: {
+        lifecycleGeneration: "generation-1",
+        token: "foreground-owner",
+      },
+      wedgedAt: 20,
+      wedgedReason: "exhausted",
+    },
+    subagentRecovery: {
+      automaticAttempts: 2,
+      lastAttemptAt: 10,
+      lastRunId: "child-recovery-run",
+      wedgedAt: 20,
+      wedgedReason: "child exhausted",
+    },
+  });
+
+  await resetMainSession();
+
+  const store = await loadGatewaySessionStoreForKey("main");
+  const replacement = store["agent:main:main"];
+  expect(replacement?.sessionId).not.toBe("sess-recovery");
+  expect(replacement?.abortedLastRun).toBe(false);
+  expect(replacement?.restartRecoveryRuns).toBeUndefined();
+  expect(replacement?.mainRestartRecovery).toBeUndefined();
+  expect(replacement?.subagentRecovery).toBeUndefined();
+});
+
 test("sessions.reset does not begin cleanup after losing lifecycle ownership", async () => {
   const { dir } = await createSessionStoreDir();
   await writeSingleLineSession(dir, "sess-main", "hello");

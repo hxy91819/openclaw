@@ -3,11 +3,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { createServer } from "node:net";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
-import {
-  GatewayClient,
-  GatewayClientRequestTimeoutError,
-  resolveGatewayClientConnectChallengeTimeoutMs,
-} from "./client.js";
+import { GatewayClient, resolveGatewayClientConnectChallengeTimeoutMs } from "./client.js";
 import {
   DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS,
   MAX_SAFE_TIMEOUT_DELAY_MS,
@@ -514,12 +510,9 @@ describe("GatewayClient", () => {
       const { client, send } = createOpenGatewayClient(25);
 
       const requestPromise = client.request("status");
-      const requestExpectation = expect(requestPromise).rejects.toMatchObject({
-        name: "GatewayClientRequestTimeoutError",
-        message: "gateway request timeout for status",
-        method: "status",
-        timeoutMs: 25,
-      } satisfies Partial<GatewayClientRequestTimeoutError>);
+      const requestExpectation = expect(requestPromise).rejects.toThrow(
+        "gateway request timeout for status",
+      );
       expect(send).toHaveBeenCalledTimes(1);
       expect(getPendingCount(client)).toBe(1);
 

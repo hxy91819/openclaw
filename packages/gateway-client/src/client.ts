@@ -325,18 +325,6 @@ export class GatewayClientRequestError extends Error {
   }
 }
 
-export class GatewayClientRequestTimeoutError extends Error {
-  readonly method: string;
-  readonly timeoutMs: number;
-
-  constructor(params: { method: string; timeoutMs: number }) {
-    super(`gateway request timeout for ${params.method}`);
-    this.name = "GatewayClientRequestTimeoutError";
-    this.method = params.method;
-    this.timeoutMs = params.timeoutMs;
-  }
-}
-
 class GatewayClientTransientPreHelloCloseError extends Error {
   constructor() {
     super("gateway transient pre-hello clean close");
@@ -1633,7 +1621,7 @@ export class GatewayClient {
               const pending = this.pending.get(id);
               this.pending.delete(id);
               pending?.cleanup?.();
-              reject(new GatewayClientRequestTimeoutError({ method, timeoutMs }));
+              reject(new Error(`gateway request timeout for ${method}`));
             }, timeoutMs);
       const cleanup = () => {
         if (timeout) {

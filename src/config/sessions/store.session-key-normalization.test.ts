@@ -262,53 +262,6 @@ describe("session store key normalization", () => {
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
-  it("preserves automatic recovery state for outbound metadata refreshes", async () => {
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [CANONICAL_KEY]: {
-            sessionId: "outbound-session",
-            updatedAt: 1,
-            abortedLastRun: true,
-            restartRecoveryRuns: [
-              { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
-              { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
-            ],
-            mainRestartRecovery: {
-              automaticAttempts: 2,
-              lastAttemptAt: 3,
-              lastRunId: "recovery-run-1",
-            },
-          },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    clearSessionStoreCacheForTest();
-
-    await recordInboundSessionMeta({
-      storePath,
-      sessionKey: MIXED_CASE_KEY,
-      ctx: createInboundContext(),
-    });
-
-    const store = loadSessionStore(storePath, { skipCache: true });
-    expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(true);
-    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toEqual([
-      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
-      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
-    ]);
-    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
-      automaticAttempts: 2,
-      lastAttemptAt: 3,
-      lastRunId: "recovery-run-1",
-    });
-    expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
-  });
-
   it("preserves recovery markers when updating the last route", async () => {
     await fs.writeFile(
       storePath,

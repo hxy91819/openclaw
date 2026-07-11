@@ -150,9 +150,7 @@ export function createExpiringMapCache<TKey, TValue>(options: {
 }
 
 type FileStatSnapshot = {
-  ctimeMs: number;
   ctimeNs: bigint;
-  mtimeMs: number;
   mtimeNs: bigint;
   sizeBytes: number;
 };
@@ -162,9 +160,7 @@ export function getFileStatSnapshot(filePath: string): FileStatSnapshot | undefi
   try {
     const stats = fs.statSync(filePath, { bigint: true });
     return {
-      ctimeMs: Number(stats.ctimeMs),
       ctimeNs: stats.ctimeNs,
-      mtimeMs: Number(stats.mtimeMs),
       mtimeNs: stats.mtimeNs,
       sizeBytes: Number(stats.size),
     };

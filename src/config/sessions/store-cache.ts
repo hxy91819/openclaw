@@ -22,9 +22,7 @@ export type SessionStoreSnapshotEntries = ReadonlyArray<
 >;
 
 type SessionStoreFileIdentity = {
-  ctimeMs?: number;
   ctimeNs?: bigint;
-  mtimeMs?: number;
   mtimeNs?: bigint;
   sizeBytes?: number;
 };
@@ -310,9 +308,7 @@ function hasDifferentSessionStoreFileIdentity(
   right: SessionStoreFileIdentity,
 ): boolean {
   return (
-    left.ctimeMs !== right.ctimeMs ||
     left.ctimeNs !== right.ctimeNs ||
-    left.mtimeMs !== right.mtimeMs ||
     left.mtimeNs !== right.mtimeNs ||
     left.sizeBytes !== right.sizeBytes
   );
@@ -417,9 +413,7 @@ export function writeSessionStoreSnapshotCache(
   const snapshot = cloneSessionStoreSnapshot(params.store, params.serialized);
   SESSION_STORE_SNAPSHOT_CACHE.set(params.storePath, {
     snapshot,
-    ctimeMs: params.ctimeMs,
     ctimeNs: params.ctimeNs,
-    mtimeMs: params.mtimeMs,
     mtimeNs: params.mtimeNs,
     sizeBytes: params.sizeBytes,
   });
@@ -477,9 +471,7 @@ export function writeSessionStoreCache(
   }
   SESSION_STORE_CACHE.set(params.storePath, {
     store,
-    ctimeMs: params.ctimeMs,
     ctimeNs: params.ctimeNs,
-    mtimeMs: params.mtimeMs,
     mtimeNs: params.mtimeNs,
     sizeBytes: params.sizeBytes,
     serialized: params.cloneSerialized,

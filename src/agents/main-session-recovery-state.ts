@@ -1,4 +1,5 @@
-import type { RestartRecoveryRun, SessionEntry } from "../config/sessions.js";
+import type { SessionEntry } from "../config/sessions.js";
+import { isAcpSessionKey, isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
 import {
   evaluateRecoveryFuse,
   formatRecoveryWedgedReason,
@@ -15,39 +16,18 @@ const MAIN_RESTART_RECOVERY_WEDGED_FALLBACK_REASON =
 const MAIN_RESTART_RECOVERY_REMEDIATION_HINT =
   "inspect the failed main session and use /new or reset to start a replacement session";
 
-export type MainRestartRecoveryGate = RestartRecoveryFuseGate;
-
-function normalizeRestartRecoveryRunMarkers(value: unknown): number {
-  if (!Array.isArray(value)) {
-    return 0;
+export function isMainRestartRecoveryCandidate(entry: SessionEntry, sessionKey: string): boolean {
+  if (typeof entry.spawnDepth === "number" && entry.spawnDepth > 0) {
+    return false;
   }
-  const markers = new Set<string>();
-  for (const run of value) {
-    if (!run || typeof run !== "object") {
-      continue;
-    }
-    const runId = (run as RestartRecoveryRun).runId;
-    const lifecycleGeneration = (run as RestartRecoveryRun).lifecycleGeneration;
-    if (typeof runId !== "string" || typeof lifecycleGeneration !== "string") {
-      continue;
-    }
-    const normalizedRunId = runId.trim();
-    const normalizedLifecycleGeneration = lifecycleGeneration.trim();
-    if (!normalizedRunId || !normalizedLifecycleGeneration) {
-      continue;
-    }
-    markers.add(`${normalizedRunId}\0${normalizedLifecycleGeneration}`);
+  if (entry.subagentRole != null) {
+    return false;
   }
-  return markers.size;
-}
-
-export function inferLegacyMainRestartRecoveryAttemptFloorFromRunMarkers(
-  entry: SessionEntry,
-): number {
-  if (entry.mainRestartRecovery !== undefined) {
-    return 0;
-  }
-  return Math.max(0, normalizeRestartRecoveryRunMarkers(entry.restartRecoveryRuns) - 1);
+  return (
+    !isSubagentSessionKey(sessionKey) &&
+    !isCronSessionKey(sessionKey) &&
+    !isAcpSessionKey(sessionKey)
+  );
 }
 
 export function isMainRestartRecoveryWedgedEntry(entry: unknown): boolean {
@@ -68,12 +48,11 @@ export function formatMainRestartRecoveryWedgedReason(entry: SessionEntry): stri
 export function evaluateMainRestartRecoveryGate(
   entry: SessionEntry,
   now: number,
-): MainRestartRecoveryGate {
+): RestartRecoveryFuseGate {
   return evaluateRecoveryFuse(entry.mainRestartRecovery, now, {
     maxAutomaticAttempts: MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS,
     ownerLabel: "main-session restart recovery",
     remediationHint: MAIN_RESTART_RECOVERY_REMEDIATION_HINT,
-    legacyAttemptFloor: inferLegacyMainRestartRecoveryAttemptFloorFromRunMarkers(entry),
   });
 }
 
@@ -84,7 +63,6 @@ export function markMainRestartRecoveryAttempt(params: {
   attempt: number;
 }): void {
   params.entry.mainRestartRecovery = markRecoveryAttempt({
-    state: params.entry.mainRestartRecovery,
     now: params.now,
     runId: params.runId,
     attempt: params.attempt,

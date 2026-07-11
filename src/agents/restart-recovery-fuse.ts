@@ -16,7 +16,6 @@ type RecoveryFuseOptions = {
   rewedgeWindowMs?: number;
   ownerLabel: string;
   remediationHint: string;
-  legacyAttemptFloor?: number;
 };
 
 function normalizeAttempts(value: unknown): number {
@@ -68,10 +67,7 @@ export function evaluateRecoveryFuse(
   const retainedAttempts = shouldRetainRecoveryAttempts(state, now, options.rewedgeWindowMs)
     ? normalizeAttempts(state?.automaticAttempts)
     : 0;
-  const previousAttempts = Math.max(
-    retainedAttempts,
-    normalizeAttempts(options.legacyAttemptFloor),
-  );
+  const previousAttempts = retainedAttempts;
   if (previousAttempts >= options.maxAutomaticAttempts) {
     const attemptDescription =
       options.rewedgeWindowMs === undefined
@@ -93,7 +89,6 @@ export function evaluateRecoveryFuse(
 }
 
 export function markRecoveryAttempt(params: {
-  state: RestartRecoveryFuseState | undefined;
   now: number;
   runId: string;
   attempt: number;
