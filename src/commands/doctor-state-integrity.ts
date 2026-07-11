@@ -30,6 +30,7 @@ import {
   resolveSessionTranscriptsDirForAgent,
   resolveStorePath,
 } from "../config/sessions/paths.js";
+import { applySessionEntryReplacements } from "../config/sessions/session-accessor.js";
 import { loadSessionStore } from "../config/sessions/store-load.js";
 import { updateSessionStore } from "../config/sessions/store.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -1342,16 +1343,19 @@ export async function noteStateIntegrity(
           initialValue: true,
         });
         if (repairWedged) {
-          let repaired = 0;
           const repairedAt = Date.now();
-          await updateSessionStore(absoluteStorePath, (currentStore) => {
-            for (const [key] of staleAbortedMainSessions) {
-              const current = currentStore[key];
-              if (current && clearWedgedMainRestartRecoveryAbort(current, repairedAt)) {
-                repaired += 1;
-                currentStore[key] = current;
-              }
-            }
+          // Revalidate under the writer lock because session state can change while Doctor prompts.
+          const repaired = await applySessionEntryReplacements<number>({
+            sessionKeys: staleAbortedMainSessions.map(([key]) => key),
+            storePath: absoluteStorePath,
+            update: (currentEntries) => {
+              const replacements = currentEntries.flatMap(({ sessionKey, entry }) =>
+                clearWedgedMainRestartRecoveryAbort(entry, repairedAt)
+                  ? [{ sessionKey, entry }]
+                  : [],
+              );
+              return { replacements, result: replacements.length };
+            },
           });
           if (repaired > 0) {
             changes.push(
