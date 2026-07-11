@@ -465,6 +465,39 @@ describe("doctor state integrity oauth dir checks", () => {
     expect(doctorChangesText()).toContain("1 wedged main session");
   });
 
+  it("does not report a repair when a main-session abort flag clears during confirmation", async () => {
+    const cfg: OpenClawConfig = {};
+    const sessionKey = "agent:main:stale-tombstone";
+    const tombstone = {
+      automaticAttempts: 3,
+      wedgedAt: Date.now() - 20_000,
+      wedgedReason: "stale main tombstone",
+    };
+    writeSessionStore(cfg, {
+      [sessionKey]: {
+        sessionId: "session-stale-main",
+        updatedAt: 0,
+        abortedLastRun: true,
+        mainRestartRecovery: tombstone,
+      },
+    });
+
+    const confirmRuntimeRepair = vi.fn(async () => {
+      writeSessionStore(cfg, {
+        [sessionKey]: {
+          sessionId: "session-stale-main",
+          updatedAt: 10,
+          abortedLastRun: false,
+          mainRestartRecovery: tombstone,
+        },
+      });
+      return true;
+    });
+    await noteStateIntegrity(cfg, { confirmRuntimeRepair, note: noteMock });
+
+    expect(doctorChangesText()).not.toContain("Cleared aborted restart-recovery flags");
+  });
+
   it("warns about tombstoned subagent restart recovery sessions", async () => {
     const cfg: OpenClawConfig = {};
     writeSessionStore(cfg, {
