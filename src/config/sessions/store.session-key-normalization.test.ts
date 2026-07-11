@@ -250,9 +250,10 @@ describe("session store key normalization", () => {
       { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
     ]);
     expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
-      automaticAttempts: 2,
-      lastAttemptAt: 3,
-      lastRunId: "recovery-run-1",
+      schemaVersion: 1,
+      cycleId: "cycle-1",
+      revision: 3,
+      attempts: { charged: 2, lastAt: 3 },
     });
     expect(store[CANONICAL_KEY]?.subagentRecovery).toEqual({
       automaticAttempts: 2,
@@ -311,9 +312,10 @@ describe("session store key normalization", () => {
       { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
     ]);
     expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
-      automaticAttempts: 2,
-      lastAttemptAt: 3,
-      lastRunId: "recovery-run-1",
+      schemaVersion: 1,
+      cycleId: "cycle-1",
+      revision: 3,
+      attempts: { charged: 2, lastAt: 3 },
     });
     expect(store[CANONICAL_KEY]?.subagentRecovery).toEqual({
       automaticAttempts: 2,
