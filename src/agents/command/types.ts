@@ -17,6 +17,7 @@ import type {
 import type { ExecElevatedDefaults } from "../bash-tools.exec-types.js";
 import type { BootstrapContextRunKind } from "../bootstrap-mode.js";
 import type { CliSessionBindingFacts } from "../cli-runner/types.js";
+import type { MainSessionRecoveryOwnerLease } from "../main-session-recovery-state.js";
 import type { AgentStreamParams, ClientToolDefinition } from "./shared-types.js";
 
 /** Image content block for Claude API multimodal messages. */
@@ -168,6 +169,8 @@ export type AgentCommandOpts = {
   oneShotCliRun?: boolean;
   /** Gateway-owned runs can late-bind plugin subagent and node runtime helpers. */
   allowGatewaySubagentBinding?: boolean;
+  /** Opaque foreground fence transferred by Gateway after atomic session admission. */
+  mainRestartRecoveryOwnerLease?: MainSessionRecoveryOwnerLease;
   /** Internal local CLI callers can annotate result metadata before JSON/text output. */
   resultMetaOverrides?: AgentCommandResultMetaOverrides;
   /** Called when the actual run model is selected, including fallback retries. */

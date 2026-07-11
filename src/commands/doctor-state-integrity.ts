@@ -9,9 +9,8 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import { note } from "../../packages/terminal-core/src/note.js";
 import { listAgentEntries, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import {
-  clearWedgedMainRestartRecoveryAbort,
-  formatMainRestartRecoveryWedgedReason,
-  isMainRestartRecoveryWedgedEntry,
+  inspectMainSessionRecoveryHealth,
+  transitionMainSessionRecovery,
 } from "../agents/main-session-recovery-state.js";
 import {
   clearWedgedSubagentRecoveryAbort,
@@ -1311,9 +1310,10 @@ export async function noteStateIntegrity(
       );
     }
 
-    const wedgedMainSessions = entries.filter(([, entry]) =>
-      isMainRestartRecoveryWedgedEntry(entry),
-    );
+    const wedgedMainSessions = entries.flatMap(([key, entry]) => {
+      const health = inspectMainSessionRecoveryHealth(entry);
+      return health.status === "tombstoned" ? [{ key, health }] : [];
+    });
     if (wedgedMainSessions.length > 0) {
       const wedgedCount = countLabel(wedgedMainSessions.length, "wedged main session");
       warnings.push(
@@ -1322,20 +1322,20 @@ export async function noteStateIntegrity(
           "  OpenClaw will not auto-resume these sessions again; inspect the failed turn, then use /new or reset to replace the session.",
           `  Examples: ${wedgedMainSessions
             .slice(0, 3)
-            .map(([key]) => key)
+            .map(({ key }) => key)
             .join(", ")}`,
         ].join("\n"),
       );
 
       const visibleWedgedReasons = uniqueStrings(
-        wedgedMainSessions.map(([, entry]) => formatMainRestartRecoveryWedgedReason(entry)),
+        wedgedMainSessions.map(({ health }) => health.reason),
       ).slice(0, 2);
       if (visibleWedgedReasons.length > 0) {
         warnings.push(visibleWedgedReasons.map((reason) => `  Reason: ${reason}`).join("\n"));
       }
 
       const staleAbortedMainSessions = wedgedMainSessions.filter(
-        ([, entry]) => entry.abortedLastRun === true,
+        ({ health }) => health.repair === "clear_stale_abort",
       );
       if (staleAbortedMainSessions.length > 0) {
         const staleCount = countLabel(staleAbortedMainSessions.length, "wedged main session");
@@ -1347,14 +1347,16 @@ export async function noteStateIntegrity(
           const repairedAt = Date.now();
           // Revalidate under the writer lock because session state can change while Doctor prompts.
           const repaired = await applySessionEntryReplacements<number>({
-            sessionKeys: staleAbortedMainSessions.map(([key]) => key),
+            sessionKeys: staleAbortedMainSessions.map(({ key }) => key),
             storePath: absoluteStorePath,
             update: (currentEntries) => {
-              const replacements = currentEntries.flatMap(({ sessionKey, entry }) =>
-                clearWedgedMainRestartRecoveryAbort(entry, repairedAt)
-                  ? [{ sessionKey, entry }]
-                  : [],
-              );
+              const replacements = currentEntries.flatMap(({ sessionKey, entry }) => {
+                const transition = transitionMainSessionRecovery(entry, {
+                  kind: "doctor_repair",
+                  now: repairedAt,
+                });
+                return transition.kind === "doctor_repaired" ? [{ sessionKey, entry }] : [];
+              });
               return { replacements, result: replacements.length };
             },
           });

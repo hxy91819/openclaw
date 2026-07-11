@@ -217,9 +217,10 @@ describe("session store key normalization", () => {
               { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
             ],
             mainRestartRecovery: {
-              automaticAttempts: 2,
-              lastAttemptAt: 3,
-              lastRunId: "recovery-run-1",
+              schemaVersion: 1,
+              cycleId: "cycle-1",
+              revision: 3,
+              attempts: { charged: 2, lastAt: 3 },
             },
             subagentRecovery: {
               automaticAttempts: 2,
@@ -276,9 +277,10 @@ describe("session store key normalization", () => {
               { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
             ],
             mainRestartRecovery: {
-              automaticAttempts: 2,
-              lastAttemptAt: 3,
-              lastRunId: "recovery-run-1",
+              schemaVersion: 1,
+              cycleId: "cycle-1",
+              revision: 3,
+              attempts: { charged: 2, lastAt: 3 },
             },
             subagentRecovery: {
               automaticAttempts: 2,

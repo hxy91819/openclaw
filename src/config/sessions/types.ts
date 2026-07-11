@@ -156,7 +156,7 @@ export type SessionPluginNextTurnInjection = {
 };
 
 export type RestartRecoveryFuseState = {
-  /** Accepted automatic recovery resumes retained by the owning recovery policy. */
+  /** Accepted automatic orphan-recovery resumes retained by the subagent policy. */
   automaticAttempts?: number;
   /** Timestamp (ms) of the latest accepted automatic recovery resume. */
   lastAttemptAt?: number;
@@ -168,11 +168,30 @@ export type RestartRecoveryFuseState = {
   wedgedReason?: string;
 };
 
-export type MainRestartRecoveryState = RestartRecoveryFuseState & {
-  /** Current Gateway admissions that make an otherwise aborted row ineligible for recovery. */
-  nonRecoveryOwners?: {
+export type MainRestartRecoveryState = {
+  schemaVersion: 1;
+  /** Stable identity for one interrupted episode; prevents clear-and-rewedge ABA matches. */
+  cycleId: string;
+  /** Monotonic identity for observations within the current recovery cycle. */
+  revision: number;
+  attempts: {
+    /** Attempts charged when their reservation is persisted, before dispatch. */
+    charged: number;
+    lastAt?: number;
+  };
+  reservation?: {
+    runId: string;
+    attempt: number;
+    reservedAt: number;
+  };
+  foregroundClaims?: {
     lifecycleGeneration: string;
     tokens: string[];
+  };
+  tombstone?: {
+    at: number;
+    code: "attempt_budget_exhausted";
+    reason: string;
   };
 };
 
@@ -516,32 +535,6 @@ export type SessionEntry = {
   pluginDebugEntries?: SessionPluginDebugEntry[];
   acp?: SessionAcpMeta;
 };
-
-type AutomaticRestartRecoveryStateFields = Pick<
-  SessionEntry,
-  "abortedLastRun" | "restartRecoveryRuns" | "mainRestartRecovery"
->;
-
-export function buildAutomaticRestartRecoveryClearPatch(
-  entry?: Partial<AutomaticRestartRecoveryStateFields> | null,
-): Partial<SessionEntry> {
-  if (
-    entry?.abortedLastRun !== true &&
-    entry?.restartRecoveryRuns === undefined &&
-    entry?.mainRestartRecovery === undefined
-  ) {
-    return {};
-  }
-  return {
-    abortedLastRun: false,
-    restartRecoveryRuns: undefined,
-    mainRestartRecovery: undefined,
-  };
-}
-
-export function clearAutomaticRestartRecoveryState(entry: SessionEntry): void {
-  Object.assign(entry, buildAutomaticRestartRecoveryClearPatch(entry));
-}
 
 export function isTerminalSessionStatus(
   status: unknown,

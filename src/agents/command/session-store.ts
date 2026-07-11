@@ -3,7 +3,6 @@
  */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
-  clearAutomaticRestartRecoveryState,
   resolveCompactionSessionFile,
   setSessionRuntimeModel,
   type SessionEntry,
@@ -16,6 +15,7 @@ import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { resolveNonNegativeNumber } from "../../shared/number-coercion.js";
 import { clearCliSession, setCliSessionBinding, setCliSessionId } from "../cli-session.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
+import { clearMainSessionRecoveryState } from "../main-session-recovery-state.js";
 import { isCliProvider } from "../model-selection.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage } from "../usage.js";
 
@@ -206,7 +206,7 @@ export async function updateSessionStoreAfterAgentRun(params: {
     if (!next.abortedLastRun) {
       // Any settled run on this session proves forward progress; interaction and
       // activity flags only control user-facing metadata, not fuse reset.
-      clearAutomaticRestartRecoveryState(next);
+      clearMainSessionRecoveryState(next);
     }
     if (result.meta.systemPromptReport) {
       next.systemPromptReport = result.meta.systemPromptReport;

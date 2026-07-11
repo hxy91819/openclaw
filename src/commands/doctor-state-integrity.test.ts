@@ -395,11 +395,15 @@ describe("doctor state integrity oauth dir checks", () => {
         updatedAt: Date.now(),
         abortedLastRun: false,
         mainRestartRecovery: {
-          automaticAttempts: 3,
-          lastAttemptAt: Date.now() - 30_000,
-          lastRunId: "run-wedged-main",
-          wedgedAt: Date.now() - 20_000,
-          wedgedReason: "main-session restart recovery blocked after 3 accepted resume attempts",
+          schemaVersion: 1,
+          cycleId: "cycle-wedged-main",
+          revision: 4,
+          attempts: { charged: 3, lastAt: Date.now() - 30_000 },
+          tombstone: {
+            at: Date.now() - 20_000,
+            code: "attempt_budget_exhausted",
+            reason: "main-session restart recovery blocked after 3 accepted resume attempts",
+          },
         },
       },
     });
@@ -426,9 +430,15 @@ describe("doctor state integrity oauth dir checks", () => {
         updatedAt: 0,
         abortedLastRun: true,
         mainRestartRecovery: {
-          automaticAttempts: 3,
-          wedgedAt: Date.now() - 20_000,
-          wedgedReason: "stale main tombstone",
+          schemaVersion: 1,
+          cycleId: "cycle-stale-main",
+          revision: 4,
+          attempts: { charged: 3 },
+          tombstone: {
+            at: Date.now() - 20_000,
+            code: "attempt_budget_exhausted",
+            reason: "stale main tombstone",
+          },
         },
       },
       [canonicalKey]: {
@@ -436,9 +446,15 @@ describe("doctor state integrity oauth dir checks", () => {
         updatedAt: canonicalUpdatedAt,
         abortedLastRun: false,
         mainRestartRecovery: {
-          automaticAttempts: 3,
-          wedgedAt: Date.now() - 10_000,
-          wedgedReason: "canonical main tombstone",
+          schemaVersion: 1,
+          cycleId: "cycle-canonical-main",
+          revision: 4,
+          attempts: { charged: 3 },
+          tombstone: {
+            at: Date.now() - 10_000,
+            code: "attempt_budget_exhausted",
+            reason: "canonical main tombstone",
+          },
         },
       },
     });
@@ -453,14 +469,14 @@ describe("doctor state integrity oauth dir checks", () => {
       string,
       {
         abortedLastRun?: boolean;
-        mainRestartRecovery?: { wedgedAt?: number };
+        mainRestartRecovery?: { tombstone?: { at?: number } };
         updatedAt?: number;
       }
     >;
     expect(persisted[staleKey]?.abortedLastRun).toBe(false);
-    expect(persisted[staleKey]?.mainRestartRecovery?.wedgedAt).toEqual(expect.any(Number));
+    expect(persisted[staleKey]?.mainRestartRecovery?.tombstone?.at).toEqual(expect.any(Number));
     expect(persisted[canonicalKey]?.abortedLastRun).not.toBe(true);
-    expect(persisted[canonicalKey]?.mainRestartRecovery?.wedgedAt).toEqual(expect.any(Number));
+    expect(persisted[canonicalKey]?.mainRestartRecovery?.tombstone?.at).toEqual(expect.any(Number));
     expect(persisted[canonicalKey]?.updatedAt).toBe(canonicalUpdatedAt);
     expect(doctorChangesText()).toContain("1 wedged main session");
   });
@@ -469,9 +485,15 @@ describe("doctor state integrity oauth dir checks", () => {
     const cfg: OpenClawConfig = {};
     const sessionKey = "agent:main:stale-tombstone";
     const tombstone = {
-      automaticAttempts: 3,
-      wedgedAt: Date.now() - 20_000,
-      wedgedReason: "stale main tombstone",
+      schemaVersion: 1 as const,
+      cycleId: "cycle-stale-main",
+      revision: 4,
+      attempts: { charged: 3 },
+      tombstone: {
+        at: Date.now() - 20_000,
+        code: "attempt_budget_exhausted" as const,
+        reason: "stale main tombstone",
+      },
     };
     writeSessionStore(cfg, {
       [sessionKey]: {

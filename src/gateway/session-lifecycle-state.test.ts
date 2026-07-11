@@ -233,9 +233,10 @@ describe("session lifecycle state", () => {
           },
         ],
         mainRestartRecovery: {
-          automaticAttempts: 2,
-          lastAttemptAt: 1_600,
-          lastRunId: "accepted-main-recovery-run",
+          schemaVersion: 1,
+          cycleId: "cycle-1",
+          revision: 2,
+          attempts: { charged: 2, lastAt: 1_600 },
         },
         subagentRecovery: {
           automaticAttempts: 2,

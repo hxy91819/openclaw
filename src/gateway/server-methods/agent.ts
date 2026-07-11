@@ -54,11 +54,11 @@ import {
 } from "../../agents/internal-event-contract.js";
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
 import {
-  claimMainRestartRecoveryOwner,
-  hasCurrentMainRestartRecoveryOwner,
-  isMainRestartRecoveryCandidate,
-  releaseMainRestartRecoveryOwner,
+  buildMainSessionRecoveryClearPatch,
+  transitionMainSessionRecovery,
+  type MainSessionRecoveryOwnerLease,
 } from "../../agents/main-session-recovery-state.js";
+import { commitMainSessionRecovery } from "../../agents/main-session-recovery-store.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
@@ -78,7 +78,6 @@ import {
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { agentCommandFromIngress } from "../../commands/agent.js";
 import {
-  buildAutomaticRestartRecoveryClearPatch,
   evaluateSessionFreshness,
   hasTerminalMainSessionTranscriptNewerThanRegistrySync,
   mergeSessionEntry,
@@ -360,33 +359,13 @@ function resolveCanUseInternalRuntimeHandoff(
   return client?.connect?.client?.mode === GATEWAY_CLIENT_MODES.BACKEND;
 }
 
-async function releaseMainRestartRecoveryNonRecoveryOwner(params: {
-  lifecycleGeneration: string;
-  ownerToken: string;
-  sessionKey: string;
-  storePath: string;
-}): Promise<void> {
-  await applySessionEntryReplacements({
+async function releaseMainRestartRecoveryOwnerLease(
+  lease: MainSessionRecoveryOwnerLease,
+): Promise<void> {
+  await commitMainSessionRecovery({
+    command: { kind: "release_foreground", lease },
     requireWriteSuccess: true,
-    sessionKeys: [params.sessionKey],
-    storePath: params.storePath,
-    update: (entries) => {
-      const entry = entries[0]?.entry;
-      if (
-        !entry ||
-        !releaseMainRestartRecoveryOwner({
-          entry,
-          lifecycleGeneration: params.lifecycleGeneration,
-          token: params.ownerToken,
-        })
-      ) {
-        return { result: undefined };
-      }
-      return {
-        replacements: [{ sessionKey: params.sessionKey, entry }],
-        result: undefined,
-      };
-    },
+    target: lease,
   });
 }
 
@@ -1905,13 +1884,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       : undefined;
     let gatewayWorkAdmission: SessionWorkAdmissionLease | undefined;
     let gatewayAdmissionTransferred = false;
-    let mainRestartRecoveryOwnerClaim:
-      | {
-          ownerToken: string;
-          sessionKey: string;
-          storePath: string;
-        }
-      | undefined;
+    let mainRestartRecoveryOwnerClaim: MainSessionRecoveryOwnerLease | undefined;
     const releaseMainRestartRecoveryOwnerClaim = async (phase: string): Promise<void> => {
       const claim = mainRestartRecoveryOwnerClaim;
       if (!claim) {
@@ -1919,10 +1892,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       }
       mainRestartRecoveryOwnerClaim = undefined;
       try {
-        await releaseMainRestartRecoveryNonRecoveryOwner({
-          lifecycleGeneration,
-          ...claim,
-        });
+        await releaseMainRestartRecoveryOwnerLease(claim);
       } catch (err) {
         context.logGateway.warn(
           `failed to release ${phase} main restart recovery owner: ${formatForLog(err)}`,
@@ -2880,7 +2850,6 @@ export const agentHandlers: GatewayRequestHandlers = {
           freshSessionRotatedSinceLoad: boolean;
           isNewSession: boolean;
           rotatedSessionId: boolean;
-          shouldClaimMainRestartRecoveryOwner: boolean;
           usableRequestedSessionId: string | undefined;
           freshness: typeof freshness;
         };
@@ -3049,18 +3018,8 @@ export const agentHandlers: GatewayRequestHandlers = {
             !freshSessionRotatedSinceLoad &&
             patchSessionId === freshEntry?.sessionId;
           const automaticRecoveryClearPatch = shouldClearRotatedState
-            ? buildAutomaticRestartRecoveryClearPatch(freshEntry)
+            ? buildMainSessionRecoveryClearPatch(freshEntry)
             : {};
-          const shouldClaimMainRestartRecoveryOwner = Boolean(
-            freshEntry &&
-            !isRestartRecoveryResumeRun &&
-            !shouldClearRotatedState &&
-            !shouldClearTerminalState &&
-            freshEntry.status === "running" &&
-            freshEntry.abortedLastRun === true &&
-            patchSessionId === freshEntry.sessionId &&
-            isMainRestartRecoveryCandidate(freshEntry, canonicalKey),
-          );
           const patch: Partial<SessionEntry> = {
             sessionId: patchSessionId,
             updatedAt: now,
@@ -3113,7 +3072,6 @@ export const agentHandlers: GatewayRequestHandlers = {
             freshSessionRotatedSinceLoad,
             isNewSession: freshIsNewSession,
             rotatedSessionId: freshRotatedSessionId,
-            shouldClaimMainRestartRecoveryOwner,
             usableRequestedSessionId: freshUsableRequestedSessionId,
             freshness: freshFreshness,
           };
@@ -3186,20 +3144,6 @@ export const agentHandlers: GatewayRequestHandlers = {
                   if (entry && !freshEntry) {
                     deletedDuringStoreUpdateError = `Session "${canonicalSessionKey}" was deleted while starting work. Retry.`;
                     throw new Error(deletedDuringStoreUpdateError);
-                  }
-                  if (isRestartRecoveryResumeRun) {
-                    const reservationStillOwned =
-                      freshEntry?.sessionId === requestedSessionId &&
-                      freshEntry.status === "running" &&
-                      freshEntry.abortedLastRun === true &&
-                      freshEntry.mainRestartRecovery?.lastRunId === idem &&
-                      !hasCurrentMainRestartRecoveryOwner(freshEntry, lifecycleGeneration);
-                    if (!reservationStillOwned) {
-                      restartRecoveryReservationConflict =
-                        `Session "${canonicalSessionKey}" restart recovery reservation is stale; ` +
-                        "recovery was skipped.";
-                      throw new Error(restartRecoveryReservationConflict);
-                    }
                   }
                   const archivedError = resolveSessionWorkStartError(
                     canonicalSessionKey,
@@ -3297,20 +3241,33 @@ export const agentHandlers: GatewayRequestHandlers = {
                     deniedSessionEntry = merged;
                     return null;
                   }
-                  if (patchBuild.shouldClaimMainRestartRecoveryOwner) {
-                    const ownerToken = mainRestartRecoveryOwnerClaim?.ownerToken ?? randomUUID();
-                    // Linearize foreground admission with recovery reservation under
-                    // the same writer lock; outer cleanup releases pre-dispatch rejects.
-                    claimMainRestartRecoveryOwner({
-                      entry: merged,
-                      lifecycleGeneration,
-                      token: ownerToken,
-                    });
-                    mainRestartRecoveryOwnerClaim = {
-                      ownerToken,
-                      sessionKey: canonicalSessionKey,
-                      storePath,
-                    };
+                  const recoveryTransition = isRestartRecoveryResumeRun
+                    ? transitionMainSessionRecovery(merged, {
+                        kind: "admit_recovery",
+                        lifecycleGeneration,
+                        now,
+                        runId: idem,
+                        sessionId: requestedSessionId ?? merged.sessionId,
+                      })
+                    : transitionMainSessionRecovery(merged, {
+                        kind: "claim_foreground",
+                        cycleId: randomUUID(),
+                        lifecycleGeneration,
+                        sessionId: merged.sessionId,
+                        sessionKey: canonicalSessionKey,
+                        storePath,
+                        token: mainRestartRecoveryOwnerClaim?.token ?? randomUUID(),
+                      });
+                  if (isRestartRecoveryResumeRun && recoveryTransition.kind !== "admitted_recovery") {
+                    restartRecoveryReservationConflict =
+                      `Session "${canonicalSessionKey}" restart recovery reservation is stale; ` +
+                      "recovery was skipped.";
+                    throw new Error(restartRecoveryReservationConflict);
+                  }
+                  if (recoveryTransition.kind === "foreground_claimed") {
+                    // This lease is persisted in the same writer transaction as admission.
+                    // The shared ingress path owns it after dispatch and releases it on settlement.
+                    mainRestartRecoveryOwnerClaim = recoveryTransition.lease;
                   }
                   return merged;
                 },
@@ -4181,6 +4138,9 @@ export const agentHandlers: GatewayRequestHandlers = {
               // Plugin tools created for Gateway-owned turns must resolve the live
               // Gateway subagent and node runtimes, not standalone placeholders.
               allowGatewaySubagentBinding: true,
+              ...(mainRestartRecoveryOwnerClaim
+                ? { mainRestartRecoveryOwnerLease: mainRestartRecoveryOwnerClaim }
+                : {}),
               allowModelOverride: effectiveAllowModelOverride,
             },
             runId,

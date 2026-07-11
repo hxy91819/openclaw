@@ -1,4 +1,5 @@
 /** Main agent command orchestration for sessions, model selection, delivery, and attempts. */
+import { randomUUID } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { resolveInlineAgentImageAttachments } from "../auto-reply/reply/agent-turn-attachments.js";
@@ -139,6 +140,8 @@ import {
 } from "./internal-session-effects.js";
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
 import { LiveSessionModelSwitchError } from "./live-model-switch.js";
+import type { MainSessionRecoveryOwnerLease } from "./main-session-recovery-state.js";
+import { commitMainSessionRecovery } from "./main-session-recovery-store.js";
 import { loadManifestModelCatalog } from "./model-catalog.js";
 import { runWithModelFallback } from "./model-fallback.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
@@ -3026,6 +3029,65 @@ function emitIngressModelUsageDiagnostic(
   });
 }
 
+async function claimIngressMainSessionRecoveryOwner(params: {
+  lifecycleGeneration: string;
+  opts: AgentCommandIngressOpts;
+}): Promise<MainSessionRecoveryOwnerLease | undefined> {
+  if (
+    params.opts.mainRestartRecoveryOwnerLease ||
+    params.opts.sessionEffects === "internal" ||
+    isMainSessionRestartRecoveryInputProvenance(params.opts.inputProvenance) ||
+    !params.opts.sessionKey
+  ) {
+    return params.opts.mainRestartRecoveryOwnerLease;
+  }
+  const resolved = resolveSession({
+    cfg: getRuntimeConfig(),
+    to: params.opts.to,
+    sessionId: params.opts.sessionId,
+    sessionKey: params.opts.sessionKey,
+    agentId: params.opts.agentId,
+    clone: false,
+  });
+  const entry = resolved.sessionEntry;
+  if (
+    !entry ||
+    entry.status !== "running" ||
+    entry.abortedLastRun !== true ||
+    !resolved.sessionKey ||
+    !resolved.storePath
+  ) {
+    return undefined;
+  }
+  const claim = await commitMainSessionRecovery({
+    command: {
+      kind: "claim_foreground",
+      cycleId: randomUUID(),
+      lifecycleGeneration: params.lifecycleGeneration,
+      sessionId: entry.sessionId,
+      sessionKey: resolved.sessionKey,
+      storePath: resolved.storePath,
+      token: randomUUID(),
+    },
+    requireWriteSuccess: true,
+    target: { sessionKey: resolved.sessionKey, storePath: resolved.storePath },
+  });
+  return claim.transition.kind === "foreground_claimed" ? claim.transition.lease : undefined;
+}
+
+async function releaseIngressMainSessionRecoveryOwner(
+  lease: MainSessionRecoveryOwnerLease | undefined,
+): Promise<void> {
+  if (!lease) {
+    return;
+  }
+  await commitMainSessionRecovery({
+    command: { kind: "release_foreground", lease },
+    requireWriteSuccess: true,
+    target: lease,
+  });
+}
+
 /** Runs an agent turn from an inbound channel/gateway ingress context. */
 export async function agentCommandFromIngress(
   opts: AgentCommandIngressOpts,
@@ -3037,23 +3099,37 @@ export async function agentCommandFromIngress(
   }
   const lifecycleGeneration =
     opts.lifecycleGeneration ?? captureAgentRunLifecycleGeneration(opts.runId ?? "");
-  return await withAgentRunLifecycleGeneration(lifecycleGeneration, async () => {
-    const result = await agentCommandInternal(
-      {
-        ...opts,
-        lifecycleGeneration,
-        senderIsOwner: opts.senderIsOwner === true,
-      },
-      runtime,
-      deps,
-    );
-
-    if (result) {
-      emitIngressModelUsageDiagnostic(result, opts);
-    }
-
-    return result;
+  const recoveryOwnerLease = await claimIngressMainSessionRecoveryOwner({
+    lifecycleGeneration,
+    opts,
   });
+  try {
+    return await withAgentRunLifecycleGeneration(lifecycleGeneration, async () => {
+      const result = await agentCommandInternal(
+        {
+          ...opts,
+          lifecycleGeneration,
+          senderIsOwner: opts.senderIsOwner === true,
+        },
+        runtime,
+        deps,
+      );
+
+      if (result) {
+        emitIngressModelUsageDiagnostic(result, opts);
+      }
+
+      return result;
+    });
+  } finally {
+    try {
+      await releaseIngressMainSessionRecoveryOwner(recoveryOwnerLease);
+    } catch (error) {
+      log.warn(
+        `failed to release main-session recovery ingress owner: ${formatErrorMessage(error)}`,
+      );
+    }
+  }
 }
 
 export const testing = {
