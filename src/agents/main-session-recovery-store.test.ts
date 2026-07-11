@@ -21,7 +21,7 @@ describe("main session recovery store", () => {
   });
 
   async function write(entry: SessionEntry): Promise<void> {
-    await saveSessionStore(storePath, { [sessionKey]: entry });
+    await saveSessionStore(storePath, { [sessionKey]: entry }, { skipMaintenance: true });
   }
 
   function read(): SessionEntry {

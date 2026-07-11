@@ -1666,9 +1666,10 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
     ];
     entry.mainRestartRecovery = {
-      automaticAttempts: 2,
-      lastAttemptAt: 3,
-      lastRunId: "recovery-run-2",
+      schemaVersion: 1,
+      cycleId: "cycle-1",
+      revision: 1,
+      attempts: { charged: 2, lastAt: 3 },
     };
     entry.subagentRecovery = {
       automaticAttempts: 2,
@@ -1689,9 +1690,10 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       { runId: "recovery-run-2", lifecycleGeneration: "gen-3" },
     ]);
     expect(firstPersistedEntry?.mainRestartRecovery).toEqual({
-      automaticAttempts: 2,
-      lastAttemptAt: 3,
-      lastRunId: "recovery-run-2",
+      schemaVersion: 1,
+      cycleId: "cycle-1",
+      revision: 1,
+      attempts: { charged: 2, lastAt: 3 },
     });
     expect(firstPersistedEntry?.subagentRecovery).toEqual({
       automaticAttempts: 2,
@@ -1847,9 +1849,10 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     entry.abortedLastRun = true;
     entry.restartRecoveryRuns = [{ runId: "initial-wedged-run", lifecycleGeneration: "gen-1" }];
     entry.mainRestartRecovery = {
-      automaticAttempts: 1,
-      lastAttemptAt: 3,
-      lastRunId: "recovery-run-1",
+      schemaVersion: 1,
+      cycleId: "cycle-1",
+      revision: 1,
+      attempts: { charged: 1, lastAt: 3 },
     };
 
     await agentCommand({
@@ -1876,9 +1879,10 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
         { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
       ]);
       expect(persistedEntry.mainRestartRecovery).toEqual({
-        automaticAttempts: 1,
-        lastAttemptAt: 3,
-        lastRunId: "recovery-run-1",
+        schemaVersion: 1,
+        cycleId: "cycle-1",
+        revision: 1,
+        attempts: { charged: 1, lastAt: 3 },
       });
     }
     expectRecordFields(mockCallArg(state.updateSessionStoreAfterAgentRunMock), {

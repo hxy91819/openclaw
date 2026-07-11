@@ -1104,12 +1104,15 @@ async function recoverStore(params: {
       target: { sessionKey, storePath: params.storePath },
     });
     const recoveryEntry = observed.entry;
-    const recoveryView =
-      observed.transition.kind === "observed" ? observed.transition.view : { status: "inactive" };
-    if (!recoveryEntry || recoveryView.status === "inactive") {
+    if (
+      !recoveryEntry ||
+      observed.transition.kind !== "observed" ||
+      observed.transition.view.status === "inactive"
+    ) {
       result.skipped++;
       continue;
     }
+    const recoveryView = observed.transition.view;
     if (
       hasCurrentProcessOwner({
         activeSessionIds: resolveActiveSessionIds(),

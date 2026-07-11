@@ -269,6 +269,30 @@ describe("main session recovery state", () => {
     ).toEqual({ kind: "rejected", reason: "stale_cycle" });
   });
 
+  it("preserves the charged cycle when an accepted recovery is interrupted again", () => {
+    const entry = interruptedEntry({
+      abortedLastRun: false,
+      mainRestartRecovery: recoveryState({
+        revision: 3,
+        attempts: { charged: 1, lastAt: 200 },
+      }),
+    });
+
+    transitionMainSessionRecovery(entry, {
+      kind: "mark_interrupted",
+      cycleId: "replacement-cycle",
+      now: 300,
+    });
+
+    expect(entry.abortedLastRun).toBe(true);
+    expect(entry.mainRestartRecovery).toEqual(
+      recoveryState({
+        revision: 3,
+        attempts: { charged: 1, lastAt: 200 },
+      }),
+    );
+  });
+
   it("tombstones an exhausted cycle and exposes only the Doctor repair action", () => {
     const entry = interruptedEntry({
       mainRestartRecovery: recoveryState({
@@ -312,6 +336,7 @@ describe("main session recovery state", () => {
 
   it("owns lifecycle fence suppression, consumption, and healthy clearing", () => {
     const entry = interruptedEntry({
+      abortedLastRun: false,
       restartRecoveryRuns: [
         { runId: "interrupted", lifecycleGeneration: "generation-1" },
         { runId: "recovery", lifecycleGeneration: "generation-1" },

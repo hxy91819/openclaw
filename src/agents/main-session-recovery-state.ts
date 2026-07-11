@@ -275,8 +275,7 @@ export function transitionMainSessionRecovery(
 ): MainSessionRecoveryTransitionResult {
   switch (command.kind) {
     case "mark_interrupted": {
-      const wasInterrupted = entry.abortedLastRun === true;
-      if (!wasInterrupted || !entry.mainRestartRecovery) {
+      if (!entry.mainRestartRecovery) {
         entry.mainRestartRecovery = createCycle(command.cycleId);
       }
       entry.status = "running";
