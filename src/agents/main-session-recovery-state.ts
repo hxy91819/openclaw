@@ -90,7 +90,20 @@ export type MainSessionRecoveryCommand =
     }
   | { kind: "cancel_reservation"; reservation: MainSessionRecoveryReservation }
   | {
+      kind: "validate_recovery";
+      lifecycleGeneration: string;
+      runId: string;
+      sessionId: string;
+    }
+  | {
       kind: "admit_recovery";
+      lifecycleGeneration: string;
+      now: number;
+      runId: string;
+      sessionId: string;
+    }
+  | {
+      kind: "mark_admitted_recovery_interrupted";
       lifecycleGeneration: string;
       now: number;
       runId: string;
@@ -132,6 +145,7 @@ export type MainSessionRecoveryTransitionResult =
   | { kind: "observed"; view: MainSessionRecoveryView }
   | { kind: "rejected"; reason: MainSessionRecoveryConflict }
   | { kind: "reservation_cancelled" }
+  | { kind: "recovery_validated" }
   | { kind: "reserved"; reservation: MainSessionRecoveryReservation }
   | { kind: "tombstoned"; reason: string };
 
@@ -189,6 +203,30 @@ function hasCurrentForegroundClaim(
   );
 }
 
+function validateRecoveryAdmission(
+  entry: SessionEntry,
+  command: {
+    lifecycleGeneration: string;
+    runId: string;
+    sessionId: string;
+  },
+): MainSessionRecoveryConflict | null {
+  const state = entry.mainRestartRecovery;
+  if (entry.sessionId !== command.sessionId) {
+    return "session_replaced";
+  }
+  if (entry.status !== "running" || entry.abortedLastRun !== true || !state) {
+    return "not_interrupted";
+  }
+  if (
+    state.reservation?.runId !== command.runId ||
+    state.reservation.lifecycleGeneration !== command.lifecycleGeneration
+  ) {
+    return "stale_reservation";
+  }
+  return hasCurrentForegroundClaim(state, command.lifecycleGeneration) ? "foreground_active" : null;
+}
+
 function recordLifecycleFence(entry: SessionEntry, run: RestartRecoveryRun): void {
   // Lifecycle fences can overlap and are consumed independently by their matching events.
   const runs = new Map<string, RestartRecoveryRun>();
@@ -200,6 +238,15 @@ function recordLifecycleFence(entry: SessionEntry, run: RestartRecoveryRun): voi
     a.runId === b.runId
       ? a.lifecycleGeneration.localeCompare(b.lifecycleGeneration)
       : a.runId.localeCompare(b.runId),
+  );
+}
+
+function hasLifecycleFence(entry: SessionEntry, run: RestartRecoveryRun): boolean {
+  return Boolean(
+    entry.restartRecoveryRuns?.some(
+      (candidate) =>
+        candidate.runId === run.runId && candidate.lifecycleGeneration === run.lifecycleGeneration,
+    ),
   );
 }
 
@@ -392,23 +439,16 @@ export function transitionMainSessionRecovery(
       };
       return { kind: "reservation_cancelled" };
     }
+    case "validate_recovery": {
+      const conflict = validateRecoveryAdmission(entry, command);
+      return conflict ? { kind: "rejected", reason: conflict } : { kind: "recovery_validated" };
+    }
     case "admit_recovery": {
-      const state = entry.mainRestartRecovery;
-      if (entry.sessionId !== command.sessionId) {
-        return { kind: "rejected", reason: "session_replaced" };
+      const conflict = validateRecoveryAdmission(entry, command);
+      if (conflict) {
+        return { kind: "rejected", reason: conflict };
       }
-      if (entry.status !== "running" || entry.abortedLastRun !== true || !state) {
-        return { kind: "rejected", reason: "not_interrupted" };
-      }
-      if (
-        state.reservation?.runId !== command.runId ||
-        state.reservation.lifecycleGeneration !== command.lifecycleGeneration
-      ) {
-        return { kind: "rejected", reason: "stale_reservation" };
-      }
-      if (hasCurrentForegroundClaim(state, command.lifecycleGeneration)) {
-        return { kind: "rejected", reason: "foreground_active" };
-      }
+      const state = entry.mainRestartRecovery!;
       entry.mainRestartRecovery = {
         ...state,
         revision: nextRevision(state),
@@ -439,6 +479,29 @@ export function transitionMainSessionRecovery(
         }
       }
       return { kind: "admitted_recovery" };
+    }
+    case "mark_admitted_recovery_interrupted": {
+      const state = entry.mainRestartRecovery;
+      if (entry.sessionId !== command.sessionId) {
+        return { kind: "rejected", reason: "session_replaced" };
+      }
+      if (
+        !state ||
+        state.reservation ||
+        !hasLifecycleFence(entry, {
+          runId: command.runId,
+          lifecycleGeneration: command.lifecycleGeneration,
+        })
+      ) {
+        return { kind: "rejected", reason: "stale_reservation" };
+      }
+      entry.status = "running";
+      entry.abortedLastRun = true;
+      entry.startedAt = undefined;
+      entry.endedAt = undefined;
+      entry.runtimeMs = undefined;
+      entry.updatedAt = command.now;
+      return { kind: "marked", observation: observationFor(entry)! };
     }
     case "claim_foreground": {
       if (

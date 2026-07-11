@@ -1461,6 +1461,8 @@ export const agentHandlers: GatewayRequestHandlers = {
     let resolvedGroupSpace: string | undefined = normalizedSpawned.groupSpace;
     let spawnedByValue: string | undefined;
     const inputProvenance = normalizeInputProvenance(request.inputProvenance);
+    const isRestartRecoveryResumeRun =
+      canUseInternalRuntimeHandoff && isMainSessionRestartRecoveryInputProvenance(inputProvenance);
     const preserveUserFacingSessionModelState =
       canUseInternalRuntimeHandoff &&
       shouldPreserveUserFacingSessionStateForInputProvenance(inputProvenance);
@@ -2442,6 +2444,18 @@ export const agentHandlers: GatewayRequestHandlers = {
         });
       };
       const respondToGatewayAdmissionOutcome = (): boolean => {
+        if (isRestartRecoveryResumeRun && (postAdmissionAbort || postAdmissionTimeout)) {
+          gatewayWorkAdmission?.release();
+          respond(
+            false,
+            undefined,
+            errorShape(
+              ErrorCodes.UNAVAILABLE,
+              "restart recovery ended before Gateway admission completed",
+            ),
+          );
+          return true;
+        }
         if (postAdmissionAbort) {
           gatewayWorkAdmission?.release();
           agentRunAccepted = true;
@@ -2791,9 +2805,6 @@ export const agentHandlers: GatewayRequestHandlers = {
         const isSystemGatewayRun =
           effectiveBootstrapContextRunKind === "cron" ||
           effectiveBootstrapContextRunKind === "heartbeat";
-        const isRestartRecoveryResumeRun =
-          canUseInternalRuntimeHandoff &&
-          isMainSessionRestartRecoveryInputProvenance(inputProvenance);
         const requestedSessionMatchesEntry = Boolean(
           requestedSessionId && entry?.sessionId?.trim() === requestedSessionId,
         );
@@ -3243,9 +3254,8 @@ export const agentHandlers: GatewayRequestHandlers = {
                   }
                   const recoveryTransition = isRestartRecoveryResumeRun
                     ? transitionMainSessionRecovery(merged, {
-                        kind: "admit_recovery",
+                        kind: "validate_recovery",
                         lifecycleGeneration,
-                        now,
                         runId: idem,
                         sessionId: requestedSessionId ?? merged.sessionId,
                       })
@@ -3258,7 +3268,10 @@ export const agentHandlers: GatewayRequestHandlers = {
                         storePath,
                         token: mainRestartRecoveryOwnerClaim?.token ?? randomUUID(),
                       });
-                  if (isRestartRecoveryResumeRun && recoveryTransition.kind !== "admitted_recovery") {
+                  if (
+                    isRestartRecoveryResumeRun &&
+                    recoveryTransition.kind !== "recovery_validated"
+                  ) {
                     restartRecoveryReservationConflict =
                       `Session "${canonicalSessionKey}" restart recovery reservation is stale; ` +
                       "recovery was skipped.";
@@ -3723,6 +3736,111 @@ export const agentHandlers: GatewayRequestHandlers = {
         });
         return;
       }
+      const markAdmittedRestartRecoveryInterrupted = async (): Promise<void> => {
+        if (!isRestartRecoveryResumeRun || !resolvedSessionKey) {
+          return;
+        }
+        await commitMainSessionRecovery({
+          command: {
+            kind: "mark_admitted_recovery_interrupted",
+            lifecycleGeneration,
+            now: Date.now(),
+            runId: idem,
+            sessionId: requestedSessionId ?? admittedSessionId,
+          },
+          requireWriteSuccess: true,
+          target: { sessionKey: resolvedSessionKey, storePath: lifecycleStorePath },
+        });
+      };
+      if (isRestartRecoveryResumeRun) {
+        const recoverySessionKey = resolvedSessionKey;
+        if (!recoverySessionKey) {
+          activeRunAbort.cleanup({ force: true });
+          activeGatewayWorkAdmission.release();
+          gatewayWorkAdmission = undefined;
+          respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.UNAVAILABLE, "restart recovery session target is unavailable"),
+          );
+          return;
+        }
+        let recoveryAdmission: Awaited<ReturnType<typeof commitMainSessionRecovery>>;
+        try {
+          // Keep the reservation intact through every fallible pre-accept step;
+          // this final transaction is the Gateway acceptance boundary.
+          recoveryAdmission = await commitMainSessionRecovery({
+            command: {
+              kind: "admit_recovery",
+              lifecycleGeneration,
+              now: Date.now(),
+              runId: idem,
+              sessionId: requestedSessionId ?? admittedSessionId,
+            },
+            requireWriteSuccess: true,
+            target: { sessionKey: recoverySessionKey, storePath: lifecycleStorePath },
+          });
+        } catch (err) {
+          activeRunAbort.cleanup({ force: true });
+          activeGatewayWorkAdmission.release();
+          gatewayWorkAdmission = undefined;
+          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+          return;
+        }
+        if (recoveryAdmission.transition.kind !== "admitted_recovery") {
+          activeRunAbort.cleanup({ force: true });
+          activeGatewayWorkAdmission.release();
+          gatewayWorkAdmission = undefined;
+          respond(
+            false,
+            undefined,
+            errorShape(
+              ErrorCodes.UNAVAILABLE,
+              `Session "${recoverySessionKey}" restart recovery reservation is stale; recovery was skipped.`,
+            ),
+          );
+          return;
+        }
+        if (activeRunAbort.controller.signal.aborted) {
+          try {
+            // Durable admission won the race, so the attempt remains charged.
+            // Restore interruption before returning so a later scan can continue this cycle.
+            await markAdmittedRestartRecoveryInterrupted();
+          } catch (err) {
+            activeRunAbort.cleanup({ force: true });
+            activeGatewayWorkAdmission.release();
+            gatewayWorkAdmission = undefined;
+            respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
+            return;
+          }
+          const stopReason = resolveAbortedAgentStopReason(activeRunAbort.entry);
+          setAbortedAgentDedupeEntries({
+            dedupe: context.dedupe,
+            keys: agentDedupeKeys,
+            agentId: resolvedSessionKey === "global" ? activeSessionAgentId : undefined,
+            runId,
+            stopReason,
+          });
+          agentRunAccepted = true;
+          activeRunAbort.cleanup({ force: true });
+          activeGatewayWorkAdmission.release();
+          gatewayWorkAdmission = undefined;
+          respond(
+            true,
+            {
+              runId,
+              status: "timeout" as const,
+              summary: "aborted",
+              stopReason,
+              timeoutPhase: "queue" as const,
+              providerStarted: false,
+            },
+            undefined,
+            { runId },
+          );
+          return;
+        }
+      }
       if (!activeRunAbort.registered) {
         activeGatewayWorkAdmission.release();
       }
@@ -3839,6 +3957,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         let dispatched = false;
         try {
           if (activeRunAbort.controller.signal.aborted) {
+            await markAdmittedRestartRecoveryInterrupted();
             const stopReason = resolveAbortedAgentStopReason(activeRunAbort.entry);
             setAbortedAgentDedupeEntries({
               dedupe: context.dedupe,

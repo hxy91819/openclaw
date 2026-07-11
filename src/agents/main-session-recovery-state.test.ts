@@ -116,6 +116,17 @@ describe("main session recovery state", () => {
 
     expect(
       transitionMainSessionRecovery(entry, {
+        kind: "validate_recovery",
+        lifecycleGeneration: "generation-1",
+        runId: "recovery-1",
+        sessionId: "session-1",
+      }),
+    ).toEqual({ kind: "recovery_validated" });
+    expect(entry.mainRestartRecovery?.reservation).toBeDefined();
+    expect(entry.abortedLastRun).toBe(true);
+
+    expect(
+      transitionMainSessionRecovery(entry, {
         kind: "admit_recovery",
         lifecycleGeneration: "generation-1",
         now: 300,
@@ -134,6 +145,19 @@ describe("main session recovery state", () => {
       },
     });
     expect(entry.mainRestartRecovery?.reservation).toBeUndefined();
+
+    expect(
+      transitionMainSessionRecovery(entry, {
+        kind: "mark_admitted_recovery_interrupted",
+        lifecycleGeneration: "generation-1",
+        now: 400,
+        runId: "recovery-1",
+        sessionId: "session-1",
+      }),
+    ).toMatchObject({ kind: "marked" });
+    expect(entry.mainRestartRecovery?.attempts.charged).toBe(1);
+    expect(entry.mainRestartRecovery?.reservation).toBeUndefined();
+    expect(entry.abortedLastRun).toBe(true);
   });
 
   it("rejects a reservation created by an older lifecycle generation", () => {
