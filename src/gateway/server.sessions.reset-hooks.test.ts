@@ -357,17 +357,14 @@ test("sessions.reset removes automatic recovery state from the replacement sessi
     abortedLastRun: true,
     restartRecoveryRuns: [{ runId: "recovery-run", lifecycleGeneration: "generation-1" }],
     mainRestartRecovery: {
-      schemaVersion: 1,
       cycleId: "cycle-1",
       revision: 5,
-      attempts: { charged: 3, lastAt: 10 },
+      chargedAttempts: 3,
       foregroundClaims: {
         lifecycleGeneration: "generation-1",
         tokens: ["foreground-owner"],
       },
       tombstone: {
-        at: 20,
-        code: "attempt_budget_exhausted",
         reason: "exhausted",
       },
     },

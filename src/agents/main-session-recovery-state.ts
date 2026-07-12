@@ -1,4 +1,7 @@
-import { sanitizePendingFinalDeliveryText } from "../auto-reply/reply/pending-final-delivery.js";
+import {
+  PENDING_FINAL_DELIVERY_CLEAR_PATCH,
+  sanitizePendingFinalDeliveryText,
+} from "../auto-reply/reply/pending-final-delivery.js";
 import type {
   MainRestartRecoveryState,
   RestartRecoveryRun,
@@ -6,7 +9,7 @@ import type {
 } from "../config/sessions.js";
 import { isAcpSessionKey, isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
 
-export const MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS = 3;
+const MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS = 3;
 
 const MAIN_RESTART_RECOVERY_WEDGED_FALLBACK_REASON =
   "main-session restart recovery is tombstoned for this session";
@@ -25,21 +28,18 @@ export type MainSessionRecoveryReservation = {
   lifecycleGeneration: string;
   runId: string;
   attempt: number;
-  previousLastAt?: number;
 };
 
-export type MainSessionRecoveryOwnerLease = {
-  sessionId: string;
+export type MainSessionRecoveryOwnerClaim = {
   cycleId: string;
   lifecycleGeneration: string;
   token: string;
   sessionKey: string;
-  storePath: string;
 };
 
-export type MainSessionRecoveryView =
+type MainSessionRecoveryView =
   | { status: "inactive" }
-  | { status: "blocked"; reason: "foreground_active" | "reservation_active" }
+  | { status: "blocked" }
   | {
       status: "recoverable";
       observation: MainSessionRecoveryObservation;
@@ -50,19 +50,16 @@ export type MainSessionRecoveryView =
       observation: MainSessionRecoveryObservation;
       reason: string;
     }
-  | {
-      status: "tombstoned";
-      reason: string;
-      repair: "clear_stale_abort" | null;
-    };
+  | { status: "tombstoned" };
 
-export type MainSessionRecoveryConflict =
+type MainSessionRecoveryConflict =
   | "already_tombstoned"
   | "foreground_active"
   | "not_interrupted"
   | "reservation_active"
   | "session_replaced"
   | "stale_cycle"
+  | "stale_generation"
   | "stale_reservation"
   | "stale_revision";
 
@@ -115,10 +112,9 @@ export type MainSessionRecoveryCommand =
       lifecycleGeneration: string;
       sessionId: string;
       sessionKey: string;
-      storePath: string;
       token: string;
     }
-  | { kind: "release_foreground"; lease: MainSessionRecoveryOwnerLease }
+  | { kind: "release_foreground"; claim: MainSessionRecoveryOwnerClaim }
   | {
       kind: "tombstone";
       now: number;
@@ -135,19 +131,16 @@ export type MainSessionRecoveryCommand =
 
 export type MainSessionRecoveryTransitionResult =
   | { kind: "admitted_recovery" }
-  | { kind: "cleared" }
+  | { kind: "applied" }
   | { kind: "doctor_repaired" }
   | { kind: "failed"; noticeEntry: SessionEntry }
-  | { kind: "foreground_claimed"; lease: MainSessionRecoveryOwnerLease }
-  | { kind: "foreground_released" }
-  | { kind: "marked"; observation: MainSessionRecoveryObservation }
+  | { kind: "foreground_claimed"; claim: MainSessionRecoveryOwnerClaim }
   | { kind: "no_change" }
   | { kind: "observed"; view: MainSessionRecoveryView }
   | { kind: "rejected"; reason: MainSessionRecoveryConflict }
-  | { kind: "reservation_cancelled" }
   | { kind: "recovery_validated" }
   | { kind: "reserved"; reservation: MainSessionRecoveryReservation }
-  | { kind: "tombstoned"; reason: string };
+  | { kind: "tombstoned" };
 
 type MainRecoveryLifecycleEvent = {
   runId?: string;
@@ -161,10 +154,9 @@ function nextRevision(state: MainRestartRecoveryState): number {
 
 function createCycle(cycleId: string): MainRestartRecoveryState {
   return {
-    schemaVersion: 1,
     cycleId,
     revision: 1,
-    attempts: { charged: 0 },
+    chargedAttempts: 0,
   };
 }
 
@@ -252,7 +244,7 @@ function hasLifecycleFence(entry: SessionEntry, run: RestartRecoveryRun): boolea
 
 function formatAttemptBudgetReason(attempts: number): string {
   return (
-    `main-session restart recovery blocked after ${attempts} accepted resume attempts; ` +
+    `main-session restart recovery blocked after ${attempts} charged automatic resume attempts; ` +
     MAIN_RESTART_RECOVERY_REMEDIATION_HINT
   );
 }
@@ -271,7 +263,7 @@ export function isMainRestartRecoveryCandidate(entry: SessionEntry, sessionKey: 
   );
 }
 
-export function inspectMainSessionRecovery(params: {
+function inspectMainSessionRecovery(params: {
   entry: SessionEntry;
   lifecycleGeneration: string;
   sessionKey: string;
@@ -290,29 +282,25 @@ export function inspectMainSessionRecovery(params: {
     return { status: "inactive" };
   }
   if (state.tombstone) {
-    return {
-      status: "tombstoned",
-      reason: state.tombstone.reason.trim() || MAIN_RESTART_RECOVERY_WEDGED_FALLBACK_REASON,
-      repair: "clear_stale_abort",
-    };
+    return { status: "tombstoned" };
   }
   if (hasCurrentForegroundClaim(state, params.lifecycleGeneration)) {
-    return { status: "blocked", reason: "foreground_active" };
+    return { status: "blocked" };
   }
   if (state.reservation) {
-    return { status: "blocked", reason: "reservation_active" };
+    return { status: "blocked" };
   }
-  if (state.attempts.charged >= MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS) {
+  if (state.chargedAttempts >= MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS) {
     return {
       status: "exhausted",
       observation,
-      reason: formatAttemptBudgetReason(state.attempts.charged),
+      reason: formatAttemptBudgetReason(state.chargedAttempts),
     };
   }
   return {
     status: "recoverable",
     observation,
-    nextAttempt: state.attempts.charged + 1,
+    nextAttempt: state.chargedAttempts + 1,
   };
 }
 
@@ -336,7 +324,7 @@ export function transitionMainSessionRecovery(
         recordLifecycleFence(entry, run);
       }
       entry.updatedAt = command.now;
-      return { kind: "marked", observation: observationFor(entry)! };
+      return { kind: "applied" };
     }
     case "observe": {
       if (
@@ -385,18 +373,16 @@ export function transitionMainSessionRecovery(
       if (state.reservation) {
         return { kind: "rejected", reason: "reservation_active" };
       }
-      if (command.attempt !== state.attempts.charged + 1) {
+      if (command.attempt !== state.chargedAttempts + 1) {
         return { kind: "rejected", reason: "stale_revision" };
       }
-      const previousLastAt = state.attempts.lastAt;
       entry.mainRestartRecovery = {
         ...state,
         revision: nextRevision(state),
-        attempts: { charged: command.attempt, lastAt: command.now },
+        chargedAttempts: command.attempt,
         reservation: {
           runId: command.runId,
           attempt: command.attempt,
-          reservedAt: command.now,
           lifecycleGeneration: command.lifecycleGeneration,
         },
       };
@@ -409,7 +395,6 @@ export function transitionMainSessionRecovery(
           lifecycleGeneration: command.lifecycleGeneration,
           runId: command.runId,
           attempt: command.attempt,
-          ...(previousLastAt === undefined ? {} : { previousLastAt }),
         },
       };
     }
@@ -429,15 +414,10 @@ export function transitionMainSessionRecovery(
       entry.mainRestartRecovery = {
         ...state,
         revision: nextRevision(state),
-        attempts: {
-          charged: Math.max(0, command.reservation.attempt - 1),
-          ...(command.reservation.previousLastAt === undefined
-            ? {}
-            : { lastAt: command.reservation.previousLastAt }),
-        },
+        chargedAttempts: Math.max(0, command.reservation.attempt - 1),
         reservation: undefined,
       };
-      return { kind: "reservation_cancelled" };
+      return { kind: "applied" };
     }
     case "validate_recovery": {
       const conflict = validateRecoveryAdmission(entry, command);
@@ -469,13 +449,7 @@ export function transitionMainSessionRecovery(
           entry.pendingFinalDeliveryLastError = null;
           entry.pendingFinalDeliveryText = pendingText;
         } else {
-          entry.pendingFinalDelivery = undefined;
-          entry.pendingFinalDeliveryText = undefined;
-          entry.pendingFinalDeliveryCreatedAt = undefined;
-          entry.pendingFinalDeliveryLastAttemptAt = undefined;
-          entry.pendingFinalDeliveryAttemptCount = undefined;
-          entry.pendingFinalDeliveryLastError = undefined;
-          entry.pendingFinalDeliveryContext = undefined;
+          Object.assign(entry, PENDING_FINAL_DELIVERY_CLEAR_PATCH);
         }
       }
       return { kind: "admitted_recovery" };
@@ -501,7 +475,7 @@ export function transitionMainSessionRecovery(
       entry.endedAt = undefined;
       entry.runtimeMs = undefined;
       entry.updatedAt = command.now;
-      return { kind: "marked", observation: observationFor(entry)! };
+      return { kind: "applied" };
     }
     case "claim_foreground": {
       if (
@@ -531,13 +505,11 @@ export function transitionMainSessionRecovery(
       };
       return {
         kind: "foreground_claimed",
-        lease: {
-          sessionId: entry.sessionId,
+        claim: {
           cycleId: state.cycleId,
           lifecycleGeneration: command.lifecycleGeneration,
           token: command.token,
           sessionKey: command.sessionKey,
-          storePath: command.storePath,
         },
       };
     }
@@ -546,23 +518,22 @@ export function transitionMainSessionRecovery(
       const claims = state?.foregroundClaims;
       if (
         !state ||
-        entry.sessionId !== command.lease.sessionId ||
-        state.cycleId !== command.lease.cycleId ||
-        claims?.lifecycleGeneration !== command.lease.lifecycleGeneration ||
-        !claims.tokens.includes(command.lease.token)
+        state.cycleId !== command.claim.cycleId ||
+        claims?.lifecycleGeneration !== command.claim.lifecycleGeneration ||
+        !claims.tokens.includes(command.claim.token)
       ) {
         return { kind: "no_change" };
       }
-      const tokens = claims.tokens.filter((token) => token !== command.lease.token);
+      const tokens = claims.tokens.filter((token) => token !== command.claim.token);
       entry.mainRestartRecovery = {
         ...state,
         revision: nextRevision(state),
         foregroundClaims:
           tokens.length > 0
-            ? { lifecycleGeneration: command.lease.lifecycleGeneration, tokens }
+            ? { lifecycleGeneration: command.claim.lifecycleGeneration, tokens }
             : undefined,
       };
-      return { kind: "foreground_released" };
+      return { kind: "applied" };
     }
     case "tombstone": {
       const conflict = matchesObservation(entry, command.observation);
@@ -579,13 +550,7 @@ export function transitionMainSessionRecovery(
       entry.mainRestartRecovery = {
         ...state,
         revision: nextRevision(state),
-        attempts: {
-          charged: Math.max(state.attempts.charged, MAIN_RESTART_RECOVERY_MAX_AUTOMATIC_ATTEMPTS),
-          lastAt: state.attempts.lastAt ?? command.now,
-        },
         tombstone: {
-          at: command.now,
-          code: "attempt_budget_exhausted",
           reason: command.reason,
         },
       };
@@ -594,7 +559,7 @@ export function transitionMainSessionRecovery(
       entry.endedAt = command.now;
       entry.runtimeMs = Math.max(0, command.now - (entry.startedAt ?? command.now));
       entry.updatedAt = command.now;
-      return { kind: "tombstoned", reason: command.reason };
+      return { kind: "tombstoned" };
     }
     case "fail_recovery": {
       const conflict = matchesObservation(entry, command.observation);
@@ -606,13 +571,7 @@ export function transitionMainSessionRecovery(
       entry.abortedLastRun = true;
       entry.endedAt = command.now;
       entry.updatedAt = command.now;
-      entry.pendingFinalDelivery = undefined;
-      entry.pendingFinalDeliveryText = undefined;
-      entry.pendingFinalDeliveryCreatedAt = undefined;
-      entry.pendingFinalDeliveryLastAttemptAt = undefined;
-      entry.pendingFinalDeliveryAttemptCount = undefined;
-      entry.pendingFinalDeliveryLastError = undefined;
-      entry.pendingFinalDeliveryContext = undefined;
+      Object.assign(entry, PENDING_FINAL_DELIVERY_CLEAR_PATCH);
       entry.restartRecoveryDeliveryContext = undefined;
       entry.restartRecoveryDeliveryRunId = undefined;
       entry.mainRestartRecovery = undefined;
@@ -632,7 +591,7 @@ export function transitionMainSessionRecovery(
         return { kind: "no_change" };
       }
       Object.assign(entry, patch);
-      return { kind: "cleared" };
+      return { kind: "applied" };
     }
     default:
       return command satisfies never;
@@ -646,7 +605,7 @@ type MainRecoveryStateFields = Pick<
 
 export function buildMainSessionRecoveryClearPatch(
   entry?: Partial<MainRecoveryStateFields> | null,
-): Partial<SessionEntry> {
+): Partial<MainRecoveryStateFields> {
   if (
     entry?.abortedLastRun !== true &&
     entry?.restartRecoveryRuns === undefined &&
@@ -659,10 +618,6 @@ export function buildMainSessionRecoveryClearPatch(
     restartRecoveryRuns: undefined,
     mainRestartRecovery: undefined,
   };
-}
-
-export function clearMainSessionRecoveryState(entry: SessionEntry): void {
-  Object.assign(entry, buildMainSessionRecoveryClearPatch(entry));
 }
 
 export function inspectMainSessionRecoveryHealth(entry: SessionEntry):

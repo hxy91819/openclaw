@@ -56,9 +56,12 @@ import type { AgentInternalEvent } from "../../agents/internal-events.js";
 import {
   buildMainSessionRecoveryClearPatch,
   transitionMainSessionRecovery,
-  type MainSessionRecoveryOwnerLease,
 } from "../../agents/main-session-recovery-state.js";
-import { commitMainSessionRecovery } from "../../agents/main-session-recovery-store.js";
+import {
+  commitMainSessionRecovery,
+  releaseMainSessionRecoveryOwner,
+  type MainSessionRecoveryOwnerLease,
+} from "../../agents/main-session-recovery-store.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
@@ -357,16 +360,6 @@ function resolveCanUseInternalRuntimeHandoff(
   client: GatewayRequestHandlerOptions["client"],
 ): boolean {
   return client?.connect?.client?.mode === GATEWAY_CLIENT_MODES.BACKEND;
-}
-
-async function releaseMainRestartRecoveryOwnerLease(
-  lease: MainSessionRecoveryOwnerLease,
-): Promise<void> {
-  await commitMainSessionRecovery({
-    command: { kind: "release_foreground", lease },
-    requireWriteSuccess: true,
-    target: lease,
-  });
 }
 
 function resolveCanUseCronRunContinuation(client: GatewayRequestHandlerOptions["client"]): boolean {
@@ -1886,15 +1879,15 @@ export const agentHandlers: GatewayRequestHandlers = {
       : undefined;
     let gatewayWorkAdmission: SessionWorkAdmissionLease | undefined;
     let gatewayAdmissionTransferred = false;
-    let mainRestartRecoveryOwnerClaim: MainSessionRecoveryOwnerLease | undefined;
-    const releaseMainRestartRecoveryOwnerClaim = async (phase: string): Promise<void> => {
-      const claim = mainRestartRecoveryOwnerClaim;
-      if (!claim) {
+    let mainRestartRecoveryOwnerLease: MainSessionRecoveryOwnerLease | undefined;
+    const releaseMainRestartRecoveryOwnerLease = async (phase: string): Promise<void> => {
+      const lease = mainRestartRecoveryOwnerLease;
+      if (!lease) {
         return;
       }
-      mainRestartRecoveryOwnerClaim = undefined;
+      mainRestartRecoveryOwnerLease = undefined;
       try {
-        await releaseMainRestartRecoveryOwnerLease(claim);
+        await releaseMainSessionRecoveryOwner(lease);
       } catch (err) {
         context.logGateway.warn(
           `failed to release ${phase} main restart recovery owner: ${formatForLog(err)}`,
@@ -2051,24 +2044,15 @@ export const agentHandlers: GatewayRequestHandlers = {
         context.logGateway.warn(`cron continuation release recovery exhausted for ${runId}`);
       });
     };
-    const releaseCronContinuationClaimWithRecovery = async (
-      outcome?: { terminalOutcome: AgentRunTerminalOutcome },
-      onRecovered?: () => void,
-    ): Promise<boolean> => {
-      const released = await releaseCronContinuationClaim(outcome);
-      if (!released && cronContinuationClaim) {
-        scheduleCronContinuationReleaseRecovery(outcome, onRecovered);
-      }
-      return released;
-    };
-    const settleAgentRunClaims = async (outcome: {
+    const releaseCronContinuationClaimWithRecovery = async (outcome?: {
       terminalOutcome: AgentRunTerminalOutcome;
       onRecovered?: () => void;
     }): Promise<boolean> => {
-      // Keep foreground admission fenced through dispatch, but release on every
-      // settlement; command failures can bypass the store update that clears it.
-      await releaseMainRestartRecoveryOwnerClaim("settled");
-      return await releaseCronContinuationClaimWithRecovery(outcome, outcome.onRecovered);
+      const released = await releaseCronContinuationClaim(outcome);
+      if (!released && cronContinuationClaim) {
+        scheduleCronContinuationReleaseRecovery(outcome, outcome?.onRecovered);
+      }
+      return released;
     };
 
     try {
@@ -3265,8 +3249,7 @@ export const agentHandlers: GatewayRequestHandlers = {
                         lifecycleGeneration,
                         sessionId: merged.sessionId,
                         sessionKey: canonicalSessionKey,
-                        storePath,
-                        token: mainRestartRecoveryOwnerClaim?.token ?? randomUUID(),
+                        token: mainRestartRecoveryOwnerLease?.token ?? randomUUID(),
                       });
                   if (
                     isRestartRecoveryResumeRun &&
@@ -3280,7 +3263,10 @@ export const agentHandlers: GatewayRequestHandlers = {
                   if (recoveryTransition.kind === "foreground_claimed") {
                     // This lease is persisted in the same writer transaction as admission.
                     // The shared ingress path owns it after dispatch and releases it on settlement.
-                    mainRestartRecoveryOwnerClaim = recoveryTransition.lease;
+                    mainRestartRecoveryOwnerLease = {
+                      ...recoveryTransition.claim,
+                      storePath,
+                    };
                   }
                   return merged;
                 },
@@ -4106,6 +4092,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           const execApprovalFollowupElevatedDefaults =
             execApprovalFollowupRuntimeHandoff?.bashElevated;
 
+          const transferredRecoveryOwnerLease = mainRestartRecoveryOwnerLease;
           dispatchAgentRunFromGateway({
             ingressOpts: {
               message,
@@ -4257,8 +4244,8 @@ export const agentHandlers: GatewayRequestHandlers = {
               // Plugin tools created for Gateway-owned turns must resolve the live
               // Gateway subagent and node runtimes, not standalone placeholders.
               allowGatewaySubagentBinding: true,
-              ...(mainRestartRecoveryOwnerClaim
-                ? { mainRestartRecoveryOwnerLease: mainRestartRecoveryOwnerClaim }
+              ...(transferredRecoveryOwnerLease
+                ? { mainRestartRecoveryOwnerLease: transferredRecoveryOwnerLease }
                 : {}),
               allowModelOverride: effectiveAllowModelOverride,
             },
@@ -4266,11 +4253,14 @@ export const agentHandlers: GatewayRequestHandlers = {
             dedupeKeys: agentDedupeKeys,
             abortController: activeRunAbort.controller,
             cleanupAbortController: cleanupAdmittedRun,
-            onSettled: settleAgentRunClaims,
+            onSettled: releaseCronContinuationClaimWithRecovery,
             respond,
             context,
             taskTrackingMode: dispatchTaskTrackingMode,
           });
+          // The shared ingress wrapper now owns release on every preparation and
+          // execution outcome. Gateway retains only claims not handed to dispatch.
+          mainRestartRecoveryOwnerLease = undefined;
           dispatched = true;
         } catch (err) {
           const error = errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err));
@@ -4295,7 +4285,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           });
         } finally {
           if (!dispatched) {
-            await releaseMainRestartRecoveryOwnerClaim("undispatched");
+            await releaseMainRestartRecoveryOwnerLease("undispatched");
             try {
               await releaseCronContinuationClaimWithRecovery();
             } finally {
@@ -4306,7 +4296,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       });
     } finally {
       if (!gatewayAdmissionTransferred) {
-        await releaseMainRestartRecoveryOwnerClaim("unaccepted");
+        await releaseMainRestartRecoveryOwnerLease("unaccepted");
         gatewayWorkAdmission?.release();
         await releaseCronContinuationClaimWithRecovery();
       }

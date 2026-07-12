@@ -395,14 +395,12 @@ describe("doctor state integrity oauth dir checks", () => {
         updatedAt: Date.now(),
         abortedLastRun: false,
         mainRestartRecovery: {
-          schemaVersion: 1,
           cycleId: "cycle-wedged-main",
           revision: 4,
-          attempts: { charged: 3, lastAt: Date.now() - 30_000 },
+          chargedAttempts: 3,
           tombstone: {
-            at: Date.now() - 20_000,
-            code: "attempt_budget_exhausted",
-            reason: "main-session restart recovery blocked after 3 accepted resume attempts",
+            reason:
+              "main-session restart recovery blocked after 3 charged automatic resume attempts",
           },
         },
       },
@@ -415,7 +413,7 @@ describe("doctor state integrity oauth dir checks", () => {
     expect(text).toContain("Found 1 wedged main session");
     expect(text).toContain("agent:main:main");
     expect(text).toContain("use /new or reset");
-    expect(text).toContain("blocked after 3 accepted resume attempts");
+    expect(text).toContain("blocked after 3 charged automatic resume attempts");
     expect(hasRepairPromptMessage(confirmRuntimeRepair, "wedged main session")).toBe(false);
   });
 
@@ -430,13 +428,10 @@ describe("doctor state integrity oauth dir checks", () => {
         updatedAt: 0,
         abortedLastRun: true,
         mainRestartRecovery: {
-          schemaVersion: 1,
           cycleId: "cycle-stale-main",
           revision: 4,
-          attempts: { charged: 3 },
+          chargedAttempts: 3,
           tombstone: {
-            at: Date.now() - 20_000,
-            code: "attempt_budget_exhausted",
             reason: "stale main tombstone",
           },
         },
@@ -446,13 +441,10 @@ describe("doctor state integrity oauth dir checks", () => {
         updatedAt: canonicalUpdatedAt,
         abortedLastRun: false,
         mainRestartRecovery: {
-          schemaVersion: 1,
           cycleId: "cycle-canonical-main",
           revision: 4,
-          attempts: { charged: 3 },
+          chargedAttempts: 3,
           tombstone: {
-            at: Date.now() - 10_000,
-            code: "attempt_budget_exhausted",
             reason: "canonical main tombstone",
           },
         },
@@ -469,14 +461,18 @@ describe("doctor state integrity oauth dir checks", () => {
       string,
       {
         abortedLastRun?: boolean;
-        mainRestartRecovery?: { tombstone?: { at?: number } };
+        mainRestartRecovery?: { tombstone?: { reason?: string } };
         updatedAt?: number;
       }
     >;
     expect(persisted[staleKey]?.abortedLastRun).toBe(false);
-    expect(persisted[staleKey]?.mainRestartRecovery?.tombstone?.at).toEqual(expect.any(Number));
+    expect(persisted[staleKey]?.mainRestartRecovery?.tombstone?.reason).toBe(
+      "stale main tombstone",
+    );
     expect(persisted[canonicalKey]?.abortedLastRun).not.toBe(true);
-    expect(persisted[canonicalKey]?.mainRestartRecovery?.tombstone?.at).toEqual(expect.any(Number));
+    expect(persisted[canonicalKey]?.mainRestartRecovery?.tombstone?.reason).toBe(
+      "canonical main tombstone",
+    );
     expect(persisted[canonicalKey]?.updatedAt).toBe(canonicalUpdatedAt);
     expect(doctorChangesText()).toContain("1 wedged main session");
   });
@@ -485,13 +481,10 @@ describe("doctor state integrity oauth dir checks", () => {
     const cfg: OpenClawConfig = {};
     const sessionKey = "agent:main:stale-tombstone";
     const tombstone = {
-      schemaVersion: 1 as const,
       cycleId: "cycle-stale-main",
       revision: 4,
-      attempts: { charged: 3 },
+      chargedAttempts: 3,
       tombstone: {
-        at: Date.now() - 20_000,
-        code: "attempt_budget_exhausted" as const,
         reason: "stale main tombstone",
       },
     };

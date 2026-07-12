@@ -341,6 +341,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
         pendingFinalDeliveryCreatedAt: 1,
         pendingFinalDeliveryAttemptCount: 4,
         pendingFinalDeliveryLastError: null,
+        pendingFinalDeliveryIntentId: "stale-heartbeat-intent",
       },
     });
     const cfg = withFastReplyConfig({
@@ -362,6 +363,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
     expect(stored.pendingFinalDelivery).toBeUndefined();
     expect(stored.pendingFinalDeliveryText).toBeUndefined();
     expect(stored.pendingFinalDeliveryAttemptCount).toBeUndefined();
+    expect(stored.pendingFinalDeliveryIntentId).toBeUndefined();
   });
 
   it("keeps non-ack heartbeat pending delivery without direct replay", async () => {

@@ -42,12 +42,31 @@ const MODEL_OVERRIDE_CONFLICT_DEPENDENT_FIELDS = ["thinkingLevel"] as const sati
   keyof SessionEntry
 >;
 
+const MAIN_SESSION_RECOVERY_TRANSACTION_FIELDS = [
+  "abortedLastRun",
+  "restartRecoveryRuns",
+  "mainRestartRecovery",
+] as const satisfies ReadonlyArray<keyof SessionEntry>;
+
 function anySessionFieldChanged(
   before: SessionEntryRecord,
   after: SessionEntryRecord,
   fields: ReadonlyArray<keyof SessionEntry>,
 ): boolean {
   return fields.some((field) => !isDeepStrictEqual(before[field], after[field]));
+}
+
+function mainSessionRecoveryTransactionChanged(before: SessionEntry, after: SessionEntry): boolean {
+  const beforeState = before.mainRestartRecovery;
+  const afterState = after.mainRestartRecovery;
+  return (
+    before.abortedLastRun !== after.abortedLastRun ||
+    !isDeepStrictEqual(before.restartRecoveryRuns, after.restartRecoveryRuns) ||
+    beforeState?.cycleId !== afterState?.cycleId ||
+    beforeState?.chargedAttempts !== afterState?.chargedAttempts ||
+    !isDeepStrictEqual(beforeState?.reservation, afterState?.reservation) ||
+    !isDeepStrictEqual(beforeState?.tombstone, afterState?.tombstone)
+  );
 }
 
 /** Projects run-local snapshot changes without restoring concurrently changed fields. */
@@ -131,10 +150,27 @@ export function projectSessionSnapshotChanges(params: {
     patch.modelProvider = params.next.modelProvider;
   }
 
+  const mainRecoveryChanged = mainSessionRecoveryTransactionChanged(params.initial, params.next);
+  const mainRecoveryChangedConcurrently = mainSessionRecoveryTransactionChanged(
+    params.initial,
+    params.current,
+  );
+  if (mainRecoveryChanged && !mainRecoveryChangedConcurrently) {
+    // Apply all three fields together: a stale healthy flag can otherwise hide a newer marker.
+    // Revision and foreground tokens are excluded because owner admission may add them
+    // after a run snapshot is prepared without changing the recovery transaction.
+    for (const field of MAIN_SESSION_RECOVERY_TRANSACTION_FIELDS) {
+      patchRecord[field] = Object.hasOwn(params.next, field) ? next[field] : undefined;
+    }
+  }
+
   for (const field of fields) {
     if (
       field === "model" ||
       field === "modelProvider" ||
+      MAIN_SESSION_RECOVERY_TRANSACTION_FIELDS.includes(
+        field as (typeof MAIN_SESSION_RECOVERY_TRANSACTION_FIELDS)[number],
+      ) ||
       SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS.includes(
         field as (typeof SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS)[number],
       )

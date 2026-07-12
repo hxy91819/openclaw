@@ -15,6 +15,7 @@ import {
   resolveDefaultAgentId,
 } from "../agents/agent-scope.js";
 import { isEmbeddedAgentRunActive } from "../agents/embedded-agent.js";
+import { buildMainSessionRecoveryClearPatch } from "../agents/main-session-recovery-state.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
 import { resolveSessionModelRef } from "../agents/session-model-ref.js";
 import {
@@ -640,10 +641,13 @@ export async function createGatewaySession(params: {
             error: errorShape(ErrorCodes.UNAVAILABLE, "failed to fork parent session transcript"),
           };
         }
+        // An explicit target may already exist, but the fork replaces its
+        // transcript identity. Old recovery state belongs to that replaced row.
         return {
           ...initialized,
           entry: {
             ...entry,
+            ...buildMainSessionRecoveryClearPatch(entry),
             sessionId: fork.sessionId,
             sessionFile: fork.sessionFile,
             forkedFromParent: true,

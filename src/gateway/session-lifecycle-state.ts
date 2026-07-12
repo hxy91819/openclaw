@@ -48,7 +48,6 @@ type PersistedLifecycleSessionShape = Pick<
   | "abortedLastRun"
   | "restartRecoveryRuns"
   | "mainRestartRecovery"
-  | "subagentRecovery"
 >;
 
 type GatewaySessionLifecycleSnapshot = Partial<LifecycleSessionShape>;

@@ -656,28 +656,19 @@ function resolveMainSessionResumePolicy(
   return { blockReason: null, forceRestartSafeTools: false };
 }
 
-function buildResumeMessage(pendingFinalDeliveryText?: string | null): string {
-  const sanitizedPendingText =
-    typeof pendingFinalDeliveryText === "string"
-      ? sanitizePendingFinalDeliveryText(pendingFinalDeliveryText)
-      : "";
+function buildResumeMessage(sanitizedPendingText: string): string {
   if (sanitizedPendingText) {
     return `${RESTART_RECOVERY_RESUME_MESSAGE}\n\nNote: The interrupted final reply was captured: "${sanitizedPendingText}"`;
   }
   return RESTART_RECOVERY_RESUME_MESSAGE;
 }
 
-type MainRestartRecoveryTombstoneClaim = {
-  entry: SessionEntry;
-  reason: string;
-};
-
 async function claimMainRestartRecoveryTombstone(params: {
   observation: MainSessionRecoveryObservation;
   reason: string;
   storePath: string;
   sessionKey: string;
-}): Promise<MainRestartRecoveryTombstoneClaim | null> {
+}): Promise<SessionEntry | null> {
   const claim = await commitMainSessionRecovery({
     command: {
       kind: "tombstone",
@@ -691,10 +682,8 @@ async function claimMainRestartRecoveryTombstone(params: {
   if (claim.transition.kind !== "tombstoned" || !claim.entry) {
     return null;
   }
-  log.warn(
-    `tombstoned main-session restart recovery: ${params.sessionKey} (${claim.transition.reason})`,
-  );
-  return { entry: claim.entry, reason: claim.transition.reason };
+  log.warn(`tombstoned main-session restart recovery: ${params.sessionKey} (${params.reason})`);
+  return claim.entry;
 }
 
 async function claimMainRestartRecoveryFailure(params: {
@@ -866,7 +855,6 @@ async function resumeMainSession(params: {
   });
   let reservation: MainSessionRecoveryReservation | null = null;
   let dispatchStarted = false;
-  let dispatchAccepted = false;
   try {
     const recoveryRunId = crypto.randomUUID();
     reservation = await reserveMainRestartRecoveryAttempt({
@@ -933,7 +921,6 @@ async function resumeMainSession(params: {
         dispatchStarted = true;
       },
     });
-    dispatchAccepted = true;
     log.info(
       `resumed interrupted main session: ${params.sessionKey}${
         sanitizedPendingText ? " (with pending payload)" : ""
@@ -944,7 +931,7 @@ async function resumeMainSession(params: {
     // After dispatch, only an explicit Gateway request rejection proves the run
     // was not accepted. Retain all other reservations or a lost reply can replay work.
     const uncertainAfterDispatch = dispatchStarted && !(err instanceof GatewayClientRequestError);
-    const shouldRollbackReservation = !dispatchAccepted && !uncertainAfterDispatch;
+    const shouldRollbackReservation = !uncertainAfterDispatch;
     if (shouldRollbackReservation && reservation) {
       try {
         await rollbackMainRestartRecoveryAttempt({
@@ -1138,9 +1125,9 @@ async function recoverStore(params: {
         // cannot warn after a foreground owner or replacement session wins.
         await sendUnresumableSessionNotice({
           cfg: params.cfg,
-          entry: claim.entry,
+          entry: claim,
           sessionKey,
-          reason: claim.reason,
+          reason: recoveryView.reason,
         });
       }
       result.skipped++;

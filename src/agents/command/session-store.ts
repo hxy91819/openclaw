@@ -15,7 +15,7 @@ import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { resolveNonNegativeNumber } from "../../shared/number-coercion.js";
 import { clearCliSession, setCliSessionBinding, setCliSessionId } from "../cli-session.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
-import { clearMainSessionRecoveryState } from "../main-session-recovery-state.js";
+import { transitionMainSessionRecovery } from "../main-session-recovery-state.js";
 import { isCliProvider } from "../model-selection.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage } from "../usage.js";
 
@@ -204,9 +204,9 @@ export async function updateSessionStoreAfterAgentRun(params: {
       next.restartRecoveryForceSafeTools = undefined;
     }
     if (!next.abortedLastRun) {
-      // Any settled run on this session proves forward progress; interaction and
-      // activity flags only control user-facing metadata, not fuse reset.
-      clearMainSessionRecoveryState(next);
+      // Any settled run on this session proves forward progress. Snapshot projection
+      // applies this recovery aggregate only if no newer recovery transaction won.
+      transitionMainSessionRecovery(next, { kind: "clear" });
     }
     if (result.meta.systemPromptReport) {
       next.systemPromptReport = result.meta.systemPromptReport;

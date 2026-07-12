@@ -17,7 +17,7 @@ import type {
 import type { ExecElevatedDefaults } from "../bash-tools.exec-types.js";
 import type { BootstrapContextRunKind } from "../bootstrap-mode.js";
 import type { CliSessionBindingFacts } from "../cli-runner/types.js";
-import type { MainSessionRecoveryOwnerLease } from "../main-session-recovery-state.js";
+import type { MainSessionRecoveryOwnerLease } from "../main-session-recovery-store.js";
 import type { AgentStreamParams, ClientToolDefinition } from "./shared-types.js";
 
 /** Image content block for Claude API multimodal messages. */

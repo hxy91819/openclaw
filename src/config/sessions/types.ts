@@ -155,12 +155,12 @@ export type SessionPluginNextTurnInjection = {
   metadata?: SessionPluginJsonValue;
 };
 
-export type RestartRecoveryFuseState = {
-  /** Accepted automatic orphan-recovery resumes retained by the subagent policy. */
+export type SubagentRecoveryState = {
+  /** Consecutive accepted automatic orphan-recovery resumes in the rapid re-wedge window. */
   automaticAttempts?: number;
-  /** Timestamp (ms) of the latest accepted automatic recovery resume. */
+  /** Timestamp (ms) of the latest accepted automatic orphan-recovery resume. */
   lastAttemptAt?: number;
-  /** Registry run id that triggered the latest automatic recovery resume. */
+  /** Registry run id that triggered the latest automatic orphan-recovery resume. */
   lastRunId?: string;
   /** Timestamp (ms) when automatic recovery was tombstoned for this session. */
   wedgedAt?: number;
@@ -169,20 +169,15 @@ export type RestartRecoveryFuseState = {
 };
 
 export type MainRestartRecoveryState = {
-  schemaVersion: 1;
   /** Stable identity for one interrupted episode; prevents clear-and-rewedge ABA matches. */
   cycleId: string;
   /** Monotonic identity for observations within the current recovery cycle. */
   revision: number;
-  attempts: {
-    /** Attempts charged when their reservation is persisted, before dispatch. */
-    charged: number;
-    lastAt?: number;
-  };
+  /** Attempts charged when their reservation is persisted, before dispatch. */
+  chargedAttempts: number;
   reservation?: {
     runId: string;
     attempt: number;
-    reservedAt: number;
     lifecycleGeneration: string;
   };
   foregroundClaims?: {
@@ -190,13 +185,9 @@ export type MainRestartRecoveryState = {
     tokens: string[];
   };
   tombstone?: {
-    at: number;
-    code: "attempt_budget_exhausted";
     reason: string;
   };
 };
-
-export type SubagentRecoveryState = RestartRecoveryFuseState;
 
 export type LaneExecutionState =
   | "active"
@@ -337,7 +328,7 @@ export type SessionEntry = {
   restartRecoveryRuns?: RestartRecoveryRun[];
   /** Keeps automatic restart recovery limited to replay-safe tools until the run terminates. */
   restartRecoveryForceSafeTools?: true;
-  /** Durable fuse state for automatic main-session restart recovery. */
+  /** Durable coordination state for automatic main-session restart recovery. */
   mainRestartRecovery?: MainRestartRecoveryState;
   /** Durable guard state for automatic subagent orphan recovery. */
   subagentRecovery?: SubagentRecoveryState;
