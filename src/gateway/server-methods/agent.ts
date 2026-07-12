@@ -1081,6 +1081,7 @@ function dispatchAgentRunFromGateway(params: {
   respond: GatewayRequestHandlerOptions["respond"];
   context: GatewayRequestHandlerOptions["context"];
   taskTrackingMode: Exclude<GatewayAgentTaskTrackingMode, "plugin_subagent">;
+  onRejected?: () => Promise<void> | void;
   onSettled?: (outcome: {
     terminalOutcome: AgentRunTerminalOutcome;
     onRecovered?: () => void;
@@ -1198,6 +1199,15 @@ function dispatchAgentRunFromGateway(params: {
       params.respond(true, payload, undefined, { runId: params.runId });
     })
     .catch(async (err: unknown) => {
+      try {
+        // Preparation can reject before any lifecycle event exists. Recovery admission
+        // already cleared the interrupted marker, so restore it before releasing the run.
+        await params.onRejected?.();
+      } catch (recoveryError) {
+        params.context.logGateway.warn(
+          `failed to restore rejected agent run ${params.runId}: ${formatForLog(recoveryError)}`,
+        );
+      }
       const aborted = isGatewayAgentAbortRejection(err, params.abortController.signal);
       const renderedErr = formatForLog(err);
       if (taskTracked) {
@@ -4253,6 +4263,9 @@ export const agentHandlers: GatewayRequestHandlers = {
             dedupeKeys: agentDedupeKeys,
             abortController: activeRunAbort.controller,
             cleanupAbortController: cleanupAdmittedRun,
+            onRejected: isRestartRecoveryResumeRun
+              ? markAdmittedRestartRecoveryInterrupted
+              : undefined,
             onSettled: releaseCronContinuationClaimWithRecovery,
             respond,
             context,
