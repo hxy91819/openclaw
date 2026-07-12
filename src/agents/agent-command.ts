@@ -976,6 +976,12 @@ async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: Run
   }
 }
 
+type PreparedAgentCommandExecution = Awaited<ReturnType<typeof prepareAgentCommandExecution>>;
+type PublicPreparedAgentCommandExecution = Omit<
+  PreparedAgentCommandExecution,
+  "recoveryCandidateEntry"
+>;
+
 async function agentCommandInternal(
   initialOpts: AgentCommandOpts,
   runtime: RuntimeEnv = defaultRuntime,
@@ -3126,9 +3132,18 @@ export async function agentCommandFromIngress(
   }
 }
 
+async function prepareAgentCommandExecutionForTesting(
+  opts: AgentCommandOpts,
+  runtime: RuntimeEnv,
+): Promise<PublicPreparedAgentCommandExecution> {
+  const { recoveryCandidateEntry: _recoveryCandidateEntry, ...prepared } =
+    await prepareAgentCommandExecution(opts, runtime);
+  return prepared;
+}
+
 export const testing = {
   resolveAgentRuntimeConfig,
-  prepareAgentCommandExecution,
+  prepareAgentCommandExecution: prepareAgentCommandExecutionForTesting,
   resolveExplicitAgentCommandSessionKey,
   resolveAgentRunLifecycleEndLogLevel,
   ingressDiagnosticChannel,

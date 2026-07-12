@@ -20,7 +20,6 @@ import {
   patchSessionEntry as patchAccessorSessionEntry,
   readSessionUpdatedAt as readAccessorSessionUpdatedAt,
   readTranscriptStatsSync as readAccessorTranscriptStatsSync,
-  replaceSessionEntry,
   resolveTranscriptSessionKeyBySessionId as resolveAccessorTranscriptSessionKeyBySessionId,
   type SessionAccessScope,
   updateSessionEntry,
@@ -33,7 +32,11 @@ import {
 import { resolveSessionStoreEntry as resolveSessionStoreEntryFromStore } from "../config/sessions/store-entry.js";
 import { normalizeResolvedMaintenanceConfigInput } from "../config/sessions/store-maintenance.js";
 import type { ResolvedSessionMaintenanceConfigInput } from "../config/sessions/store.js";
-import type { AmbientTranscriptWatermark, SessionEntry } from "../config/sessions/types.js";
+import type {
+  AmbientTranscriptWatermark,
+  PluginSessionEntry as SessionEntry,
+  SessionEntry as InternalSessionEntry,
+} from "../config/sessions/types.js";
 import { replaceFileAtomicSync } from "../infra/replace-file.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
 import type { SessionTranscriptEvent } from "./session-transcript-runtime.js";
@@ -44,6 +47,18 @@ const LEGACY_TRANSCRIPT_INSPECTION_MAX_BYTES = 16 * 1024 * 1024;
 // by path before load/update. Last selection therefore matches every shipped
 // caller. This map is not a general replacement for target-aware SDK methods.
 const legacyStoreAgentIds = new Map<string, string>();
+
+function projectPluginSessionEntry(entry: InternalSessionEntry): SessionEntry {
+  const { mainRestartRecovery: _mainRestartRecovery, ...publicEntry } = entry;
+  return publicEntry;
+}
+
+function projectPluginSessionEntryPatch(
+  patch: Partial<InternalSessionEntry>,
+): Partial<SessionEntry> {
+  const { mainRestartRecovery: _mainRestartRecovery, ...publicPatch } = patch;
+  return publicPatch;
+}
 
 type SessionStoreReadParams = {
   agentId?: string;
@@ -346,7 +361,8 @@ export function resolveSessionStoreEntry(params: {
 
 /** Loads one session entry by agent/session identity. */
 export function getSessionEntry(params: SessionStoreReadParams): SessionEntry | undefined {
-  return loadSessionEntry(toSessionAccessScope(params));
+  const entry = loadSessionEntry(toSessionAccessScope(params));
+  return entry ? projectPluginSessionEntry(entry) : undefined;
 }
 
 /** Lists session entries for one agent. */
@@ -360,7 +376,10 @@ export function listSessionEntries(
       ? { hydrateSkillPromptRefs: params.hydrateSkillPromptRefs }
       : {}),
     ...(params.storePath !== undefined ? { storePath: params.storePath } : {}),
-  });
+  }).map(({ sessionKey, entry }) => ({
+    sessionKey,
+    entry: projectPluginSessionEntry(entry),
+  }));
 }
 
 /** Reads transcript events for a live SQLite-backed session identity. */
@@ -399,17 +418,40 @@ export function resolveTranscriptSessionKeyBySessionId(params: {
 export async function patchSessionEntry(
   params: PatchSessionEntryParams,
 ): Promise<SessionEntry | null> {
-  return await patchAccessorSessionEntry(toSessionAccessScope(params), params.update, {
-    fallbackEntry: params.fallbackEntry,
-    maintenanceConfig:
-      params.maintenanceConfig !== undefined
-        ? normalizeResolvedMaintenanceConfigInput(params.maintenanceConfig)
+  const entry = await patchAccessorSessionEntry(
+    toSessionAccessScope(params),
+    async (internalEntry, context) => {
+      const patch = await params.update(projectPluginSessionEntry(internalEntry), {
+        existingEntry: context.existingEntry
+          ? projectPluginSessionEntry(context.existingEntry)
+          : undefined,
+      });
+      if (!patch) {
+        return null;
+      }
+      const publicPatch = projectPluginSessionEntryPatch(patch);
+      return params.replaceEntry
+        ? {
+            ...publicPatch,
+            mainRestartRecovery: internalEntry.mainRestartRecovery,
+          }
+        : publicPatch;
+    },
+    {
+      fallbackEntry: params.fallbackEntry
+        ? projectPluginSessionEntry(params.fallbackEntry)
         : undefined,
-    preserveActivity: params.preserveActivity,
-    requireWriteSuccess: params.requireWriteSuccess,
-    replaceEntry: params.replaceEntry,
-    skipMaintenance: params.skipMaintenance,
-  });
+      maintenanceConfig:
+        params.maintenanceConfig !== undefined
+          ? normalizeResolvedMaintenanceConfigInput(params.maintenanceConfig)
+          : undefined,
+      preserveActivity: params.preserveActivity,
+      requireWriteSuccess: params.requireWriteSuccess,
+      replaceEntry: params.replaceEntry,
+      skipMaintenance: params.skipMaintenance,
+    },
+  );
+  return entry ? projectPluginSessionEntry(entry) : null;
 }
 
 /** Reads the last activity timestamp for one session entry. */
@@ -430,23 +472,35 @@ export function readAmbientTranscriptWatermark(
 export async function updateSessionStoreEntry(
   params: UpdateSessionStoreEntryParams,
 ): Promise<SessionEntry | null> {
-  return await updateSessionEntry(
+  const entry = await updateSessionEntry(
     {
       sessionKey: params.sessionKey,
       storePath: params.storePath,
     },
-    params.update,
+    async (internalEntry) => {
+      const patch = await params.update(projectPluginSessionEntry(internalEntry));
+      return patch ? projectPluginSessionEntryPatch(patch) : null;
+    },
     {
       skipMaintenance: params.skipMaintenance,
       takeCacheOwnership: params.takeCacheOwnership,
       requireWriteSuccess: params.requireWriteSuccess,
     },
   );
+  return entry ? projectPluginSessionEntry(entry) : null;
 }
 
 /** Replaces or creates one session entry by agent/session identity. */
 export async function upsertSessionEntry(params: UpsertSessionEntryParams): Promise<void> {
-  await replaceSessionEntry(toSessionAccessScope(params), params.entry);
+  const publicEntry = projectPluginSessionEntry(params.entry);
+  await patchAccessorSessionEntry(
+    toSessionAccessScope(params),
+    (internalEntry) => ({
+      ...publicEntry,
+      mainRestartRecovery: internalEntry.mainRestartRecovery,
+    }),
+    { fallbackEntry: publicEntry, replaceEntry: true },
+  );
 }
 
 /** Deletes one session entry by agent/session identity. */
@@ -539,4 +593,5 @@ export {
   resolveThreadFlag,
 } from "../config/sessions/reset.js";
 export { resolveSendPolicy } from "../sessions/send-policy.js";
-export type { SessionEntry, SessionScope } from "../config/sessions/types.js";
+export type { PluginSessionEntry as SessionEntry } from "../config/sessions/types.js";
+export type { SessionScope } from "../config/sessions/types.js";

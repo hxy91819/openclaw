@@ -528,6 +528,9 @@ export type SessionEntry = {
   acp?: SessionAcpMeta;
 };
 
+/** Session metadata visible to plugins; core-owned coordination state stays private. */
+export type PluginSessionEntry = Omit<SessionEntry, "mainRestartRecovery">;
+
 export function isTerminalSessionStatus(
   status: unknown,
 ): status is Exclude<NonNullable<SessionEntry["status"]>, "running"> {
