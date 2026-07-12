@@ -8,7 +8,6 @@ import {
   stripLeadingSilentToken,
   stripSilentToken,
 } from "../tokens.js";
-/** Sanitizes pending final delivery text before channel-visible output. */
 import type { ReplyPayload } from "../types.js";
 import { stripInternalMetadataForDisplay } from "./display-text-sanitize.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
@@ -157,7 +156,8 @@ function hasUnrecoverableNormalizedDeliveryShape(payload: ReplyPayload): boolean
     payload.videoAsNote === true
   );
 }
-/** Sanitizes final pending-delivery text and removes silent control tokens. */
+
+/** Sanitizes pending final delivery text before channel-visible output. */
 export function sanitizePendingFinalDeliveryText(text: string): string {
   let stripped = stripInternalMetadataForDisplay(text).trim();
   if (isSilentReplyPayloadText(stripped, SILENT_REPLY_TOKEN)) {
