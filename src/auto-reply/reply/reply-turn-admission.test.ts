@@ -5,10 +5,10 @@ import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js"
 import type { SessionEntry } from "../../config/sessions/types.js";
 import {
   deleteSessionEntryLifecycle,
+  loadSessionEntry,
   replaceSessionEntry,
   replaceSessionEntrySync,
 } from "../../config/sessions/session-accessor.js";
-import type { SessionEntry } from "../../config/sessions/types.js";
 import {
   markDiagnosticToolStartedForTest,
   resetDiagnosticRunActivityForTest,
@@ -50,8 +50,11 @@ function createSessionStore(entries: Record<string, object>): string {
   return storePath;
 }
 
-function readSessionStore(storePath: string): Record<string, SessionEntry> {
-  return JSON.parse(fs.readFileSync(storePath, "utf8")) as Record<string, SessionEntry>;
+async function readSessionEntry(
+  storePath: string,
+  sessionKey: string,
+): Promise<SessionEntry | undefined> {
+  return loadSessionEntry({ sessionKey, storePath });
 }
 
 describe("reply turn admission", () => {

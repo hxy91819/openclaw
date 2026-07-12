@@ -1,8 +1,7 @@
-import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadSessionStore, saveSessionStore, type SessionEntry } from "../config/sessions.js";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import type { SessionEntry } from "../config/sessions.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import {
   getAgentEventLifecycleGeneration,
@@ -15,29 +14,29 @@ import {
 } from "./main-session-recovery-store.js";
 
 const sessionKey = "agent:main:main";
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("main session recovery store", () => {
   let dir: string;
   let lifecycleGeneration: string;
   let storePath: string;
 
-  beforeEach(async () => {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-main-recovery-store-"));
+  beforeEach(() => {
+    dir = tempDirs.make("openclaw-main-recovery-store-");
     lifecycleGeneration = getAgentEventLifecycleGeneration();
     storePath = path.join(dir, "sessions.json");
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     vi.restoreAllMocks();
-    await fs.rm(dir, { recursive: true, force: true });
   });
 
   async function write(entry: SessionEntry): Promise<void> {
-    await saveSessionStore(storePath, { [sessionKey]: entry }, { skipMaintenance: true });
+    await sessionAccessor.replaceSessionEntry({ sessionKey, storePath }, entry);
   }
 
   function read(): SessionEntry {
-    return loadSessionStore(storePath, { skipCache: true })[sessionKey]!;
+    return sessionAccessor.loadSessionEntry({ sessionKey, storePath })!;
   }
 
   function interruptedEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
