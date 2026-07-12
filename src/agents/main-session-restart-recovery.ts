@@ -841,12 +841,11 @@ async function resumeMainSession(params: {
   recoveryAttempt: number;
   storePath: string;
   sessionKey: string;
-  pendingFinalDeliveryText?: string | null;
   forceRestartSafeTools?: boolean;
 }): Promise<MainSessionResumeResult> {
   const sanitizedPendingText =
-    typeof params.pendingFinalDeliveryText === "string"
-      ? sanitizePendingFinalDeliveryText(params.pendingFinalDeliveryText)
+    typeof params.entry.pendingFinalDeliveryText === "string"
+      ? sanitizePendingFinalDeliveryText(params.entry.pendingFinalDeliveryText)
       : "";
   const deliveryContext = resolveRestartRecoveryDeliveryContext({
     cfg: params.cfg,
@@ -1142,8 +1141,7 @@ async function recoverStore(params: {
         recoveryAttempt: recoveryView.nextAttempt,
         storePath: params.storePath,
         sessionKey,
-        pendingFinalDeliveryText: recoveryEntry.pendingFinalDeliveryText,
-        forceRestartSafeTools: true,
+        forceRestartSafeTools: recoveryEntry.restartRecoveryForceSafeTools === true,
       });
       if (resumeResult === "resumed") {
         params.resumedSessionKeys.add(resumeDedupeKey);
@@ -1173,18 +1171,18 @@ async function recoverStore(params: {
         },
       );
     } catch (err) {
-      if (entry.pendingFinalDelivery === true && entry.pendingFinalDeliveryText) {
+      if (recoveryEntry.pendingFinalDelivery === true && recoveryEntry.pendingFinalDeliveryText) {
         log.warn(
           `transcript unavailable for ${sessionKey}; resuming its durable pending final delivery`,
         );
         const resumeResult = await resumeMainSession({
           cfg: params.cfg,
-          entry,
-          recoveryAttempt: recoveryGate.nextAttempt,
+          entry: recoveryEntry,
+          observation: recoveryView.observation,
+          recoveryAttempt: recoveryView.nextAttempt,
           storePath: params.storePath,
           sessionKey,
-          pendingFinalDeliveryText: entry.pendingFinalDeliveryText,
-          forceRestartSafeTools: true,
+          forceRestartSafeTools: recoveryEntry.restartRecoveryForceSafeTools === true,
         });
         if (resumeResult === "resumed") {
           params.resumedSessionKeys.add(resumeDedupeKey);
@@ -1218,15 +1216,17 @@ async function recoverStore(params: {
       continue;
     }
 
-    if (entry.pendingFinalDelivery === true && entry.pendingFinalDeliveryText) {
+    if (recoveryEntry.pendingFinalDelivery === true && recoveryEntry.pendingFinalDeliveryText) {
       const resumeResult = await resumeMainSession({
         cfg: params.cfg,
-        entry,
-        recoveryAttempt: recoveryGate.nextAttempt,
+        entry: recoveryEntry,
+        observation: recoveryView.observation,
+        recoveryAttempt: recoveryView.nextAttempt,
         storePath: params.storePath,
         sessionKey,
-        pendingFinalDeliveryText: entry.pendingFinalDeliveryText,
-        forceRestartSafeTools: hasReplaySafeCodeModeCheckpointInCurrentTurn(messages),
+        forceRestartSafeTools:
+          recoveryEntry.restartRecoveryForceSafeTools === true ||
+          hasReplaySafeCodeModeCheckpointInCurrentTurn(messages),
       });
       if (resumeResult === "resumed") {
         params.resumedSessionKeys.add(resumeDedupeKey);
@@ -1241,12 +1241,12 @@ async function recoverStore(params: {
 
     const transcriptResumePolicy = resolveMainSessionResumePolicy(
       messages,
-      entry.restartRecoveryForceSafeTools === true,
+      recoveryEntry.restartRecoveryForceSafeTools === true,
     );
     const resumePolicy = {
       ...transcriptResumePolicy,
       forceRestartSafeTools:
-        entry.restartRecoveryForceSafeTools === true ||
+        recoveryEntry.restartRecoveryForceSafeTools === true ||
         transcriptResumePolicy.forceRestartSafeTools,
     };
     if (resumePolicy.blockReason) {
@@ -1277,7 +1277,6 @@ async function recoverStore(params: {
       recoveryAttempt: recoveryView.nextAttempt,
       storePath: params.storePath,
       sessionKey,
-      pendingFinalDeliveryText: recoveryEntry.pendingFinalDeliveryText,
       forceRestartSafeTools: resumePolicy.forceRestartSafeTools,
     });
     if (resumeResult === "resumed") {
