@@ -30,7 +30,10 @@ import {
   resolveSessionTranscriptsDirForAgent,
   resolveStorePath,
 } from "../config/sessions/paths.js";
-import { applySessionEntryReplacements } from "../config/sessions/session-accessor.js";
+import {
+  applySessionEntryReplacements,
+  listSessionEntries,
+} from "../config/sessions/session-accessor.js";
 import { loadSessionStore } from "../config/sessions/store-load.js";
 import { updateSessionStore } from "../config/sessions/store.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -1281,7 +1284,8 @@ export async function noteStateIntegrity(
   const store = loadSessionStore(storePath, { skipCache: true, clone: false });
   const sessionPathOpts = resolveSessionFilePathOptions({ agentId, storePath });
   const entries = Object.entries(store).filter(([, entry]) => entry && typeof entry === "object");
-  if (entries.length > 0) {
+  const canonicalEntries = listSessionEntries({ agentId, storePath: absoluteStorePath });
+  if (entries.length > 0 || canonicalEntries.length > 0) {
     const recent = entries
       .slice()
       .toSorted((a, b) => {
@@ -1310,9 +1314,9 @@ export async function noteStateIntegrity(
       );
     }
 
-    const wedgedMainSessions = entries.flatMap(([key, entry]) => {
+    const wedgedMainSessions = canonicalEntries.flatMap(({ entry, sessionKey }) => {
       const health = inspectMainSessionRecoveryHealth(entry);
-      return health.status === "tombstoned" ? [{ key, health }] : [];
+      return health.status === "tombstoned" ? [{ key: sessionKey, health }] : [];
     });
     if (wedgedMainSessions.length > 0) {
       const wedgedCount = countLabel(wedgedMainSessions.length, "wedged main session");

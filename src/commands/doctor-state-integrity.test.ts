@@ -9,6 +9,10 @@ import {
   resolveStorePath,
   resolveSessionTranscriptsDirForAgent,
 } from "../config/sessions/paths.js";
+import {
+  loadExactSessionEntry,
+  replaceSessionEntrySync,
+} from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import {
@@ -101,6 +105,14 @@ function writeSessionStore(
   setupSessionState(cfg, process.env, process.env.HOME ?? "");
   const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
   fs.writeFileSync(storePath, JSON.stringify(sessions, null, 2));
+}
+
+function writeCanonicalSessionStore(cfg: OpenClawConfig, sessions: Record<string, SessionEntry>) {
+  setupSessionState(cfg, process.env, process.env.HOME ?? "");
+  const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
+  for (const [sessionKey, entry] of Object.entries(sessions)) {
+    replaceSessionEntrySync({ sessionKey, storePath }, entry);
+  }
 }
 
 async function runStateIntegrityText(cfg: OpenClawConfig): Promise<string> {
@@ -389,7 +401,7 @@ describe("doctor state integrity oauth dir checks", () => {
 
   it("reports canonical main-session restart recovery tombstones without offering a repair", async () => {
     const cfg: OpenClawConfig = {};
-    writeSessionStore(cfg, {
+    writeCanonicalSessionStore(cfg, {
       "agent:main:main": {
         sessionId: "session-wedged-main",
         updatedAt: Date.now(),
@@ -422,7 +434,7 @@ describe("doctor state integrity oauth dir checks", () => {
     const staleKey = "agent:main:stale-tombstone";
     const canonicalKey = "agent:main:canonical-tombstone";
     const canonicalUpdatedAt = Date.now();
-    writeSessionStore(cfg, {
+    writeCanonicalSessionStore(cfg, {
       [staleKey]: {
         sessionId: "session-stale-main",
         updatedAt: 0,
@@ -457,23 +469,18 @@ describe("doctor state integrity oauth dir checks", () => {
     await noteStateIntegrity(cfg, { confirmRuntimeRepair, note: noteMock });
 
     const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
-    const persisted = JSON.parse(fs.readFileSync(storePath, "utf8")) as Record<
-      string,
-      {
-        abortedLastRun?: boolean;
-        mainRestartRecovery?: { tombstone?: { reason?: string } };
-        updatedAt?: number;
-      }
-    >;
-    expect(persisted[staleKey]?.abortedLastRun).toBe(false);
-    expect(persisted[staleKey]?.mainRestartRecovery?.tombstone?.reason).toBe(
-      "stale main tombstone",
-    );
-    expect(persisted[canonicalKey]?.abortedLastRun).not.toBe(true);
-    expect(persisted[canonicalKey]?.mainRestartRecovery?.tombstone?.reason).toBe(
+    const persistedStale = loadExactSessionEntry({ sessionKey: staleKey, storePath })?.entry;
+    const persistedCanonical = loadExactSessionEntry({
+      sessionKey: canonicalKey,
+      storePath,
+    })?.entry;
+    expect(persistedStale?.abortedLastRun).toBe(false);
+    expect(persistedStale?.mainRestartRecovery?.tombstone?.reason).toBe("stale main tombstone");
+    expect(persistedCanonical?.abortedLastRun).not.toBe(true);
+    expect(persistedCanonical?.mainRestartRecovery?.tombstone?.reason).toBe(
       "canonical main tombstone",
     );
-    expect(persisted[canonicalKey]?.updatedAt).toBe(canonicalUpdatedAt);
+    expect(persistedCanonical?.updatedAt).toBe(canonicalUpdatedAt);
     expect(doctorChangesText()).toContain("1 wedged main session");
   });
 
@@ -488,7 +495,7 @@ describe("doctor state integrity oauth dir checks", () => {
         reason: "stale main tombstone",
       },
     };
-    writeSessionStore(cfg, {
+    writeCanonicalSessionStore(cfg, {
       [sessionKey]: {
         sessionId: "session-stale-main",
         updatedAt: 0,
@@ -498,7 +505,7 @@ describe("doctor state integrity oauth dir checks", () => {
     });
 
     const confirmRuntimeRepair = vi.fn(async () => {
-      writeSessionStore(cfg, {
+      writeCanonicalSessionStore(cfg, {
         [sessionKey]: {
           sessionId: "session-stale-main",
           updatedAt: 10,
