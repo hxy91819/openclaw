@@ -204,6 +204,36 @@ describe("session lifecycle state", () => {
     });
   });
 
+  it("clears main recovery markers when a normal lifecycle end completes", () => {
+    expectPersistedLifecyclePatch({
+      entry: {
+        status: "running",
+        abortedLastRun: true,
+        restartRecoveryRuns: [
+          {
+            runId: "accepted-main-recovery-run",
+            lifecycleGeneration: "post-restart",
+          },
+        ],
+        mainRestartRecovery: {
+          cycleId: "cycle-1",
+          revision: 2,
+          chargedAttempts: 2,
+        },
+      },
+      data: {
+        phase: "end",
+        startedAt: 1_200,
+        endedAt: 1_900,
+      },
+      expected: {
+        ...terminalPatch(1_200, 1_900, "done", false),
+        restartRecoveryRuns: undefined,
+        mainRestartRecovery: undefined,
+      },
+    });
+  });
+
   it("maps aborted stop reasons to killed", () => {
     expectPersistedLifecyclePatch({
       entry: { startedAt: 1_100 },

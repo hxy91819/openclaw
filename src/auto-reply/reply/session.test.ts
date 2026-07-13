@@ -10,7 +10,7 @@ import {
 } from "../../agents/agent-bundle-mcp-tools.js";
 import * as bootstrapCache from "../../agents/bootstrap-cache.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import type { SessionEntry } from "../../config/sessions.js";
+import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import {
   appendTranscriptEvent,
   listSessionEntries,
@@ -786,6 +786,14 @@ describe("initSessionState thread forking", () => {
         updatedAt: Date.now(),
         totalTokens: 0,
         totalTokensFresh: true,
+        abortedLastRun: true,
+        restartRecoveryRuns: [{ runId: "old-run", lifecycleGeneration: "old-generation" }],
+        mainRestartRecovery: {
+          cycleId: "old-cycle",
+          revision: 4,
+          chargedAttempts: 3,
+          tombstone: { reason: "old transcript exhausted" },
+        },
       },
     });
 
@@ -807,6 +815,9 @@ describe("initSessionState thread forking", () => {
     expect(first.sessionEntry.forkedFromParent).toBe(true);
     expect(first.sessionEntry.totalTokens).toBeUndefined();
     expect(first.sessionEntry.totalTokensFresh).toBe(false);
+    expect(first.sessionEntry.abortedLastRun).toBe(false);
+    expect(first.sessionEntry.restartRecoveryRuns).toBeUndefined();
+    expect((first.sessionEntry as SessionEntry).mainRestartRecovery).toBeUndefined();
 
     const second = await initSessionState({
       ctx: {
@@ -822,6 +833,8 @@ describe("initSessionState thread forking", () => {
     expect(second.sessionEntry.forkedFromParent).toBe(true);
     expect(second.sessionEntry.totalTokens).toBeUndefined();
     expect(second.sessionEntry.totalTokensFresh).toBe(false);
+    expect(second.sessionEntry.restartRecoveryRuns).toBeUndefined();
+    expect((second.sessionEntry as SessionEntry).mainRestartRecovery).toBeUndefined();
     warn.mockRestore();
   });
 

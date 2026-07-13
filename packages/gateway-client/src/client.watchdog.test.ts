@@ -542,7 +542,11 @@ describe("GatewayClient", () => {
       close: vi.fn(),
     };
 
-    await expect(client.request("status")).rejects.toThrow("synthetic send failure");
+    const onDispatched = vi.fn();
+    await expect(client.request("status", undefined, { onDispatched })).rejects.toThrow(
+      "synthetic send failure",
+    );
+    expect(onDispatched).not.toHaveBeenCalled();
     expect(getPendingCount(client)).toBe(0);
   });
 
@@ -567,6 +571,31 @@ describe("GatewayClient", () => {
     }
   });
 
+  test("keeps waiting for a dispatched request when its notification callback throws", async () => {
+    const { client, send } = createOpenGatewayClient(25);
+
+    const requestPromise = client.request<{ ok: boolean }>("status", undefined, {
+      onDispatched: () => {
+        throw new Error("synthetic callback failure");
+      },
+    });
+    const frame = JSON.parse(String(send.mock.calls[0]?.[0])) as { id: string };
+    (
+      client as unknown as {
+        handleMessage: (raw: string) => void;
+      }
+    ).handleMessage(
+      JSON.stringify({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        payload: { ok: true },
+      }),
+    );
+
+    await expect(requestPromise).resolves.toEqual({ ok: true });
+  });
+
   test("notifies accepted expectFinal requests while continuing to wait for final", async () => {
     const client = new GatewayClient({
       requestTimeoutMs: 25,
@@ -583,8 +612,10 @@ describe("GatewayClient", () => {
     };
 
     const onAccepted = vi.fn();
+    const onDispatched = vi.fn();
     const requestPromise = client.request<{ status: string }>("agent", undefined, {
       expectFinal: true,
+      onDispatched,
       onAccepted,
     });
     const frame = JSON.parse(String(send.mock.calls[0]?.[0])) as { id: string };
@@ -602,6 +633,7 @@ describe("GatewayClient", () => {
       }),
     );
 
+    expect(onDispatched).toHaveBeenCalledOnce();
     expect(onAccepted).toHaveBeenCalledWith({ status: "accepted", runId: "run-1" });
     expect((client as unknown as { pending: Map<string, unknown> }).pending.size).toBe(1);
 

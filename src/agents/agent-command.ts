@@ -2,6 +2,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { resolveInlineAgentImageAttachments } from "../auto-reply/reply/agent-turn-attachments.js";
+import { PENDING_FINAL_DELIVERY_CLEAR_PATCH } from "../auto-reply/reply/pending-final-delivery.js";
 import {
   formatThinkingLevels,
   isThinkingLevelSupported,
@@ -52,6 +53,7 @@ import {
   isValidAgentHarnessSessionStoreEntry,
   resolveAgentHarnessSessionContextError,
 } from "../sessions/agent-harness-session-key.js";
+import { isMainSessionRestartRecoveryInputProvenance } from "../sessions/input-provenance.js";
 import { applyVerboseOverride } from "../sessions/level-overrides.js";
 import {
   applyModelOverrideToSessionEntry,
@@ -138,6 +140,12 @@ import {
 } from "./internal-session-effects.js";
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
 import { LiveSessionModelSwitchError } from "./live-model-switch.js";
+import { isMainRestartRecoveryCandidate } from "./main-session-recovery-state.js";
+import {
+  claimMainSessionRecoveryOwner,
+  releaseMainSessionRecoveryOwner,
+  type MainSessionRecoveryOwnerLease,
+} from "./main-session-recovery-store.js";
 import { loadManifestModelCatalog } from "./model-catalog.js";
 import { runWithModelFallback } from "./model-fallback.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
@@ -458,14 +466,7 @@ async function persistSessionEntry(
 function clearPendingFinalDeliveryFields(entry: SessionEntry, updatedAt: number): SessionEntry {
   return {
     ...entry,
-    pendingFinalDelivery: undefined,
-    pendingFinalDeliveryText: undefined,
-    pendingFinalDeliveryCreatedAt: undefined,
-    pendingFinalDeliveryLastAttemptAt: undefined,
-    pendingFinalDeliveryAttemptCount: undefined,
-    pendingFinalDeliveryLastError: undefined,
-    pendingFinalDeliveryContext: undefined,
-    pendingFinalDeliveryIntentId: undefined,
+    ...PENDING_FINAL_DELIVERY_CLEAR_PATCH,
     restartRecoveryForceSafeTools: undefined,
     updatedAt,
   };
@@ -673,6 +674,8 @@ function resolveExplicitAgentCommandSessionKey(params: {
   });
 }
 
+const recoveryCandidateByPreparation = new WeakMap<object, SessionEntry | undefined>();
+
 async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: RuntimeEnv) {
   const isRawModelRun = opts.modelRun === true || opts.promptMode === "none";
   const message = opts.message ?? "";
@@ -819,6 +822,11 @@ async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: Run
     agentId: agentIdOverride,
     clone: false,
   });
+  // Freshness rollover prepares a clean working entry, but owner admission must
+  // still fence the raw persisted row until that successor identity is committed.
+  const recoveryCandidateEntry = sessionResolution.sessionKey
+    ? sessionResolution.sessionStore?.[sessionResolution.sessionKey]
+    : sessionResolution.sessionEntry;
 
   const { sessionId, sessionKey, storePath, isNewSession, persistedThinking, persistedVerbose } =
     sessionResolution;
@@ -937,7 +945,7 @@ async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: Run
     const transcriptBody =
       opts.transcriptMessage ?? resolveInternalEventTranscriptBody(message, opts.internalEvents);
 
-    return {
+    const prepared = {
       opts: commandOpts,
       body,
       transcriptBody,
@@ -972,23 +980,28 @@ async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: Run
       acpResolution,
       runLease,
     };
+    // Keep core ownership state associated with the preparation without adding it to the
+    // published testing return shape. Weak keys also bound abandoned testing preparations.
+    recoveryCandidateByPreparation.set(prepared, recoveryCandidateEntry);
+    return prepared;
   } catch (error) {
     await runLease?.release();
     throw error;
   }
 }
 
+type PreparedAgentCommandExecution = Awaited<ReturnType<typeof prepareAgentCommandExecution>>;
+
 async function agentCommandInternal(
-  initialOpts: AgentCommandOpts,
-  runtime: RuntimeEnv = defaultRuntime,
-  deps?: CliDeps,
+  runtime: RuntimeEnv,
+  deps: CliDeps | undefined,
+  prepared: PreparedAgentCommandExecution,
 ) {
   const resolvedDeps = await resolveAgentCommandDeps(deps);
-  const isRawModelRun = initialOpts.modelRun === true || initialOpts.promptMode === "none";
-  const suppressVisibleSessionEffects = initialOpts.sessionEffects === "internal";
+  const isRawModelRun = prepared.opts.modelRun === true || prepared.opts.promptMode === "none";
+  const suppressVisibleSessionEffects = prepared.opts.sessionEffects === "internal";
   const preserveUserFacingSessionModelState =
-    initialOpts.preserveUserFacingSessionModelState === true;
-  const prepared = await prepareAgentCommandExecution(initialOpts, runtime);
+    prepared.opts.preserveUserFacingSessionModelState === true;
   const lifecycleAbortController = new AbortController();
   const opts = {
     ...prepared.opts,
@@ -996,6 +1009,9 @@ async function agentCommandInternal(
       ? AbortSignal.any([prepared.opts.abortSignal, lifecycleAbortController.signal])
       : lifecycleAbortController.signal,
   };
+  const isRestartRecoveryResumeRun = isMainSessionRestartRecoveryInputProvenance(
+    opts.inputProvenance,
+  );
   const {
     body,
     transcriptBody,
@@ -1027,7 +1043,6 @@ async function agentCommandInternal(
     pluginsEnabled,
     manifestMetadataSnapshot,
     modelManifestContext,
-    runLease,
   } = prepared;
   let lifecycleGeneration = opts.lifecycleGeneration ?? captureAgentRunLifecycleGeneration(runId);
   const effectiveCwd = cwd ? resolveUserPath(cwd) : workspaceDir;
@@ -1043,11 +1058,11 @@ async function agentCommandInternal(
   // the parent a human interjected on every spawn, for embedded and ACP children alike.
   const isSubagentLaneTurn = normalizeOptionalString(opts.lane) === AGENT_LANE_SUBAGENT;
   let sessionReboundDuringRun = false;
-  let trackedRestartRecoveryDeliveryContext = false;
   let currentRunDeliveryContext: DeliveryContext | undefined;
+  let trackedRestartRecoveryDeliveryContext = false;
   const preparedSessionId = sessionEntry?.sessionId;
   const internalModelRunTargets =
-    initialOpts.modelRun === true && suppressVisibleSessionEffects
+    prepared.opts.modelRun === true && suppressVisibleSessionEffects
       ? new Map<string, AgentRunSessionTarget>()
       : undefined;
   const trackInternalModelRunTarget = (target: AgentRunSessionTarget | undefined) => {
@@ -1490,13 +1505,16 @@ async function agentCommandInternal(
       // Persist non-model-dependent command state before provider/model resolution.
       // Thinking is written only after the selected runtime validates it below.
       const hasInitialSessionOverrides = Boolean(verboseOverride);
-      const shouldPersistInitialSessionTouch =
-        opts.skipInitialSessionTouch !== true || hasInitialSessionOverrides;
+      const shouldWriteInitialSessionTouch =
+        !isRestartRecoveryResumeRun &&
+        (opts.skipInitialSessionTouch !== true || hasInitialSessionOverrides);
+      const shouldPersistInitialSessionState =
+        shouldWriteInitialSessionTouch || hasInitialSessionOverrides;
       if (
         sessionStore &&
         sessionKey &&
         !suppressVisibleSessionEffects &&
-        shouldPersistInitialSessionTouch
+        shouldPersistInitialSessionState
       ) {
         const now = Date.now();
         const entry = sessionStore[sessionKey] ??
@@ -1506,7 +1524,7 @@ async function agentCommandInternal(
           sessionId,
           updatedAt: now,
           sessionStartedAt: entry.sessionStartedAt ?? now,
-          lastInteractionAt: now,
+          ...(shouldWriteInitialSessionTouch ? { lastInteractionAt: now } : {}),
         };
         applyVerboseOverride(next, verboseOverride);
         const persisted = await persistSessionEntry({
@@ -2636,6 +2654,7 @@ async function agentCommandInternal(
             fallbackModel,
             result,
             touchInteraction:
+              !isRestartRecoveryResumeRun &&
               opts.bootstrapContextRunKind !== "cron" &&
               !isHeartbeatLifecycleRun &&
               !opts.internalEvents?.length,
@@ -2848,9 +2867,6 @@ async function agentCommandInternal(
       }
     });
   } finally {
-    if (runLease) {
-      await runLease.release();
-    }
     sessionWorkAdmission?.release();
     if (internalModelRunTargets) {
       // Compaction may rotate a private session identity. Remove every owned
@@ -2870,8 +2886,8 @@ async function agentCommandInternal(
       }
     }
     if (
-      !sessionReboundDuringRun &&
       trackedRestartRecoveryDeliveryContext &&
+      !sessionReboundDuringRun &&
       sessionStore &&
       sessionKey
     ) {
@@ -2923,8 +2939,11 @@ export async function agentCommand(
         getRuntimeConfig,
       },
       async () =>
-        await agentCommandInternal(
-          {
+        await runWithAgentCommandRecoveryOwner({
+          lifecycleGeneration,
+          mode: "reject_uncoordinated",
+          runtime,
+          opts: {
             ...opts,
             lifecycleGeneration,
             // agentCommand is the trusted-operator entrypoint used by CLI/local flows.
@@ -2934,9 +2953,8 @@ export async function agentCommand(
             // Local/CLI callers are trusted by default for per-run model overrides.
             allowModelOverride: opts.allowModelOverride ?? true,
           },
-          runtime,
-          resolvedDeps,
-        ),
+          run: async (prepared) => await agentCommandInternal(runtime, resolvedDeps, prepared),
+        }),
     ),
   );
 }
@@ -3018,6 +3036,80 @@ function emitIngressModelUsageDiagnostic(
   });
 }
 
+async function claimAgentCommandRecoveryOwner(params: {
+  lifecycleGeneration: string;
+  mode: "claim" | "reject_uncoordinated";
+  opts: AgentCommandOpts;
+  prepared: PreparedAgentCommandExecution;
+  recoveryCandidateEntry?: SessionEntry;
+}): Promise<MainSessionRecoveryOwnerLease | undefined> {
+  if (
+    params.opts.mainRestartRecoveryOwnerLease ||
+    params.opts.sessionEffects === "internal" ||
+    isMainSessionRestartRecoveryInputProvenance(params.opts.inputProvenance)
+  ) {
+    return params.opts.mainRestartRecoveryOwnerLease;
+  }
+  const entry = params.recoveryCandidateEntry;
+  const sessionKey = params.prepared.sessionKey;
+  if (
+    !entry ||
+    entry.status !== "running" ||
+    entry.abortedLastRun !== true ||
+    !sessionKey ||
+    !isMainRestartRecoveryCandidate(entry, sessionKey)
+  ) {
+    return undefined;
+  }
+  if (params.mode === "reject_uncoordinated") {
+    // A standalone process has a different lifecycle generation from Gateway.
+    // Fail closed instead of persisting a claim that the Gateway scanner must ignore.
+    throw new Error(
+      `Session "${sessionKey}" has interrupted work pending restart recovery; retry through a healthy Gateway or choose a fresh --session-id.`,
+    );
+  }
+  const claim = await claimMainSessionRecoveryOwner({
+    lifecycleGeneration: params.lifecycleGeneration,
+    sessionId: entry.sessionId,
+    target: { sessionKey, storePath: params.prepared.storePath },
+  });
+  if (claim.kind === "invalidated") {
+    throw new Error(
+      `main-session recovery owner changed during admission (${claim.reason}); retry`,
+    );
+  }
+  return claim.kind === "claimed" ? claim.lease : undefined;
+}
+
+async function runWithAgentCommandRecoveryOwner<T>(params: {
+  lifecycleGeneration: string;
+  mode: "claim" | "reject_uncoordinated";
+  opts: AgentCommandOpts;
+  runtime: RuntimeEnv;
+  run: (prepared: PreparedAgentCommandExecution) => Promise<T>;
+}): Promise<T> {
+  // Gateway can preclaim before dispatch. Take ownership before any awaited
+  // preparation so an early setup failure cannot strand its durable token.
+  let lease = params.opts.mainRestartRecoveryOwnerLease;
+  let prepared: PreparedAgentCommandExecution | undefined;
+  try {
+    prepared = await prepareAgentCommandExecution(params.opts, params.runtime);
+    const recoveryCandidateEntry = recoveryCandidateByPreparation.get(prepared);
+    recoveryCandidateByPreparation.delete(prepared);
+    lease = await claimAgentCommandRecoveryOwner({ ...params, prepared, recoveryCandidateEntry });
+    return await params.run(prepared);
+  } finally {
+    try {
+      await releaseMainSessionRecoveryOwner(lease);
+    } catch (error) {
+      log.warn(
+        `failed to release main-session recovery agent-command owner: ${formatErrorMessage(error)}`,
+      );
+    }
+    await prepared?.runLease?.release();
+  }
+}
+
 /** Runs an agent turn from an inbound channel/gateway ingress context. */
 export async function agentCommandFromIngress(
   opts: AgentCommandIngressOpts,
@@ -3029,23 +3121,29 @@ export async function agentCommandFromIngress(
   }
   const lifecycleGeneration =
     opts.lifecycleGeneration ?? captureAgentRunLifecycleGeneration(opts.runId ?? "");
-  return await withAgentRunLifecycleGeneration(lifecycleGeneration, async () => {
-    const result = await agentCommandInternal(
-      {
-        ...opts,
+  return await withAgentRunLifecycleGeneration(
+    lifecycleGeneration,
+    async () =>
+      await runWithAgentCommandRecoveryOwner({
         lifecycleGeneration,
-        senderIsOwner: opts.senderIsOwner === true,
-      },
-      runtime,
-      deps,
-    );
+        mode: "claim",
+        runtime,
+        opts: {
+          ...opts,
+          lifecycleGeneration,
+          senderIsOwner: opts.senderIsOwner === true,
+        },
+        run: async (prepared) => {
+          const result = await agentCommandInternal(runtime, deps, prepared);
 
-    if (result) {
-      emitIngressModelUsageDiagnostic(result, opts);
-    }
+          if (result) {
+            emitIngressModelUsageDiagnostic(result, opts);
+          }
 
-    return result;
-  });
+          return result;
+        },
+      }),
+  );
 }
 
 export const testing = {

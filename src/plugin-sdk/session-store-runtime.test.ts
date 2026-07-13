@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendTranscriptEvent,
   appendTranscriptMessage,
+  loadSessionEntry as loadInternalSessionEntry,
+  replaceSessionEntry as replaceInternalSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
+import type { SessionEntry as ConfigSessionEntry } from "./config-types.js";
 import {
   cleanupSessionLifecycleArtifacts,
   deleteSessionEntry,
@@ -26,6 +30,14 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LEGACY_TRANSCRIPT_INSPECTION_MAX_BYTES = 16 * 1024 * 1024;
+const sessionEntryKeepsRecoveryPrivate: "mainRestartRecovery" extends keyof SessionEntry
+  ? false
+  : true = true;
+const configSessionEntryKeepsRecoveryPrivate: "mainRestartRecovery" extends keyof ConfigSessionEntry
+  ? false
+  : true = true;
+void sessionEntryKeepsRecoveryPrivate;
+void configSessionEntryKeepsRecoveryPrivate;
 
 describe("session-store-runtime compatibility surface", () => {
   let tempDir: string;
@@ -481,6 +493,91 @@ describe("session-store-runtime compatibility surface", () => {
       providerOverride: "openai",
       sessionId: "session-1",
     });
+  });
+
+  it("hides core recovery state and preserves it across public mutations", async () => {
+    const sessionKey = "agent:main:recovery-owned";
+    const mainRestartRecovery = {
+      chargedAttempts: 1,
+      cycleId: "cycle-1",
+      reservation: {
+        attempt: 1,
+        lifecycleGeneration: "generation-1",
+        runId: "run-1",
+      },
+      revision: 1,
+    };
+    await replaceInternalSessionEntry({ sessionKey, storePath }, {
+      mainRestartRecovery,
+      model: "gpt-5.5",
+      sessionId: "session-recovery",
+      updatedAt: 10,
+    } as InternalSessionEntry);
+
+    expect(getSessionEntry({ sessionKey, storePath })).not.toHaveProperty("mainRestartRecovery");
+    expect(listSessionEntries({ storePath })[0]?.entry).not.toHaveProperty("mainRestartRecovery");
+
+    await patchSessionEntry({
+      sessionKey,
+      storePath,
+      update: () =>
+        ({ model: "gpt-5.6", mainRestartRecovery: undefined }) as unknown as Partial<SessionEntry>,
+    });
+    expect(loadInternalSessionEntry({ sessionKey, storePath })).toMatchObject({
+      mainRestartRecovery,
+      model: "gpt-5.6",
+    });
+
+    await upsertSessionEntry({
+      sessionKey,
+      storePath,
+      entry: {
+        sessionId: "session-recovery",
+        updatedAt: 20,
+      },
+    });
+    expect(loadInternalSessionEntry({ sessionKey, storePath })).toMatchObject({
+      mainRestartRecovery,
+      sessionId: "session-recovery",
+      updatedAt: 20,
+    });
+    expect(loadInternalSessionEntry({ sessionKey, storePath })?.model).toBeUndefined();
+  });
+
+  it("rejects core recovery state from runtime-escaped creation inputs", async () => {
+    const mainRestartRecovery = {
+      chargedAttempts: 1,
+      cycleId: "cycle-injected",
+      revision: 1,
+    };
+    const patchSessionKey = "agent:main:patch-created";
+    await patchSessionEntry({
+      fallbackEntry: {
+        mainRestartRecovery,
+        sessionId: "patch-created",
+        updatedAt: 10,
+      } as unknown as SessionEntry,
+      sessionKey: patchSessionKey,
+      storePath,
+      update: () => ({ updatedAt: 20 }),
+    });
+    expect(loadInternalSessionEntry({ sessionKey: patchSessionKey, storePath })).not.toHaveProperty(
+      "mainRestartRecovery",
+    );
+
+    const upsertSessionKey = "agent:main:upsert-created";
+    await upsertSessionEntry({
+      entry: {
+        mainRestartRecovery,
+        sessionId: "upsert-created",
+        updatedAt: 10,
+      } as unknown as SessionEntry,
+      sessionKey: upsertSessionKey,
+      storePath,
+    });
+    expect(
+      loadInternalSessionEntry({ sessionKey: upsertSessionKey, storePath }),
+    ).not.toHaveProperty("mainRestartRecovery");
   });
 
   it("preserves resolved maintenance settings through entry patches", async () => {

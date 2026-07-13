@@ -9,7 +9,11 @@ import {
   resolveStorePath,
   resolveSessionTranscriptsDirForAgent,
 } from "../config/sessions/paths.js";
-import type { SessionEntry } from "../config/sessions/types.js";
+import {
+  loadExactSessionEntry,
+  replaceSessionEntrySync,
+} from "../config/sessions/session-accessor.js";
+import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import {
   clearTuiLastSessionPointers,
@@ -101,6 +105,14 @@ function writeSessionStore(
   setupSessionState(cfg, process.env, process.env.HOME ?? "");
   const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
   fs.writeFileSync(storePath, JSON.stringify(sessions, null, 2));
+}
+
+function writeCanonicalSessionStore(cfg: OpenClawConfig, sessions: Record<string, SessionEntry>) {
+  setupSessionState(cfg, process.env, process.env.HOME ?? "");
+  const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
+  for (const [sessionKey, entry] of Object.entries(sessions)) {
+    replaceSessionEntrySync({ sessionKey, storePath }, entry);
+  }
 }
 
 async function runStateIntegrityText(cfg: OpenClawConfig): Promise<string> {
@@ -387,6 +399,129 @@ describe("doctor state integrity oauth dir checks", () => {
     expect(text).not.toContain("Examples:");
   });
 
+  it("reports canonical main-session restart recovery tombstones without offering a repair", async () => {
+    const cfg: OpenClawConfig = {};
+    writeCanonicalSessionStore(cfg, {
+      "agent:main:main": {
+        sessionId: "session-wedged-main",
+        updatedAt: Date.now(),
+        abortedLastRun: false,
+        mainRestartRecovery: {
+          cycleId: "cycle-wedged-main",
+          revision: 4,
+          chargedAttempts: 3,
+          tombstone: {
+            reason:
+              "main-session restart recovery blocked after 3 charged automatic resume attempts",
+          },
+        },
+      },
+    });
+
+    const confirmRuntimeRepair = vi.fn(async () => false);
+    await noteStateIntegrity(cfg, { confirmRuntimeRepair, note: noteMock });
+
+    const text = stateIntegrityText();
+    expect(text).toContain("Found 1 wedged main session");
+    expect(text).toContain("agent:main:main");
+    expect(text).toContain("use /new or reset");
+    expect(text).toContain("blocked after 3 charged automatic resume attempts");
+    expect(hasRepairPromptMessage(confirmRuntimeRepair, "wedged main session")).toBe(false);
+  });
+
+  it("clears only stale aborted flags on tombstoned main sessions when approved", async () => {
+    const cfg: OpenClawConfig = {};
+    const staleKey = "agent:main:stale-tombstone";
+    const canonicalKey = "agent:main:canonical-tombstone";
+    const canonicalUpdatedAt = Date.now();
+    writeCanonicalSessionStore(cfg, {
+      [staleKey]: {
+        sessionId: "session-stale-main",
+        updatedAt: 0,
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          cycleId: "cycle-stale-main",
+          revision: 4,
+          chargedAttempts: 3,
+          tombstone: {
+            reason: "stale main tombstone",
+          },
+        },
+      },
+      [canonicalKey]: {
+        sessionId: "session-canonical-main",
+        updatedAt: canonicalUpdatedAt,
+        abortedLastRun: false,
+        mainRestartRecovery: {
+          cycleId: "cycle-canonical-main",
+          revision: 4,
+          chargedAttempts: 3,
+          tombstone: {
+            reason: "canonical main tombstone",
+          },
+        },
+      },
+    });
+
+    const confirmRuntimeRepair = vi.fn(async (params: { message: string }) =>
+      params.message.includes("wedged main session"),
+    );
+    await noteStateIntegrity(cfg, { confirmRuntimeRepair, note: noteMock });
+
+    const storePath = resolveStorePath(cfg.session?.store, { agentId: "main" });
+    const persistedStale = loadExactSessionEntry({ sessionKey: staleKey, storePath })?.entry;
+    const persistedCanonical = loadExactSessionEntry({
+      sessionKey: canonicalKey,
+      storePath,
+    })?.entry;
+    expect(persistedStale?.abortedLastRun).toBe(false);
+    expect(
+      (persistedStale as SessionEntry | undefined)?.mainRestartRecovery?.tombstone?.reason,
+    ).toBe("stale main tombstone");
+    expect(persistedCanonical?.abortedLastRun).not.toBe(true);
+    expect(
+      (persistedCanonical as SessionEntry | undefined)?.mainRestartRecovery?.tombstone?.reason,
+    ).toBe("canonical main tombstone");
+    expect(persistedCanonical?.updatedAt).toBe(canonicalUpdatedAt);
+    expect(doctorChangesText()).toContain("1 wedged main session");
+  });
+
+  it("does not report a repair when a main-session abort flag clears during confirmation", async () => {
+    const cfg: OpenClawConfig = {};
+    const sessionKey = "agent:main:stale-tombstone";
+    const tombstone = {
+      cycleId: "cycle-stale-main",
+      revision: 4,
+      chargedAttempts: 3,
+      tombstone: {
+        reason: "stale main tombstone",
+      },
+    };
+    writeCanonicalSessionStore(cfg, {
+      [sessionKey]: {
+        sessionId: "session-stale-main",
+        updatedAt: 0,
+        abortedLastRun: true,
+        mainRestartRecovery: tombstone,
+      },
+    });
+
+    const confirmRuntimeRepair = vi.fn(async () => {
+      writeCanonicalSessionStore(cfg, {
+        [sessionKey]: {
+          sessionId: "session-stale-main",
+          updatedAt: 10,
+          abortedLastRun: false,
+          mainRestartRecovery: tombstone,
+        },
+      });
+      return true;
+    });
+    await noteStateIntegrity(cfg, { confirmRuntimeRepair, note: noteMock });
+
+    expect(doctorChangesText()).not.toContain("Cleared aborted restart-recovery flags");
+  });
+
   it("warns about tombstoned subagent restart recovery sessions", async () => {
     const cfg: OpenClawConfig = {};
     writeSessionStore(cfg, {
@@ -410,7 +545,7 @@ describe("doctor state integrity oauth dir checks", () => {
     const text = stateIntegrityText();
     expect(text).toContain("automatic restart recovery tombstoned");
     expect(text).toContain("agent:main:subagent:wedged-child");
-    expect(text).toContain("openclaw tasks maintenance --apply");
+    expect(text).toMatch(/openclaw(?: --profile \S+)? tasks maintenance --apply/);
     expect(hasRepairPromptMessage(confirmRuntimeRepair, "Clear stale aborted recovery flags")).toBe(
       true,
     );
@@ -632,15 +767,15 @@ describe("doctor state integrity oauth dir checks", () => {
     });
     const text = await runStateIntegrityText(cfg);
     expect(text).toContain("recent sessions are missing transcripts");
-    expect(text).toMatch(/openclaw sessions --store ".*sessions\.json"/);
+    expect(text).toMatch(/openclaw(?: --profile \S+)? sessions --store ".*sessions\.json"/);
     expect(text).toMatch(
-      /openclaw sessions cleanup --store ".*sessions\.json" --dry-run --fix-missing/,
+      /openclaw(?: --profile \S+)? sessions cleanup --store ".*sessions\.json" --dry-run --fix-missing/,
     );
     expect(text).not.toMatch(
-      /openclaw sessions cleanup --store ".*sessions\.json" --dry-run(?! --fix-missing)/,
+      /openclaw(?: --profile \S+)? sessions cleanup --store ".*sessions\.json" --dry-run(?! --fix-missing)/,
     );
     expect(text).toMatch(
-      /openclaw sessions cleanup --store ".*sessions\.json" --enforce --fix-missing/,
+      /openclaw(?: --profile \S+)? sessions cleanup --store ".*sessions\.json" --enforce --fix-missing/,
     );
     expect(text).not.toContain("--active");
     expect(text).not.toContain(" ls ");

@@ -407,8 +407,7 @@ export function loadSessionStore(
     const currentFileStat = getFileStatSnapshot(storePath);
     const cached = readSessionStoreCache({
       storePath,
-      mtimeMs: currentFileStat?.mtimeMs,
-      sizeBytes: currentFileStat?.sizeBytes,
+      ...currentFileStat,
       clone: opts.clone,
     });
     if (cached) {
@@ -420,7 +419,6 @@ export function loadSessionStore(
   // transiently invalid content while another process is swapping the file.
   let store: Record<string, SessionEntry> = {};
   const fileStat = getFileStatSnapshot(storePath);
-  const mtimeMs = fileStat?.mtimeMs;
   let serializedFromDisk: string | undefined;
   const maxReadAttempts = 3;
   const retryBuf = maxReadAttempts > 1 ? new Int32Array(new SharedArrayBuffer(4)) : undefined;
@@ -526,8 +524,7 @@ export function loadSessionStore(
     writeSessionStoreCache({
       storePath,
       store,
-      mtimeMs,
-      sizeBytes: fileStat?.sizeBytes,
+      ...fileStat,
       serialized: serializedFromDisk,
       cloneSerialized: serializedFromDisk,
       takeOwnership: serializedFromDisk !== undefined,
@@ -543,8 +540,7 @@ export function readSessionStoreSnapshot(storePath: string): SessionStoreSnapsho
   if (cacheEnabled) {
     const cached = readSessionStoreSnapshotCache({
       storePath,
-      mtimeMs: currentFileStat?.mtimeMs,
-      sizeBytes: currentFileStat?.sizeBytes,
+      ...currentFileStat,
     });
     if (cached) {
       return cached;
@@ -558,8 +554,7 @@ export function readSessionStoreSnapshot(storePath: string): SessionStoreSnapsho
   return writeSessionStoreSnapshotCache({
     storePath,
     store,
-    mtimeMs: currentFileStat?.mtimeMs,
-    sizeBytes: currentFileStat?.sizeBytes,
+    ...currentFileStat,
   });
 }
 

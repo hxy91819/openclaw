@@ -2,7 +2,7 @@
 
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionEntry } from "../config/sessions.js";
+import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
 import { INTERNAL_RUNTIME_CONTEXT_BEGIN, INTERNAL_RUNTIME_CONTEXT_END } from "./internal-events.js";
 import { LiveSessionModelSwitchError } from "./live-model-switch-error.js";
 import {
@@ -75,6 +75,10 @@ const state = vi.hoisted(() => ({
     resolvedSkills: [],
     version: 0,
   })),
+  claimMainSessionRecoveryOwnerMock: vi.fn(),
+  releaseMainSessionRecoveryOwnerMock: vi.fn(),
+  resolveWorktreeIdForPathMock: vi.fn(),
+  acquireWorktreeRunLeaseMock: vi.fn(),
   prepareInternalSessionEffectsSessionMock: vi.fn(),
   removeInternalSessionEffectsSessionMock: vi.fn(),
   authProfileStoreMock: { profiles: {} } as { profiles: Record<string, unknown> },
@@ -82,11 +86,19 @@ const state = vi.hoisted(() => ({
   sessionStoreMock: undefined as unknown,
   storePathMock: undefined as string | undefined,
   resolvedSessionKeyMock: undefined as string | undefined,
+  isNewSessionMock: false,
   trajectoryRecorderParamsMock: vi.fn(),
 }));
 
 vi.mock("./model-fallback.js", () => ({
   runWithModelFallback: (params: unknown) => state.runWithModelFallbackMock(params),
+}));
+
+vi.mock("./main-session-recovery-store.js", () => ({
+  claimMainSessionRecoveryOwner: (...args: unknown[]) =>
+    state.claimMainSessionRecoveryOwnerMock(...args),
+  releaseMainSessionRecoveryOwner: (...args: unknown[]) =>
+    state.releaseMainSessionRecoveryOwnerMock(...args),
 }));
 
 vi.mock("./command/attempt-execution.runtime.js", () => ({
@@ -185,7 +197,7 @@ vi.mock("./command/session.js", () => ({
       sessionEntry,
       sessionStore: state.sessionStoreMock,
       storePath: state.storePathMock,
-      isNewSession: false,
+      isNewSession: state.isNewSessionMock,
       persistedThinking:
         typeof sessionEntry.thinkingLevel === "string" ? sessionEntry.thinkingLevel : undefined,
       persistedVerbose: undefined,
@@ -296,6 +308,11 @@ vi.mock("./internal-session-effects.js", () => ({
     sessionKey: `agent:${agentId}:internal-session-effects:${runId}`,
     storePath,
   }),
+}));
+
+vi.mock("./worktrees/run-lease.js", () => ({
+  resolveWorktreeIdForPath: (...args: unknown[]) => state.resolveWorktreeIdForPathMock(...args),
+  acquireWorktreeRunLease: (...args: unknown[]) => state.acquireWorktreeRunLeaseMock(...args),
 }));
 
 vi.mock("../infra/agent-events.js", () => ({
@@ -858,11 +875,13 @@ vi.mock("../acp/control-plane/manager.js", () => ({
 }));
 
 let agentCommand: typeof import("./agent-command.js").agentCommand;
+let agentCommandFromIngress: typeof import("./agent-command.js").agentCommandFromIngress;
 let agentCommandTesting: typeof import("./agent-command.js").testing;
 
 beforeAll(async () => {
   const mod = await import("./agent-command.js");
   agentCommand ??= mod.agentCommand;
+  agentCommandFromIngress ??= mod.agentCommandFromIngress;
   agentCommandTesting ??= mod.testing;
 });
 
@@ -986,6 +1005,30 @@ function setupSessionTouchStore(): void {
   state.storePathMock = "/tmp/openclaw-sessions.json";
 }
 
+function interruptedMainSessionEntry(sessionId: string): SessionEntry {
+  return {
+    sessionId,
+    updatedAt: 1,
+    status: "running",
+    abortedLastRun: true,
+    mainRestartRecovery: {
+      cycleId: "cycle-1",
+      revision: 1,
+      chargedAttempts: 1,
+    },
+  };
+}
+
+function mainRecoveryOwnerLease(storePath: string) {
+  return {
+    cycleId: "cycle-1",
+    lifecycleGeneration: "test-generation",
+    token: "owner-token",
+    sessionKey: "agent:main:main",
+    storePath,
+  };
+}
+
 function expectFallbackOverrideCalls(first: boolean, second: boolean) {
   expect(state.resolveEffectiveModelFallbacksMock).toHaveBeenCalledTimes(2);
   expectRecordFields(mockCallArg(state.resolveEffectiveModelFallbacksMock, 0), {
@@ -1080,6 +1123,9 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     state.sessionStoreMock = undefined;
     state.storePathMock = undefined;
     state.resolvedSessionKeyMock = undefined;
+    state.isNewSessionMock = false;
+    state.resolveWorktreeIdForPathMock.mockResolvedValue(undefined);
+    state.acquireWorktreeRunLeaseMock.mockResolvedValue(undefined);
     state.persistSessionEntryMock.mockImplementation(async (...args: unknown[]) => {
       const params = args[0] as {
         sessionStore?: Record<string, unknown>;
@@ -1153,6 +1199,8 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     );
     state.updateSessionStoreAfterAgentRunMock.mockResolvedValue(undefined);
     state.trajectoryFlushMock.mockResolvedValue(undefined);
+    state.claimMainSessionRecoveryOwnerMock.mockResolvedValue({ kind: "not_required" });
+    state.releaseMainSessionRecoveryOwnerMock.mockResolvedValue(undefined);
     state.prepareInternalSessionEffectsSessionMock.mockResolvedValue({
       agentId: "default",
       sessionId: "internal-session",
@@ -1654,6 +1702,86 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(state.updateSessionStoreAfterAgentRunMock).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects standalone work on an interrupted main session without a shared gateway owner", async () => {
+    const entry = interruptedMainSessionEntry("interrupted-session");
+    const releaseRunLease = vi.fn();
+    state.sessionEntryMock = entry;
+    state.sessionStoreMock = { "agent:main:main": entry };
+    state.storePathMock = "/tmp/openclaw-sessions.json";
+    state.resolveWorktreeIdForPathMock.mockResolvedValueOnce("worktree-1");
+    state.acquireWorktreeRunLeaseMock.mockResolvedValueOnce({ release: releaseRunLease });
+
+    await expect(agentCommand({ message: "continue", to: "+15550001111" })).rejects.toThrow(
+      /retry through a healthy Gateway or choose a fresh --session-id/u,
+    );
+
+    expect(state.runAgentAttemptMock).not.toHaveBeenCalled();
+    expect(state.claimMainSessionRecoveryOwnerMock).not.toHaveBeenCalled();
+    expect(releaseRunLease).toHaveBeenCalledOnce();
+  });
+
+  it("rejects standalone rollover while the persisted main session is still interrupted", async () => {
+    const interruptedEntry = interruptedMainSessionEntry("interrupted-session");
+    state.sessionEntryMock = {
+      sessionId: interruptedEntry.sessionId,
+      updatedAt: interruptedEntry.updatedAt,
+    };
+    state.sessionStoreMock = { "agent:main:main": interruptedEntry };
+    state.storePathMock = "/tmp/openclaw-sessions.json";
+    state.isNewSessionMock = true;
+
+    await expect(agentCommand({ message: "continue", to: "+15550001111" })).rejects.toThrow(
+      /choose a fresh --session-id/u,
+    );
+
+    expect(state.runAgentAttemptMock).not.toHaveBeenCalled();
+    expect(state.claimMainSessionRecoveryOwnerMock).not.toHaveBeenCalled();
+  });
+
+  it("releases an ingress recovery owner when the run fails", async () => {
+    setupSingleAttemptFallback();
+    const entry = interruptedMainSessionEntry("session-1");
+    const lease = mainRecoveryOwnerLease("/tmp/openclaw-sessions.json");
+    state.sessionEntryMock = entry;
+    state.sessionStoreMock = { "agent:main:main": entry };
+    state.storePathMock = lease.storePath;
+    state.claimMainSessionRecoveryOwnerMock.mockResolvedValue({ kind: "claimed", lease });
+    state.runAgentAttemptMock.mockRejectedValueOnce(new Error("agent attempt failed"));
+
+    await expect(
+      agentCommandFromIngress({
+        allowModelOverride: false,
+        message: "continue",
+        to: "+15550001111",
+      }),
+    ).rejects.toThrow("agent attempt failed");
+
+    expect(state.claimMainSessionRecoveryOwnerMock).toHaveBeenCalledWith({
+      lifecycleGeneration: "test-generation",
+      sessionId: "session-1",
+      target: {
+        sessionKey: "agent:main:main",
+        storePath: "/tmp/openclaw-sessions.json",
+      },
+    });
+    expect(state.releaseMainSessionRecoveryOwnerMock).toHaveBeenCalledWith(lease);
+  });
+
+  it("releases a gateway preclaim when preparation fails", async () => {
+    const lease = mainRecoveryOwnerLease("/tmp/openclaw-sessions.json");
+
+    await expect(
+      agentCommandFromIngress({
+        allowModelOverride: false,
+        mainRestartRecoveryOwnerLease: lease,
+        message: "",
+      }),
+    ).rejects.toThrow("Message (--message) is required");
+
+    expect(state.claimMainSessionRecoveryOwnerMock).not.toHaveBeenCalled();
+    expect(state.releaseMainSessionRecoveryOwnerMock).toHaveBeenCalledWith(lease);
+  });
+
   it("threads lifecycle ownership into normal delivery", async () => {
     setupSingleAttemptFallback();
     state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("openai", "gpt-5.4"));
@@ -1789,6 +1917,30 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     });
     expect(touchWrites).toHaveLength(0);
     expect(state.updateSessionStoreAfterAgentRunMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps restart-recovery resumes non-interactive through session updates", async () => {
+    setupSingleAttemptFallback();
+    state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("openai", "gpt-5.4"));
+    setupSessionTouchStore();
+
+    await agentCommand({
+      message: "hello",
+      to: "+1234567890",
+      inputProvenance: {
+        kind: "internal_system",
+        sourceTool: "main_session_restart_recovery",
+      },
+    });
+
+    const touchWrites = state.persistSessionEntryMock.mock.calls.filter((call) => {
+      const touchEntry = (call[0] as { entry?: Record<string, unknown> } | undefined)?.entry;
+      return touchEntry?.lastInteractionAt !== undefined;
+    });
+    expect(touchWrites).toHaveLength(0);
+    expectRecordFields(mockCallArg(state.updateSessionStoreAfterAgentRunMock), {
+      touchInteraction: false,
+    });
   });
 
   it("uses channel model override as the initial run model for channel-backed sessions", async () => {

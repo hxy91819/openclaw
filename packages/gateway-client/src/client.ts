@@ -255,6 +255,8 @@ export type GatewayClientRequestOptions = {
   expectFinal?: boolean;
   timeoutMs?: number | null;
   signal?: AbortSignal;
+  /** Called after the request frame has been handed to the WebSocket transport. */
+  onDispatched?: () => void;
   /** Called once for expectFinal requests after an accepted response, before the final result. */
   onAccepted?: (payload: unknown) => void;
 };
@@ -1652,6 +1654,13 @@ export class GatewayClient {
       this.pending.delete(id);
       pending?.cleanup?.();
       throw error;
+    }
+    try {
+      opts?.onDispatched?.();
+    } catch (err) {
+      this.logDebug(
+        `gateway client dispatched callback error: ${formatGatewayClientErrorForLog(err)}`,
+      );
     }
     return p;
   }

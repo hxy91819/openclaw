@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { buildMainSessionRecoveryClearPatch } from "../agents/main-session-recovery-state.js";
 import {
   migrateSessionEntries,
   SessionManager,
@@ -585,8 +586,11 @@ function cloneCheckpointSessionEntry(params: {
   preserveCompactionCheckpoints?: boolean;
   preserveManagementState?: boolean;
 }): SessionEntry {
+  // A checkpoint clone owns a new transcript/session identity. Carrying old
+  // recovery state would let its attempts or tombstone quarantine a later interruption.
   return {
     ...params.currentEntry,
+    ...buildMainSessionRecoveryClearPatch(params.currentEntry),
     sessionId: params.nextSessionId,
     sessionFile: params.nextSessionFile,
     updatedAt: Date.now(),

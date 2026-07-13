@@ -21,7 +21,7 @@ import {
   resetSubagentRegistryForTests,
   testing as subagentRegistryTesting,
 } from "../../agents/subagent-registry.js";
-import type { SessionEntry } from "../../config/sessions.js";
+import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import type { SessionTranscriptStats } from "../../config/sessions/session-accessor.js";
 import { parseSqliteSessionFileMarker } from "../../config/sessions/sqlite-marker.js";
 import {
@@ -691,7 +691,7 @@ async function runMainAgentAndCaptureEntry(idempotencyKey: string) {
       [canonicalKey]: existingEntry,
     };
     const result = await updater(store);
-    capturedEntry = result as Record<string, unknown>;
+    capturedEntry = structuredClone(store[canonicalKey]) as Record<string, unknown>;
     return result;
   });
   mocks.agentCommand.mockResolvedValue({
@@ -2063,6 +2063,48 @@ describe("gateway agent handler", () => {
       expect(call.imageOrder).toEqual(["offloaded"]);
       expect(call.message).toContain("[media attached: media://inbound/");
       expect(call.userTurnTranscriptRecorder).toBeUndefined();
+    });
+  });
+
+  it("clears automatic recovery quarantine state when a user turn rotates the session id", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    dateOnlyFakeClockActive = true;
+    vi.setSystemTime(new Date("2026-05-07T12:00:00.000Z"));
+    const staleEntry = {
+      sessionId: "quarantined-session-id",
+      updatedAt: 0,
+      sessionStartedAt: 0,
+      lastInteractionAt: 0,
+      abortedLastRun: true,
+      restartRecoveryRuns: [
+        { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+        { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+      ],
+      mainRestartRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 3,
+        lastRunId: "recovery-run-1",
+      },
+      subagentRecovery: {
+        automaticAttempts: 2,
+        lastAttemptAt: 3,
+        wedgedAt: 4,
+        wedgedReason: "automatic_attempt_budget_exceeded",
+      },
+    };
+    mockMainSessionEntry(staleEntry);
+
+    const capturedEntry = await runMainAgentAndCaptureEntry("test-idem-rotated-recovery-clear");
+
+    expect(capturedEntry.sessionId).not.toBe("quarantined-session-id");
+    expect(capturedEntry.abortedLastRun).toBeUndefined();
+    expect(capturedEntry.restartRecoveryRuns).toBeUndefined();
+    expect(capturedEntry.mainRestartRecovery).toBeUndefined();
+    expect(capturedEntry.subagentRecovery).toEqual({
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
     });
   });
 

@@ -156,6 +156,7 @@ import type { ReplySessionBinding } from "./get-reply.types.js";
 import { claimInboundDedupe, commitInboundDedupe, releaseInboundDedupe } from "./inbound-dedupe.js";
 import { hasInboundAudio } from "./inbound-media.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
+import { PENDING_FINAL_DELIVERY_CLEAR_PATCH } from "./pending-final-delivery.js";
 import {
   buildPendingFinalDeliveryText,
   sanitizePendingFinalDeliveryText,
@@ -1043,14 +1044,7 @@ async function clearPendingFinalDeliveryAfterSuccess(params: {
         return null;
       }
       return {
-        pendingFinalDelivery: undefined,
-        pendingFinalDeliveryText: undefined,
-        pendingFinalDeliveryCreatedAt: undefined,
-        pendingFinalDeliveryLastAttemptAt: undefined,
-        pendingFinalDeliveryAttemptCount: undefined,
-        pendingFinalDeliveryLastError: undefined,
-        pendingFinalDeliveryContext: undefined,
-        pendingFinalDeliveryIntentId: undefined,
+        ...PENDING_FINAL_DELIVERY_CLEAR_PATCH,
         updatedAt: Date.now(),
       };
     },

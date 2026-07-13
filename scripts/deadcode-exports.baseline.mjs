@@ -1815,8 +1815,6 @@ export const KNIP_UNUSED_EXPORT_BASELINE = [
   "src/auto-reply/reply/reply-threading.ts: createReplyToModeFilter",
   "src/auto-reply/reply/reply-threading.ts: resolveConfiguredReplyToMode",
   "src/auto-reply/reply/reply-threading.ts: resolveReplyToModeWithThreading",
-  "src/auto-reply/reply/reply-turn-admission.ts: ReplyTurnAdmission",
-  "src/auto-reply/reply/reply-turn-admission.ts: ReplyTurnKind",
   "src/auto-reply/reply/reply-usage-state.ts: clearReplyUsageStateForTest",
   "src/auto-reply/reply/session-delivery.ts: LegacyMainDeliveryRetirement",
   "src/auto-reply/reply/session-fork.ts: ForkedParentSessionEntry",

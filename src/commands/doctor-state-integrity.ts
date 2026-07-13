@@ -9,6 +9,10 @@ import { uniqueStrings } from "@openclaw/normalization-core/string-normalization
 import { note } from "../../packages/terminal-core/src/note.js";
 import { listAgentEntries, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import {
+  inspectMainSessionRecoveryHealth,
+  transitionMainSessionRecovery,
+} from "../agents/main-session-recovery-state.js";
+import {
   clearWedgedSubagentRecoveryAbort,
   formatSubagentRecoveryWedgedReason,
   isSubagentRecoveryWedgedEntry,
@@ -26,6 +30,10 @@ import {
   resolveSessionTranscriptsDirForAgent,
   resolveStorePath,
 } from "../config/sessions/paths.js";
+import {
+  applySessionEntryReplacements,
+  listSessionEntries,
+} from "../config/sessions/session-accessor.js";
 import { loadSessionStore } from "../config/sessions/store-load.js";
 import { updateSessionStore } from "../config/sessions/store.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -1276,7 +1284,8 @@ export async function noteStateIntegrity(
   const store = loadSessionStore(storePath, { skipCache: true, clone: false });
   const sessionPathOpts = resolveSessionFilePathOptions({ agentId, storePath });
   const entries = Object.entries(store).filter(([, entry]) => entry && typeof entry === "object");
-  if (entries.length > 0) {
+  const canonicalEntries = listSessionEntries({ agentId, storePath: absoluteStorePath });
+  if (entries.length > 0 || canonicalEntries.length > 0) {
     const recent = entries
       .slice()
       .toSorted((a, b) => {
@@ -1303,6 +1312,68 @@ export async function noteStateIntegrity(
           `  Prune missing entries: ${formatCliCommand(`openclaw sessions cleanup --store "${absoluteStorePath}" --enforce --fix-missing`)}`,
         ].join("\n"),
       );
+    }
+
+    const wedgedMainSessions = canonicalEntries.flatMap(({ entry, sessionKey }) => {
+      const health = inspectMainSessionRecoveryHealth(entry);
+      return health.status === "tombstoned" ? [{ key: sessionKey, health }] : [];
+    });
+    if (wedgedMainSessions.length > 0) {
+      const wedgedCount = countLabel(wedgedMainSessions.length, "wedged main session");
+      warnings.push(
+        [
+          `- Found ${wedgedCount} with automatic restart recovery tombstoned.`,
+          "  OpenClaw will not auto-resume these sessions again; inspect the failed turn, then use /new or reset to replace the session.",
+          `  Examples: ${wedgedMainSessions
+            .slice(0, 3)
+            .map(({ key }) => key)
+            .join(", ")}`,
+        ].join("\n"),
+      );
+
+      const visibleWedgedReasons = uniqueStrings(
+        wedgedMainSessions.map(({ health }) => health.reason),
+      ).slice(0, 2);
+      if (visibleWedgedReasons.length > 0) {
+        warnings.push(visibleWedgedReasons.map((reason) => `  Reason: ${reason}`).join("\n"));
+      }
+
+      const staleAbortedMainSessions = wedgedMainSessions.filter(
+        ({ health }) => health.repair === "clear_stale_abort",
+      );
+      if (staleAbortedMainSessions.length > 0) {
+        const staleCount = countLabel(staleAbortedMainSessions.length, "wedged main session");
+        const repairWedged = await prompter.confirmRuntimeRepair({
+          message: `Clear stale aborted recovery flags for ${staleCount}?`,
+          initialValue: true,
+        });
+        if (repairWedged) {
+          const repairedAt = Date.now();
+          // Revalidate under the writer lock because session state can change while Doctor prompts.
+          const repaired = await applySessionEntryReplacements<number>({
+            sessionKeys: staleAbortedMainSessions.map(({ key }) => key),
+            storePath: absoluteStorePath,
+            update: (currentEntries) => {
+              const replacements = currentEntries.flatMap(({ sessionKey, entry }) => {
+                const transition = transitionMainSessionRecovery(entry, {
+                  kind: "doctor_repair",
+                  now: repairedAt,
+                });
+                return transition.kind === "doctor_repaired" ? [{ sessionKey, entry }] : [];
+              });
+              return { replacements, result: replacements.length };
+            },
+          });
+          if (repaired > 0) {
+            changes.push(
+              `- Cleared aborted restart-recovery flags for ${countLabel(
+                repaired,
+                "wedged main session",
+              )}.`,
+            );
+          }
+        }
+      }
     }
 
     const wedgedSubagentSessions = entries.filter(([, entry]) =>
