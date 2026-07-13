@@ -2,13 +2,13 @@
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
-import type { SessionEntry } from "../../config/sessions/types.js";
 import {
   deleteSessionEntryLifecycle,
   loadSessionEntry,
   replaceSessionEntry,
   replaceSessionEntrySync,
 } from "../../config/sessions/session-accessor.js";
+import type { InternalSessionEntry as SessionEntry } from "../../config/sessions/types.js";
 import {
   markDiagnosticToolStartedForTest,
   resetDiagnosticRunActivityForTest,
@@ -363,12 +363,11 @@ describe("reply turn admission", () => {
         return;
       }
 
-      const claimedEntry = readSessionStore(storePath)[sessionKey];
+      const claimedEntry = await readSessionEntry(storePath, sessionKey);
       admission.operation.complete();
-      await vi.waitFor(() => {
-        expect(
-          readSessionStore(storePath)[sessionKey]?.mainRestartRecovery?.foregroundClaims,
-        ).toBeUndefined();
+      await vi.waitFor(async () => {
+        const entry = await readSessionEntry(storePath, sessionKey);
+        expect(entry?.mainRestartRecovery?.foregroundClaims).toBeUndefined();
       });
 
       expect(claimedEntry?.mainRestartRecovery).toMatchObject({
@@ -376,7 +375,7 @@ describe("reply turn admission", () => {
           tokens: [expect.any(String)],
         },
       });
-      expect(readSessionStore(storePath)[sessionKey]).toMatchObject({
+      await expect(readSessionEntry(storePath, sessionKey)).resolves.toMatchObject({
         sessionId,
         status: "running",
       });
@@ -409,7 +408,9 @@ describe("reply turn admission", () => {
     if (admission.status === "owned") {
       admission.operation.complete();
     }
-    expect(readSessionStore(storePath)[sessionKey]?.mainRestartRecovery).toBeUndefined();
+    await expect(readSessionEntry(storePath, sessionKey)).resolves.not.toHaveProperty(
+      "mainRestartRecovery",
+    );
   });
 
   it("holds interrupted queued reply work until its owner exits", async () => {

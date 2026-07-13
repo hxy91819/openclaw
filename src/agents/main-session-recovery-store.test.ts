@@ -4,6 +4,10 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import {
+  applySessionEntryLifecycleMutation,
+  listSessionEntries,
+} from "../config/sessions/session-accessor.js";
+import {
   getAgentEventLifecycleGeneration,
   rotateAgentEventLifecycleGeneration,
 } from "../infra/agent-events.js";
@@ -37,6 +41,20 @@ describe("main session recovery store", () => {
 
   function read(): SessionEntry {
     return sessionAccessor.loadSessionEntry({ sessionKey, storePath })!;
+  }
+
+  function readStore(): Record<string, SessionEntry> {
+    return Object.fromEntries(
+      listSessionEntries({ storePath }).map(({ sessionKey: key, entry }) => [key, entry]),
+    );
+  }
+
+  async function seedExact(entries: Record<string, SessionEntry>): Promise<void> {
+    await applySessionEntryLifecycleMutation({
+      storePath,
+      upserts: Object.entries(entries).map(([key, entry]) => ({ sessionKey: key, entry })),
+      skipMaintenance: true,
+    });
   }
 
   function interruptedEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
@@ -132,18 +150,15 @@ describe("main session recovery store", () => {
 
   it("cancels a reservation after Gateway migrates its legacy session key", async () => {
     const legacyKey = "main";
-    await saveSessionStore(
-      storePath,
-      {
-        [legacyKey]: interruptedEntry(),
-      },
-      { skipMaintenance: true },
-    );
+    await seedExact({ [legacyKey]: interruptedEntry() });
     const reservation = await reserve(legacyKey);
-    const migratedStore = loadSessionStore(storePath, { skipCache: true });
-    migratedStore[sessionKey] = migratedStore[legacyKey]!;
-    delete migratedStore[legacyKey];
-    await saveSessionStore(storePath, migratedStore, { skipMaintenance: true });
+    const legacyEntry = readStore()[legacyKey]!;
+    await applySessionEntryLifecycleMutation({
+      storePath,
+      removals: [{ sessionKey: legacyKey }],
+      upserts: [{ sessionKey, entry: legacyEntry }],
+      skipMaintenance: true,
+    });
 
     const cancelled = await commitMainSessionRecovery({
       command: { kind: "cancel_reservation", reservation },
@@ -242,11 +257,7 @@ describe("main session recovery store", () => {
 
   it("claims an interrupted row through its pre-migration alias", async () => {
     const legacyKey = "main";
-    await saveSessionStore(
-      storePath,
-      { [legacyKey]: interruptedEntry() },
-      { skipMaintenance: true },
-    );
+    await seedExact({ [legacyKey]: interruptedEntry() });
 
     const claim = await claimMainSessionRecoveryOwner({
       lifecycleGeneration,
@@ -259,7 +270,7 @@ describe("main session recovery store", () => {
       return;
     }
     expect(claim.lease.sessionKey).toBe(legacyKey);
-    expect(loadSessionStore(storePath, { skipCache: true })[legacyKey]).toMatchObject({
+    expect(readStore()[legacyKey]).toMatchObject({
       mainRestartRecovery: {
         foregroundClaims: {
           lifecycleGeneration,

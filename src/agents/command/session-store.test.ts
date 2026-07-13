@@ -1817,10 +1817,9 @@ describe("updateSessionStoreAfterAgentRun", () => {
             { runId: "recovery-run-3", lifecycleGeneration: "gen-4" },
           ],
           mainRestartRecovery: {
-            schemaVersion: 1,
             cycleId: "cycle-1",
             revision: 3,
-            attempts: { charged: 2, lastAt: 3 },
+            chargedAttempts: 2,
           },
           subagentRecovery: {
             automaticAttempts: 2,
@@ -1830,7 +1829,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
           },
         },
       };
-      await fs.writeFile(storePath, JSON.stringify(sessionStore, null, 2));
+      await seedSessionStore(storePath, sessionStore);
 
       await updateSessionStoreAfterAgentRun({
         cfg,
@@ -1858,14 +1857,14 @@ describe("updateSessionStoreAfterAgentRun", () => {
 
       expect(sessionStore[sessionKey]?.abortedLastRun).toBe(false);
       expect(sessionStore[sessionKey]?.restartRecoveryRuns).toBeUndefined();
-      expect(sessionStore[sessionKey]).not.toHaveProperty("mainRestartRecovery");
+      expect(sessionStore[sessionKey]?.mainRestartRecovery).toBeUndefined();
       expect(sessionStore[sessionKey]?.subagentRecovery).toEqual({
         automaticAttempts: 2,
         lastAttemptAt: 3,
         wedgedAt: 4,
         wedgedReason: "automatic_attempt_budget_exceeded",
       });
-      const persisted = loadSessionStore(storePath, { skipCache: true })[sessionKey];
+      const persisted = loadPersistedSessionEntry(storePath, sessionKey);
       expect(persisted?.abortedLastRun).toBe(false);
       expect(persisted?.restartRecoveryRuns).toBeUndefined();
       expect(persisted).not.toHaveProperty("mainRestartRecovery");
@@ -1875,6 +1874,128 @@ describe("updateSessionStoreAfterAgentRun", () => {
         wedgedAt: 4,
         wedgedReason: "automatic_attempt_budget_exceeded",
       });
+    });
+  });
+
+  it("preserves a replacement recovery cycle from an older healthy finalizer", async () => {
+    await withTempSessionStore(async ({ storePath }) => {
+      const sessionKey = "agent:main:explicit:test-recovery-finalizer-aba";
+      const sessionId = "test-recovery-finalizer-aba-session";
+      const staleEntry: SessionEntry = {
+        sessionId,
+        updatedAt: 1,
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          cycleId: "cycle-old",
+          revision: 2,
+          chargedAttempts: 1,
+        },
+      };
+      const sessionStore = { [sessionKey]: staleEntry };
+      const replacementEntry: SessionEntry = {
+        ...staleEntry,
+        updatedAt: 2,
+        restartRecoveryRuns: [{ runId: "replacement-run", lifecycleGeneration: "gen-new" }],
+        mainRestartRecovery: {
+          cycleId: "cycle-new",
+          revision: 1,
+          chargedAttempts: 0,
+        },
+      };
+      await seedSessionStore(storePath, { [sessionKey]: replacementEntry });
+
+      await updateSessionStoreAfterAgentRun({
+        cfg: {} as OpenClawConfig,
+        sessionId,
+        sessionKey,
+        storePath,
+        sessionStore,
+        defaultProvider: "openai",
+        defaultModel: "gpt-5.5",
+        result: {
+          meta: {
+            durationMs: 1,
+            aborted: false,
+            agentMeta: { sessionId, provider: "openai", model: "gpt-5.5" },
+          },
+        } as EmbeddedAgentRunResult,
+      });
+
+      const persisted = loadPersistedSessionEntry(storePath, sessionKey);
+      expect(persisted).toMatchObject({
+        abortedLastRun: true,
+        restartRecoveryRuns: [{ runId: "replacement-run", lifecycleGeneration: "gen-new" }],
+        mainRestartRecovery: {
+          cycleId: "cycle-new",
+          revision: 1,
+          chargedAttempts: 0,
+        },
+      });
+      expect(sessionStore[sessionKey]).toEqual(persisted);
+    });
+  });
+
+  it("preserves a concurrent restart marker when a stale run settles healthy", async () => {
+    await withTempSessionStore(async ({ storePath }) => {
+      const sessionKey = "agent:main:explicit:test-restart-finalizer-race";
+      const sessionId = "test-restart-finalizer-race-session";
+      const initialEntry: SessionEntry = {
+        sessionId,
+        updatedAt: 1,
+        status: "running",
+        abortedLastRun: true,
+        restartRecoveryRuns: [{ runId: "run-1", lifecycleGeneration: "generation-1" }],
+        mainRestartRecovery: {
+          cycleId: "cycle-1",
+          revision: 2,
+          chargedAttempts: 0,
+          foregroundClaims: {
+            lifecycleGeneration: "generation-1",
+            tokens: ["owner-1"],
+          },
+        },
+      };
+      const sessionStore = { [sessionKey]: initialEntry };
+      const concurrentEntry: SessionEntry = {
+        ...structuredClone(initialEntry),
+        updatedAt: 2,
+        restartRecoveryRuns: [
+          ...(initialEntry.restartRecoveryRuns ?? []),
+          { runId: "run-1", lifecycleGeneration: "generation-2" },
+        ],
+        mainRestartRecovery: {
+          ...initialEntry.mainRestartRecovery!,
+          revision: 3,
+        },
+      };
+      await seedSessionStore(storePath, { [sessionKey]: concurrentEntry });
+
+      await updateSessionStoreAfterAgentRun({
+        cfg: {} as OpenClawConfig,
+        sessionId,
+        sessionKey,
+        storePath,
+        sessionStore,
+        defaultProvider: "openai",
+        defaultModel: "gpt-5.5",
+        result: {
+          meta: {
+            durationMs: 1,
+            aborted: false,
+            agentMeta: { sessionId, provider: "openai", model: "gpt-5.5" },
+          },
+        } as EmbeddedAgentRunResult,
+      });
+
+      for (const entry of [
+        sessionStore[sessionKey],
+        loadPersistedSessionEntry(storePath, sessionKey),
+      ]) {
+        expect(entry?.abortedLastRun).toBe(true);
+        expect(entry?.restartRecoveryRuns).toEqual(concurrentEntry.restartRecoveryRuns);
+        expect(entry?.mainRestartRecovery).toEqual(concurrentEntry.mainRestartRecovery);
+      }
     });
   });
 

@@ -60,6 +60,50 @@ function createSignalGroupContext(): MsgContext {
   };
 }
 
+function createRecoveryEntry(sessionId: string): SessionEntry {
+  return {
+    sessionId,
+    updatedAt: 1,
+    abortedLastRun: true,
+    restartRecoveryRuns: [
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+    ],
+    mainRestartRecovery: {
+      cycleId: "cycle-1",
+      revision: 3,
+      chargedAttempts: 2,
+    },
+    subagentRecovery: {
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    },
+  };
+}
+
+function expectRecoveryMarkers(entry: SessionEntry | undefined): void {
+  expect(entry).toMatchObject({
+    abortedLastRun: true,
+    restartRecoveryRuns: [
+      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
+      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
+    ],
+    mainRestartRecovery: {
+      cycleId: "cycle-1",
+      revision: 3,
+      chargedAttempts: 2,
+    },
+    subagentRecovery: {
+      automaticAttempts: 2,
+      lastAttemptAt: 3,
+      wedgedAt: 4,
+      wedgedReason: "automatic_attempt_budget_exceeded",
+    },
+  });
+}
+
 describe("session store key normalization", () => {
   const suiteRootTracker = createSuiteTempRootTracker({
     prefix: "openclaw-session-key-normalize-",
@@ -204,38 +248,9 @@ describe("session store key normalization", () => {
   });
 
   it("preserves recovery markers when recording inbound metadata", async () => {
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [CANONICAL_KEY]: {
-            sessionId: "recovered-session",
-            updatedAt: 1,
-            abortedLastRun: true,
-            restartRecoveryRuns: [
-              { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
-              { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
-            ],
-            mainRestartRecovery: {
-              schemaVersion: 1,
-              cycleId: "cycle-1",
-              revision: 3,
-              attempts: { charged: 2, lastAt: 3 },
-            },
-            subagentRecovery: {
-              automaticAttempts: 2,
-              lastAttemptAt: 3,
-              wedgedAt: 4,
-              wedgedReason: "automatic_attempt_budget_exceeded",
-            },
-          },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    clearSessionStoreCacheForTest();
+    await seedStore(storePath, {
+      [CANONICAL_KEY]: createRecoveryEntry("recovered-session"),
+    });
 
     await recordInboundSessionMeta({
       storePath,
@@ -243,60 +258,15 @@ describe("session store key normalization", () => {
       ctx: createInboundContext(),
     });
 
-    const store = loadSessionStore(storePath, { skipCache: true });
-    expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(true);
-    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toEqual([
-      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
-      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
-    ]);
-    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
-      schemaVersion: 1,
-      cycleId: "cycle-1",
-      revision: 3,
-      attempts: { charged: 2, lastAt: 3 },
-    });
-    expect(store[CANONICAL_KEY]?.subagentRecovery).toEqual({
-      automaticAttempts: 2,
-      lastAttemptAt: 3,
-      wedgedAt: 4,
-      wedgedReason: "automatic_attempt_budget_exceeded",
-    });
+    const store = loadStore(storePath);
+    expectRecoveryMarkers(store[CANONICAL_KEY]);
     expect(store[CANONICAL_KEY]?.origin?.provider).toBe("webchat");
   });
 
   it("preserves recovery markers when updating the last route", async () => {
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [CANONICAL_KEY]: {
-            sessionId: "route-session",
-            updatedAt: 1,
-            abortedLastRun: true,
-            restartRecoveryRuns: [
-              { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
-              { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
-            ],
-            mainRestartRecovery: {
-              schemaVersion: 1,
-              cycleId: "cycle-1",
-              revision: 3,
-              attempts: { charged: 2, lastAt: 3 },
-            },
-            subagentRecovery: {
-              automaticAttempts: 2,
-              lastAttemptAt: 3,
-              wedgedAt: 4,
-              wedgedReason: "automatic_attempt_budget_exceeded",
-            },
-          },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-    clearSessionStoreCacheForTest();
+    await seedStore(storePath, {
+      [CANONICAL_KEY]: createRecoveryEntry("route-session"),
+    });
 
     await updateSessionLastRoute({
       storePath,
@@ -305,24 +275,8 @@ describe("session store key normalization", () => {
       to: "webchat:user-1",
     });
 
-    const store = loadSessionStore(storePath, { skipCache: true });
-    expect(store[CANONICAL_KEY]?.abortedLastRun).toBe(true);
-    expect(store[CANONICAL_KEY]?.restartRecoveryRuns).toEqual([
-      { runId: "initial-wedged-run", lifecycleGeneration: "gen-1" },
-      { runId: "recovery-run-1", lifecycleGeneration: "gen-2" },
-    ]);
-    expect(store[CANONICAL_KEY]?.mainRestartRecovery).toEqual({
-      schemaVersion: 1,
-      cycleId: "cycle-1",
-      revision: 3,
-      attempts: { charged: 2, lastAt: 3 },
-    });
-    expect(store[CANONICAL_KEY]?.subagentRecovery).toEqual({
-      automaticAttempts: 2,
-      lastAttemptAt: 3,
-      wedgedAt: 4,
-      wedgedReason: "automatic_attempt_budget_exceeded",
-    });
+    const store = loadStore(storePath);
+    expectRecoveryMarkers(store[CANONICAL_KEY]);
     expect(store[CANONICAL_KEY]?.lastTo).toBe("webchat:user-1");
   });
 

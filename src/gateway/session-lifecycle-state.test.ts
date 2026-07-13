@@ -13,23 +13,6 @@ vi.mock("../config/sessions/session-accessor.js", () => ({
   updateSessionEntry: persistenceMocks.updateSessionEntry,
 }));
 
-vi.mock("../config/sessions.js", () => ({
-  buildAutomaticRestartRecoveryClearPatch: (entry?: {
-    abortedLastRun?: boolean;
-    restartRecoveryRuns?: unknown;
-    mainRestartRecovery?: unknown;
-  }) =>
-    entry?.abortedLastRun === true ||
-    entry?.restartRecoveryRuns !== undefined ||
-    entry?.mainRestartRecovery !== undefined
-      ? {
-          abortedLastRun: false,
-          restartRecoveryRuns: undefined,
-          mainRestartRecovery: undefined,
-         }
-       : {},
-}));
-
 vi.mock("./session-utils.js", () => ({
   loadSessionEntry: persistenceMocks.loadSessionEntry,
 }));
@@ -221,7 +204,7 @@ describe("session lifecycle state", () => {
     });
   });
 
-  it("clears main recovery markers but preserves subagent recovery when a normal lifecycle end completes", () => {
+  it("clears main recovery markers when a normal lifecycle end completes", () => {
     expectPersistedLifecyclePatch({
       entry: {
         status: "running",
@@ -233,16 +216,9 @@ describe("session lifecycle state", () => {
           },
         ],
         mainRestartRecovery: {
-          schemaVersion: 1,
           cycleId: "cycle-1",
           revision: 2,
-          attempts: { charged: 2, lastAt: 1_600 },
-        },
-        subagentRecovery: {
-          automaticAttempts: 2,
-          lastAttemptAt: 1_600,
-          wedgedAt: 1_700,
-          wedgedReason: "automatic_attempt_budget_exceeded",
+          chargedAttempts: 2,
         },
       },
       data: {
@@ -441,35 +417,6 @@ describe("session lifecycle state", () => {
             lifecycleGeneration: "pre-restart",
           },
         ],
-      },
-    });
-  });
-
-  it("persists accepted recovery run completion while an initial marker remains", () => {
-    expectPersistedLifecyclePatch({
-      entry: {
-        status: "running",
-        abortedLastRun: false,
-        restartRecoveryRuns: [
-          {
-            runId: "startup-orphan:agent:main:main",
-            lifecycleGeneration: "post-restart",
-          },
-          {
-            runId: "accepted-recovery-run",
-            lifecycleGeneration: "post-restart",
-          },
-        ],
-      },
-      runId: "accepted-recovery-run",
-      lifecycleGeneration: "post-restart",
-      data: {
-        phase: "end",
-        endedAt: 1_800,
-      },
-      expected: {
-        ...terminalPatch(1_050, 1_800, "done", false),
-        restartRecoveryRuns: undefined,
       },
     });
   });

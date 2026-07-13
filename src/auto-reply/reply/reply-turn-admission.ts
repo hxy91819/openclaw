@@ -10,11 +10,11 @@ import { loadSessionEntry } from "../../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   getDiagnosticSessionActivitySnapshot,
   resolveRunStaleThresholdMs,
 } from "../../logging/diagnostic-run-activity.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   beginSessionWorkAdmission,
   type SessionWorkAdmissionLease,

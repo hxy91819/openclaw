@@ -1133,27 +1133,6 @@ async function recoverStore(params: {
       continue;
     }
 
-    if (recoveryEntry.pendingFinalDelivery === true && recoveryEntry.pendingFinalDeliveryText) {
-      const resumeResult = await resumeMainSession({
-        cfg: params.cfg,
-        entry: recoveryEntry,
-        observation: recoveryView.observation,
-        recoveryAttempt: recoveryView.nextAttempt,
-        storePath: params.storePath,
-        sessionKey,
-        forceRestartSafeTools: recoveryEntry.restartRecoveryForceSafeTools === true,
-      });
-      if (resumeResult === "resumed") {
-        params.resumedSessionKeys.add(resumeDedupeKey);
-        result.recovered++;
-      } else if (resumeResult === "skipped") {
-        result.skipped++;
-      } else {
-        result.failed++;
-      }
-      continue;
-    }
-
     let messages: unknown[];
     try {
       messages = await readSessionMessagesAsync(
