@@ -14,13 +14,12 @@ import type { ChannelRouteRef } from "../../plugin-sdk/channel-route.js";
 import type { Skill } from "../../skills/loading/skill-contract.js";
 import type { DeliveryContext } from "../../utils/delivery-context.types.js";
 import type { TtsAutoMode } from "../types.tts.js";
+import type { MainRestartRecoveryState } from "./main-session-recovery.types.js";
 import type { SessionRestartRecoveryState } from "./restart-recovery-types.js";
 import { rewriteSessionFileForNewSessionId } from "./session-file-rotation.js";
 
 export type SessionScope = "per-sender" | "global";
-
 export type SessionChannelId = ChannelId;
-
 export type SessionChatType = ChatType;
 
 export type SessionOrigin = {
@@ -502,12 +501,9 @@ export type SessionEntry = SessionRestartRecoveryState & {
   acp?: SessionAcpMeta;
 };
 
-export function isTerminalSessionStatus(
-  status: unknown,
-): status is Exclude<NonNullable<SessionEntry["status"]>, "running"> {
-  return status === "done" || status === "failed" || status === "killed" || status === "timeout";
-}
-
+export type InternalSessionEntry = SessionEntry & {
+  mainRestartRecovery?: MainRestartRecoveryState;
+};
 function isSessionPluginTraceLine(line: string): boolean {
   const trimmed = line.trim();
   return trimmed.startsWith("🔎 ") || /(?:^|\s)(?:Debug|Trace):/.test(trimmed);

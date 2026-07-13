@@ -2,6 +2,7 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerExecApprovalFollowupRuntimeHandoff } from "../../agents/bash-tools.exec-approval-followup-state.js";
+import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import { setGatewayDedupeEntry } from "./agent-job.js";
 import {
   getAgentTestMocks,
@@ -1996,6 +1997,88 @@ describe("gateway agent handler chat.abort integration", () => {
     expectRecordFields(errorArgs[1], { runId, status: "error" });
     expectRecordFields(errorArgs[2], { code: "UNAVAILABLE" });
     expectRecordFields(errorArgs[3], { runId });
+  });
+
+  it("restores admitted restart recovery if pre-dispatch reactivation fails", async () => {
+    const sessionKey = "agent:main:main";
+    const sessionId = "recovery-session";
+    const runId = "recovery-reactivation-fails";
+    const storePath = "/tmp/sessions.json";
+    const store: Record<string, SessionEntry> = {
+      [sessionKey]: {
+        sessionId,
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          cycleId: "cycle-1",
+          revision: 1,
+          chargedAttempts: 1,
+          reservation: {
+            runId,
+            attempt: 1,
+            lifecycleGeneration: "test-generation",
+          },
+        },
+      },
+    };
+    mocks.loadSessionEntry.mockImplementation(() => ({
+      cfg: {},
+      storePath,
+      entry: structuredClone(store[sessionKey]),
+      canonicalKey: sessionKey,
+    }));
+    mocks.updateSessionStore.mockImplementation(async (_path, updater) => await updater(store));
+    mocks.getLatestSubagentRunByChildSessionKey.mockReturnValueOnce({
+      runId: "previous-run",
+      childSessionKey: sessionKey,
+      controllerSessionKey: sessionKey,
+      ownerKey: sessionKey,
+      scopeKind: "session",
+      requesterDisplayKey: "main",
+      task: "old task",
+      cleanup: "keep",
+      createdAt: 1,
+      startedAt: 2,
+      endedAt: 3,
+      outcome: { status: "ok" },
+    });
+    mocks.replaceSubagentRunAfterSteer.mockRejectedValueOnce(new Error("reactivate boom"));
+
+    const respond = vi.fn();
+    await invokeAgent(
+      {
+        message: "resume after restart",
+        agentId: "main",
+        sessionKey,
+        sessionId,
+        expectedExistingSessionId: sessionId,
+        idempotencyKey: runId,
+        inputProvenance: {
+          kind: "internal_system",
+          sourceSessionKey: sessionKey,
+          sourceTool: "main_session_restart_recovery",
+        },
+      },
+      { client: backendGatewayClient(), reqId: runId, respond },
+    );
+
+    expect(mocks.agentCommand).not.toHaveBeenCalled();
+    expect(store[sessionKey]).toMatchObject({
+      sessionId,
+      status: "running",
+      abortedLastRun: true,
+      mainRestartRecovery: {
+        chargedAttempts: 1,
+      },
+    });
+    expect(store[sessionKey]?.mainRestartRecovery?.reservation).toBeUndefined();
+    expect(
+      respond.mock.calls.some(
+        ([ok, payload]) =>
+          ok === false && (payload as { runId?: string; status?: string })?.runId === runId,
+      ),
+    ).toBe(true);
   });
 
   it("does not dispatch a duplicate agent run when dedupe was evicted but the run is active", async () => {

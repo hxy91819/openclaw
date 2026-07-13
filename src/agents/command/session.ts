@@ -41,6 +41,7 @@ import { resolveSessionIdMatchSelection } from "../../sessions/session-id-resolu
 import { listAgentIds, resolveDefaultAgentId } from "../agent-scope.js";
 import { clearBootstrapSnapshotOnSessionRollover } from "../bootstrap-cache.js";
 import { clearAllCliSessions } from "../cli-session.js";
+import { transitionMainSessionRecovery } from "../main-session-recovery-state.js";
 
 /** Resolved command session identity plus backing store metadata. */
 type SessionResolution = {
@@ -78,6 +79,7 @@ export function clearRotatedSessionMetadata(entry: SessionEntry): SessionEntry {
     sessionStartedAt: undefined,
     lastInteractionAt: undefined,
   };
+  transitionMainSessionRecovery(next, { kind: "clear" });
   clearAllCliSessions(next);
   return next;
 }

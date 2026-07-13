@@ -256,7 +256,6 @@ function isSecureWebSocketUrl(rawUrl: string, options?: { allowPrivateWs?: boole
 }
 
 export type GatewayClientRequestOptions = GatewayProtocolRequestOptions;
-
 type AssembledConnect = {
   params: ConnectParams;
   authApprovalRuntimeToken: string | undefined;
@@ -1245,6 +1244,7 @@ export class GatewayClient {
       expectFinal,
       timeoutMs,
       signal: opts?.signal,
+      onDispatched: opts?.onDispatched,
       onAccepted: opts?.onAccepted,
     });
   }

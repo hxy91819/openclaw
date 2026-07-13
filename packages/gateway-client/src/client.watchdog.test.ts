@@ -500,16 +500,62 @@ describe("GatewayClient", () => {
       throw new Error("synthetic send failure");
     });
 
-    await expect(client.request("status")).rejects.toThrow("synthetic send failure");
+    const onDispatched = vi.fn();
+    await expect(client.request("status", undefined, { onDispatched })).rejects.toThrow(
+      "synthetic send failure",
+    );
+    expect(onDispatched).not.toHaveBeenCalled();
     expect(getPendingCount(client)).toBe(0);
+  });
+
+  test("does not auto-timeout expectFinal requests", async () => {
+    vi.useFakeTimers();
+    try {
+      const { client, send } = createOpenGatewayClient(25);
+
+      const requestPromise = client.request("chat.send", undefined, { expectFinal: true });
+      const isSettled = trackSettlement(requestPromise);
+      expect(send).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(25);
+
+      expect(isSettled()).toBe(false);
+      expect(getPendingCount(client)).toBe(1);
+
+      client.stop();
+      await expect(requestPromise).rejects.toThrow("gateway client stopped");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("keeps waiting for a dispatched request when its notification callback throws", async () => {
+    const { client, send } = createOpenGatewayClient(25);
+
+    const requestPromise = client.request<{ ok: boolean }>("status", undefined, {
+      onDispatched: () => {
+        throw new Error("synthetic callback failure");
+      },
+    });
+    const frame = JSON.parse(String(send.mock.calls[0]?.[0])) as { id: string };
+    handleGatewayMessage(client, {
+      type: "res",
+      id: frame.id,
+      ok: true,
+      payload: { ok: true },
+    });
+
+    await expect(requestPromise).resolves.toEqual({ ok: true });
   });
 
   test("notifies accepted expectFinal requests while continuing to wait for final", async () => {
     const { client, send } = createOpenGatewayClient(25);
 
     const onAccepted = vi.fn();
+    const onDispatched = vi.fn();
     const requestPromise = client.request<{ status: string }>("agent", undefined, {
       expectFinal: true,
+      onDispatched,
       onAccepted,
     });
     const frame = JSON.parse(String(send.mock.calls[0]?.[0])) as { id: string };
@@ -521,6 +567,7 @@ describe("GatewayClient", () => {
       payload: { status: "accepted", runId: "run-1" },
     });
 
+    expect(onDispatched).toHaveBeenCalledOnce();
     expect(onAccepted).toHaveBeenCalledWith({ status: "accepted", runId: "run-1" });
     expect(getPendingCount(client)).toBe(1);
 

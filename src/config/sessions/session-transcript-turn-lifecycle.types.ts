@@ -5,6 +5,9 @@ type SessionRunStatus = "running" | "done" | "failed" | "killed" | "timeout";
 /** Authoritative lifecycle snapshot required for an atomic transcript admission. */
 export type SessionTranscriptTurnExpectedState = {
   abortedLastRun: boolean | undefined;
+  /** Fences recovery-only transcript writes against concurrent ownership changes. */
+  mainRestartRecoveryCycleId?: string;
+  mainRestartRecoveryRevision?: number;
   restartRecoveryDeliveryRequestFingerprint: SessionRestartRecoveryState["restartRecoveryDeliveryRequestFingerprint"];
   restartRecoveryDeliveryRunId: SessionRestartRecoveryState["restartRecoveryDeliveryRunId"];
   restartRecoveryDeliverySourceRunId: SessionRestartRecoveryState["restartRecoveryDeliverySourceRunId"];
