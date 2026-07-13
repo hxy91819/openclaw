@@ -34,8 +34,8 @@ import { normalizeResolvedMaintenanceConfigInput } from "../config/sessions/stor
 import type { ResolvedSessionMaintenanceConfigInput } from "../config/sessions/store.js";
 import type {
   AmbientTranscriptWatermark,
-  PluginSessionEntry as SessionEntry,
-  SessionEntry as InternalSessionEntry,
+  InternalSessionEntry,
+  SessionEntry,
 } from "../config/sessions/types.js";
 import { replaceFileAtomicSync } from "../infra/replace-file.js";
 import { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
@@ -421,6 +421,7 @@ export async function patchSessionEntry(
   const entry = await patchAccessorSessionEntry(
     toSessionAccessScope(params),
     async (internalEntry, context) => {
+      const persistedEntry = internalEntry as InternalSessionEntry;
       const patch = await params.update(projectPluginSessionEntry(internalEntry), {
         existingEntry: context.existingEntry
           ? projectPluginSessionEntry(context.existingEntry)
@@ -433,7 +434,7 @@ export async function patchSessionEntry(
       return params.replaceEntry
         ? {
             ...publicPatch,
-            mainRestartRecovery: internalEntry.mainRestartRecovery,
+            mainRestartRecovery: persistedEntry.mainRestartRecovery,
           }
         : publicPatch;
     },
@@ -495,10 +496,13 @@ export async function upsertSessionEntry(params: UpsertSessionEntryParams): Prom
   const publicEntry = projectPluginSessionEntry(params.entry);
   await patchAccessorSessionEntry(
     toSessionAccessScope(params),
-    (internalEntry) => ({
-      ...publicEntry,
-      mainRestartRecovery: internalEntry.mainRestartRecovery,
-    }),
+    (internalEntry) => {
+      const persistedEntry = internalEntry as InternalSessionEntry;
+      return {
+        ...publicEntry,
+        mainRestartRecovery: persistedEntry.mainRestartRecovery,
+      };
+    },
     { fallbackEntry: publicEntry, replaceEntry: true },
   );
 }
@@ -593,5 +597,5 @@ export {
   resolveThreadFlag,
 } from "../config/sessions/reset.js";
 export { resolveSendPolicy } from "../sessions/send-policy.js";
-export type { PluginSessionEntry as SessionEntry } from "../config/sessions/types.js";
+export type { SessionEntry } from "../config/sessions/types.js";
 export type { SessionScope } from "../config/sessions/types.js";

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import type { SessionEntry } from "./types.js";
+import type { InternalSessionEntry as SessionEntry } from "./types.js";
 
 type SessionEntryRecord = Partial<Record<keyof SessionEntry, unknown>>;
 

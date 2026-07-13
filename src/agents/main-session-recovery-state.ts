@@ -3,9 +3,9 @@ import {
   sanitizePendingFinalDeliveryText,
 } from "../auto-reply/reply/pending-final-delivery.js";
 import type {
+  InternalSessionEntry as SessionEntry,
   MainRestartRecoveryState,
   RestartRecoveryRun,
-  SessionEntry,
 } from "../config/sessions.js";
 import { isAcpSessionKey, isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
 

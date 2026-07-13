@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { expect, test, vi } from "vitest";
 import { listSessionEntries, loadSessionEntry } from "../config/sessions/session-accessor.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
 import { beginSessionWorkAdmission } from "../sessions/session-lifecycle-admission.js";
 import { embeddedRunMock, testState, writeSessionStore } from "./test-helpers.js";
 import {
@@ -384,7 +385,7 @@ test("sessions.reset removes automatic recovery state from the replacement sessi
   expect(replacement?.sessionId).not.toBe("sess-recovery");
   expect(replacement?.abortedLastRun).toBe(false);
   expect(replacement?.restartRecoveryRuns).toBeUndefined();
-  expect(replacement?.mainRestartRecovery).toBeUndefined();
+  expect((replacement as InternalSessionEntry | undefined)?.mainRestartRecovery).toBeUndefined();
   expect(replacement?.subagentRecovery).toBeUndefined();
 });
 

@@ -16,7 +16,7 @@ import { formatCliCommand } from "../cli/command-format.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import { getRuntimeConfig } from "../config/io.js";
 import { resolveSessionWorkStartError } from "../config/sessions/lifecycle.js";
-import type { SessionEntry } from "../config/sessions/types.js";
+import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withLocalGatewayRequestScope } from "../gateway/local-request-context.js";
 import {
@@ -141,8 +141,11 @@ import {
 } from "./internal-session-effects.js";
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
 import { LiveSessionModelSwitchError } from "./live-model-switch.js";
-import type { MainSessionRecoveryOwnerLease } from "./main-session-recovery-state.js";
-import { commitMainSessionRecovery } from "./main-session-recovery-store.js";
+import {
+  claimMainSessionRecoveryOwner,
+  releaseMainSessionRecoveryOwner,
+  type MainSessionRecoveryOwnerLease,
+} from "./main-session-recovery-store.js";
 import { loadManifestModelCatalog } from "./model-catalog.js";
 import { runWithModelFallback } from "./model-fallback.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
@@ -671,6 +674,7 @@ function resolveExplicitAgentCommandSessionKey(params: {
   });
 }
 
+
 async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: RuntimeEnv) {
   const isRawModelRun = opts.modelRun === true || opts.promptMode === "none";
   const message = opts.message ?? "";
@@ -935,7 +939,7 @@ async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: Run
     const transcriptBody =
       opts.transcriptMessage ?? resolveInternalEventTranscriptBody(message, opts.internalEvents);
 
-    return {
+    const prepared = {
       opts: commandOpts,
       body,
       transcriptBody,
@@ -970,6 +974,7 @@ async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: Run
       acpResolution,
       runLease,
     };
+    return prepared;
   } catch (error) {
     await runLease?.release();
     throw error;
@@ -977,10 +982,6 @@ async function prepareAgentCommandExecution(opts: AgentCommandOpts, runtime: Run
 }
 
 type PreparedAgentCommandExecution = Awaited<ReturnType<typeof prepareAgentCommandExecution>>;
-type PublicPreparedAgentCommandExecution = Omit<
-  PreparedAgentCommandExecution,
-  "recoveryCandidateEntry"
->;
 
 async function agentCommandInternal(
   initialOpts: AgentCommandOpts,
@@ -3059,33 +3060,21 @@ async function claimIngressMainSessionRecoveryOwner(params: {
   ) {
     return undefined;
   }
-  const claim = await commitMainSessionRecovery({
-    command: {
-      kind: "claim_foreground",
-      cycleId: randomUUID(),
-      lifecycleGeneration: params.lifecycleGeneration,
-      sessionId: entry.sessionId,
-      sessionKey: resolved.sessionKey,
-      storePath: resolved.storePath,
-      token: randomUUID(),
-    },
-    requireWriteSuccess: true,
+  const claim = await claimMainSessionRecoveryOwner({
+    lifecycleGeneration: params.lifecycleGeneration,
+    sessionId: entry.sessionId,
     target: { sessionKey: resolved.sessionKey, storePath: resolved.storePath },
   });
-  return claim.transition.kind === "foreground_claimed" ? claim.transition.lease : undefined;
+  if (claim.kind === "invalidated") {
+    throw new Error(`main-session recovery owner changed during admission (${claim.reason}); retry`);
+  }
+  return claim.kind === "claimed" ? claim.lease : undefined;
 }
 
 async function releaseIngressMainSessionRecoveryOwner(
   lease: MainSessionRecoveryOwnerLease | undefined,
 ): Promise<void> {
-  if (!lease) {
-    return;
-  }
-  await commitMainSessionRecovery({
-    command: { kind: "release_foreground", lease },
-    requireWriteSuccess: true,
-    target: lease,
-  });
+  await releaseMainSessionRecoveryOwner(lease);
 }
 
 /** Runs an agent turn from an inbound channel/gateway ingress context. */
@@ -3132,18 +3121,9 @@ export async function agentCommandFromIngress(
   }
 }
 
-async function prepareAgentCommandExecutionForTesting(
-  opts: AgentCommandOpts,
-  runtime: RuntimeEnv,
-): Promise<PublicPreparedAgentCommandExecution> {
-  const { recoveryCandidateEntry: _recoveryCandidateEntry, ...prepared } =
-    await prepareAgentCommandExecution(opts, runtime);
-  return prepared;
-}
-
 export const testing = {
   resolveAgentRuntimeConfig,
-  prepareAgentCommandExecution: prepareAgentCommandExecutionForTesting,
+  prepareAgentCommandExecution,
   resolveExplicitAgentCommandSessionKey,
   resolveAgentRunLifecycleEndLogLevel,
   ingressDiagnosticChannel,

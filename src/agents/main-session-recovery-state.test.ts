@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { MainRestartRecoveryState, SessionEntry } from "../config/sessions.js";
+import type {
+  InternalSessionEntry as SessionEntry,
+  MainRestartRecoveryState,
+} from "../config/sessions.js";
 import {
   buildMainSessionRecoveryClearPatch,
   inspectMainSessionRecoveryHealth,

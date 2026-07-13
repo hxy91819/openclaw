@@ -8,6 +8,7 @@ import {
   loadSessionEntry as loadInternalSessionEntry,
   replaceSessionEntry as replaceInternalSessionEntry,
 } from "../config/sessions/session-accessor.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
 import type { SessionEntry as ConfigSessionEntry } from "./config-types.js";
 import {
   cleanupSessionLifecycleArtifacts,
@@ -506,15 +507,12 @@ describe("session-store-runtime compatibility surface", () => {
       },
       revision: 1,
     };
-    await replaceInternalSessionEntry(
-      { sessionKey, storePath },
-      {
-        mainRestartRecovery,
-        model: "gpt-5.5",
-        sessionId: "session-recovery",
-        updatedAt: 10,
-      },
-    );
+    await replaceInternalSessionEntry({ sessionKey, storePath }, {
+      mainRestartRecovery,
+      model: "gpt-5.5",
+      sessionId: "session-recovery",
+      updatedAt: 10,
+    } as InternalSessionEntry);
 
     expect(getSessionEntry({ sessionKey, storePath })).not.toHaveProperty("mainRestartRecovery");
     expect(listSessionEntries({ storePath })[0]?.entry).not.toHaveProperty("mainRestartRecovery");

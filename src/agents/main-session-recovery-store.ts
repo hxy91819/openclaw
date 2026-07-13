@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SessionEntry } from "../config/sessions.js";
+import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
 import { applySessionEntryReplacements } from "../config/sessions/session-accessor.js";
 import { getAgentEventLifecycleGeneration } from "../infra/agent-events.js";
 import { retryAsync } from "../infra/retry.js";
@@ -108,7 +108,7 @@ export async function commitMainSessionRecovery(params: {
           },
         };
       }
-      const entry = candidate.entry;
+      const entry = candidate.entry as SessionEntry;
       const previousRecoveryState = entry.mainRestartRecovery;
       const command =
         ownerClaim && ownerClaim.sessionKey !== candidate.sessionKey

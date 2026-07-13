@@ -328,8 +328,6 @@ export type SessionEntry = {
   restartRecoveryRuns?: RestartRecoveryRun[];
   /** Keeps automatic restart recovery limited to replay-safe tools until the run terminates. */
   restartRecoveryForceSafeTools?: true;
-  /** Durable coordination state for automatic main-session restart recovery. */
-  mainRestartRecovery?: MainRestartRecoveryState;
   /** Durable guard state for automatic subagent orphan recovery. */
   subagentRecovery?: SubagentRecoveryState;
   /** Quota cascade protection and state-aware failover status. */
@@ -528,8 +526,11 @@ export type SessionEntry = {
   acp?: SessionAcpMeta;
 };
 
-/** Session metadata visible to plugins; core-owned coordination state stays private. */
-export type PluginSessionEntry = Omit<SessionEntry, "mainRestartRecovery">;
+/** Internal persisted session row, including core-owned recovery coordination state. */
+export type InternalSessionEntry = SessionEntry & {
+  /** Durable coordination state for automatic main-session restart recovery. */
+  mainRestartRecovery?: MainRestartRecoveryState;
+};
 
 export function isTerminalSessionStatus(
   status: unknown,

@@ -9,7 +9,7 @@ import {
   recordInboundSessionMeta,
   updateSessionLastRoute,
 } from "./session-accessor.js";
-import type { SessionEntry } from "./types.js";
+import type { InternalSessionEntry as SessionEntry } from "./types.js";
 
 // Materializes the SQLite-backed session store as a keyed object so key
 // normalization/migration assertions keep matching the old JSON-store shape.

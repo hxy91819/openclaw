@@ -13,7 +13,7 @@ import {
   loadExactSessionEntry,
   replaceSessionEntrySync,
 } from "../config/sessions/session-accessor.js";
-import type { SessionEntry } from "../config/sessions/types.js";
+import type { InternalSessionEntry as SessionEntry } from "../config/sessions/types.js";
 import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../test-utils/env.js";
 import {
   clearTuiLastSessionPointers,
@@ -475,11 +475,13 @@ describe("doctor state integrity oauth dir checks", () => {
       storePath,
     })?.entry;
     expect(persistedStale?.abortedLastRun).toBe(false);
-    expect(persistedStale?.mainRestartRecovery?.tombstone?.reason).toBe("stale main tombstone");
+    expect(
+      (persistedStale as SessionEntry | undefined)?.mainRestartRecovery?.tombstone?.reason,
+    ).toBe("stale main tombstone");
     expect(persistedCanonical?.abortedLastRun).not.toBe(true);
-    expect(persistedCanonical?.mainRestartRecovery?.tombstone?.reason).toBe(
-      "canonical main tombstone",
-    );
+    expect(
+      (persistedCanonical as SessionEntry | undefined)?.mainRestartRecovery?.tombstone?.reason,
+    ).toBe("canonical main tombstone");
     expect(persistedCanonical?.updatedAt).toBe(canonicalUpdatedAt);
     expect(doctorChangesText()).toContain("1 wedged main session");
   });
