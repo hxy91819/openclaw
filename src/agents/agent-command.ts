@@ -467,6 +467,7 @@ function clearPendingFinalDeliveryFields(entry: SessionEntry, updatedAt: number)
   return {
     ...entry,
     ...PENDING_FINAL_DELIVERY_CLEAR_PATCH,
+    restartRecoveryForceSafeTools: undefined,
     updatedAt,
   };
 }
