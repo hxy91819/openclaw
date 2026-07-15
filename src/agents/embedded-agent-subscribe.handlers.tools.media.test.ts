@@ -77,6 +77,7 @@ function createMockContext(overrides?: {
     recordAssistantUsage: vi.fn(),
     incrementCompactionCount: vi.fn(),
     getUsageTotals: vi.fn(() => undefined),
+    getLastAssistantUsage: vi.fn(() => undefined),
     getCompactionCount: vi.fn(() => 0),
   } as unknown as EmbeddedAgentSubscribeContext;
 }

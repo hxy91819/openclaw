@@ -7,7 +7,7 @@ import type { subscribeEmbeddedAgentSession } from "../../embedded-agent-subscri
 import type { AgentMessage } from "../../runtime/index.js";
 import type { AgentSession, SessionManager } from "../../sessions/index.js";
 import { projectToolSearchTargetTranscriptMessages } from "../../tool-search.js";
-import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
+import type { NormalizedUsage } from "../../usage.js";
 import { isRunnerAbortError } from "../abort.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
 import { log } from "../logger.js";
@@ -28,6 +28,7 @@ import {
 import {
   buildContextEnginePromptCacheInfo,
   findCurrentAttemptAssistantMessage,
+  findLatestCurrentAttemptUsageSnapshot,
   resolvePromptCacheTouchTimestamp,
 } from "./attempt.context-engine-helpers.js";
 import type { createEmbeddedAttemptSessionLockController } from "./attempt.session-lock.js";
@@ -294,7 +295,11 @@ export async function settleEmbeddedAttemptStream(input: {
           usage: attemptUsage,
         })
       : null;
-    lastCallUsage = normalizeUsage(currentAttemptAssistant?.usage);
+    const latestUsageSnapshot = findLatestCurrentAttemptUsageSnapshot({
+      messagesSnapshot,
+      prePromptMessageCount: input.prePromptMessageCount,
+    });
+    lastCallUsage = subscription.getLastAssistantUsage() ?? latestUsageSnapshot?.usage;
     const promptCacheObservation =
       input.cache.observabilityEnabled &&
       (cacheBreak || input.cache.changesForTurn || typeof attemptUsage?.cacheRead === "number")
@@ -321,7 +326,7 @@ export async function settleEmbeddedAttemptStream(input: {
       observation: promptCacheObservation,
       lastCacheTouchAt: resolvePromptCacheTouchTimestamp({
         lastCallUsage,
-        assistantTimestamp: currentAttemptAssistant?.timestamp,
+        assistantTimestamp: latestUsageSnapshot?.assistant.timestamp,
         fallbackLastCacheTouchAt,
       }),
     });

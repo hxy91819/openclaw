@@ -253,6 +253,7 @@ export type EmbeddedAgentSubscribeContext = {
   incrementCompactionCount: () => void;
   noteCompactionTokensAfter: (value: unknown) => void;
   getUsageTotals: () => NormalizedUsage | undefined;
+  getLastAssistantUsage: () => NormalizedUsage | undefined;
   getCompactionCount: () => number;
   getLastCompactionTokensAfter: () => number | undefined;
   emitAssistantStreamData: (
