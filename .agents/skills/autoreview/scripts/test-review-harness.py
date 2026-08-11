@@ -160,9 +160,64 @@ def validate_prompt_policy(repo: Path, autoreview: Path) -> None:
         raise RuntimeError(f"autoreview prompt missing scope policy: {missing}")
 
 
+def validate_codex_binary_resolution(repo: Path, autoreview: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="autoreview-bin.") as tempdir:
+        bin_dir = Path(tempdir)
+        fake_codex = bin_dir / ("fake-codex.py" if os.name == "nt" else "codex")
+        fake_codex.write_text(
+            """#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+
+output_arg = sys.argv.index("--output-last-message") + 1
+report = {
+    "findings": [],
+    "overall_correctness": "patch is correct",
+    "overall_explanation": "Fake Codex resolved from PATH.",
+    "overall_confidence": 1,
+}
+pathlib.Path(sys.argv[output_arg]).write_text(json.dumps(report))
+""",
+            encoding="utf-8",
+        )
+        if os.name == "nt":
+            codex = bin_dir / "codex.cmd"
+            codex.write_text(f'@"{sys.executable}" "%~dp0fake-codex.py" %*\r\n', encoding="utf-8")
+        else:
+            fake_codex.chmod(fake_codex.stat().st_mode | stat.S_IXUSR)
+
+        env = os.environ.copy()
+        env["PATH"] = os.pathsep.join((str(bin_dir), env.get("PATH", "")))
+        env["CODEX_BIN"] = str(bin_dir / "missing-host-codex")
+        env.pop("AUTOREVIEW_CODEX_BIN", None)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(autoreview),
+                "--mode",
+                "local",
+                "--engine",
+                "codex",
+                "--no-web-search",
+            ],
+            cwd=repo,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if result.returncode != 0 or "autoreview clean" not in result.stdout:
+            raise RuntimeError(
+                "autoreview did not resolve bare codex from PATH while ignoring ambient CODEX_BIN:\n"
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            )
+
+
 def run_reviews(repo: Path, script_dir: Path, fixture: str, engines: list[str]) -> None:
     autoreview = script_dir / "autoreview"
     validate_prompt_policy(repo, autoreview)
+    validate_codex_binary_resolution(repo, autoreview)
     for engine in engines:
         print(f"== {engine} ==", flush=True)
         command = [

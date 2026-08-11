@@ -1012,7 +1012,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", action="append", help="Model for all reviewers or engine=model. Repeatable.")
     parser.add_argument("--thinking", action="append", help="Thinking/effort for all reviewers or engine=level. Repeatable. Codex: low, medium, high, xhigh. Claude: low, medium, high, xhigh, max.")
     parser.add_argument("--allow-partial-panel", action="store_true", help="Continue panel output when one reviewer fails.")
-    parser.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", "codex"))
+    parser.add_argument(
+        "--codex-bin",
+        default=os.environ.get("AUTOREVIEW_CODEX_BIN", "codex"),
+        help="Codex executable. Defaults to AUTOREVIEW_CODEX_BIN or codex from PATH.",
+    )
     parser.add_argument("--claude-bin", default=os.environ.get("CLAUDE_BIN", "claude"))
     parser.add_argument("--droid-bin", default=os.environ.get("DROID_BIN", "droid"))
     parser.add_argument("--copilot-bin", default=os.environ.get("COPILOT_BIN", "copilot"))
