@@ -758,9 +758,9 @@ describe("plugin registry runtime config scope", () => {
       }),
     ).resolves.toMatchObject(reservedEntry);
     await expect(ownerApi.runtime.agent.runEmbeddedAgent(runParams)).resolves.toEqual({ ok: true });
-    await expect(
-      ownerApi.runtime.agent.runEmbeddedAgent(forgedHostOnlyRunParams),
-    ).resolves.toEqual({ ok: true });
+    await expect(ownerApi.runtime.agent.runEmbeddedAgent(forgedHostOnlyRunParams)).resolves.toEqual(
+      { ok: true },
+    );
     expect(runEmbeddedAgent).toHaveBeenLastCalledWith({
       ...runParams,
       onDeferredLifecycleOwner: undefined,
