@@ -10,6 +10,7 @@ import {
   packOpenClawPackageForDocker,
   parseArgs,
   runCommandForTest,
+  usage,
 } from "../../scripts/package-openclaw-for-docker.mjs";
 
 function isProcessAlive(pid: number): boolean {
@@ -73,27 +74,39 @@ describe("package-openclaw-for-docker", () => {
   it("parses package artifact output options", () => {
     expect(
       parseArgs([
+        "--",
         "--output-dir",
         ".artifacts/docker",
         "--output-name=openclaw-current.tgz",
         "--source-dir",
         "/repo",
+        "--profile",
+        "ciArtifacts",
         "--skip-build",
       ]),
     ).toEqual({
+      help: false,
       outputDir: ".artifacts/docker",
       outputName: "openclaw-current.tgz",
+      profile: "ciArtifacts",
       skipBuild: true,
       sourceDir: "/repo",
     });
   });
 
   it("rejects missing package artifact option values", () => {
-    for (const flag of ["--output-dir", "--output-name", "--source-dir"]) {
+    for (const flag of ["--output-dir", "--output-name", "--profile", "--source-dir"]) {
       expect(() => parseArgs([flag])).toThrow(`${flag} requires a value`);
       expect(() => parseArgs([flag, "--skip-build"])).toThrow(`${flag} requires a value`);
       expect(() => parseArgs([`${flag}=`])).toThrow(`${flag} requires a value`);
     }
+  });
+
+  it("documents the fast package command contract", () => {
+    expect(parseArgs(["--help"]).help).toBe(true);
+    expect(usage()).toContain("npm --ignore-scripts");
+    expect(usage()).toContain("--skip-build");
+    expect(usage()).toContain("stdout: absolute path to the generated tarball.");
   });
 
   it("uses build-all as the single bounded package artifact build step", async () => {
@@ -110,6 +123,7 @@ describe("package-openclaw-for-docker", () => {
 
     try {
       await buildPackageArtifacts("/repo", {
+        profile: "ciArtifacts",
         runImpl: async (
           command: string,
           args: string[],
@@ -137,7 +151,7 @@ describe("package-openclaw-for-docker", () => {
     expect(calls).toEqual([
       {
         command: "node",
-        args: ["scripts/build-all.mjs"],
+        args: ["scripts/build-all.mjs", "ciArtifacts"],
         cwd: "/repo",
         noPnpm: "1",
         skipDts: "1",

@@ -253,6 +253,66 @@ describe("createTelegramBot", () => {
 
   // groupPolicy tests
 
+  it("sends block replies before the final agent result resolves", async () => {
+    loadConfig.mockReturnValue({
+      agents: {
+        defaults: {
+          envelopeTimezone: "utc",
+        },
+      },
+      channels: {
+        telegram: { dmPolicy: "open", allowFrom: ["*"] },
+      },
+    });
+
+    let releaseFinal: (() => void) | undefined;
+    const finalGate = new Promise<void>((resolve) => {
+      releaseFinal = resolve;
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async (params) => {
+      await params.dispatcherOptions.typingCallbacks?.onReplyStart?.();
+      await params.dispatcherOptions.deliver?.(
+        { text: "I'll start working on this now." },
+        { kind: "block" },
+      );
+      await finalGate;
+      await params.dispatcherOptions.deliver?.({ text: "FINAL_DONE" }, { kind: "final" });
+      return { queuedFinal: true, counts: { block: 1, final: 1, tool: 0 } };
+    });
+
+    createTelegramBot({ token: "tok" });
+    const messageHandler = getOnHandler("message") as (
+      ctx: TelegramMiddlewareTestContext,
+    ) => Promise<void>;
+
+    const pending = messageHandler({
+      update: { update_id: 101 },
+      message: {
+        chat: { id: 7, type: "private" },
+        text: "run a tool",
+        date: 1736380800,
+        message_id: 101,
+        from: { id: 42, first_name: "Ada" },
+      },
+      me: { username: "openclaw_bot" },
+      getFile: async () => ({}),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+      });
+      expect(String(sendMessageSpy.mock.calls[0]?.[1] ?? "")).toBe(
+        "I'll start working on this now.",
+      );
+    } finally {
+      releaseFinal?.();
+    }
+    await pending;
+
+    expect(sendMessageSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("installs grammY throttler", () => {
     createTelegramBot({ token: "tok" });
     expect(throttlerSpy).toHaveBeenCalledTimes(1);

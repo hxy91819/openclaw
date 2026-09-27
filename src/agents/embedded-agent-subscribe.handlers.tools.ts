@@ -83,6 +83,7 @@ const beforeToolCallModuleLoader = createLazyImportLoader<BeforeToolCallModule>(
 );
 const LIVE_EXEC_OUTPUT_MAX_CHARS = 8000;
 const LIVE_EXEC_UPDATE_MIN_INTERVAL_MS = 250;
+const PRE_TOOL_PREAMBLE_TEXT = "I'll start working on this now.";
 const TRACE_REQUIRED_PARAM_GROUPS = {
   read: [{ keys: ["path", "file_path"], label: "path" }],
   write: REQUIRED_PARAM_GROUPS.write,
@@ -284,6 +285,31 @@ function emitTrackedItemEvent(ctx: ToolHandlerContext, itemData: AgentItemEventD
     stream: "item",
     data: itemData,
   });
+}
+
+function shouldEmitPreToolPreamble(ctx: ToolHandlerContext, toolName: string): boolean {
+  if (ctx.state.preToolPreambleEmitted) {
+    return false;
+  }
+  if (!ctx.params.onBlockReply) {
+    return false;
+  }
+  if (isMessagingTool(toolName) || toolName === HEARTBEAT_RESPONSE_TOOL_NAME) {
+    return false;
+  }
+  return (
+    ctx.state.itemStartedCount === 0 &&
+    ctx.state.visibleBlockReplyCount === 0 &&
+    !ctx.state.emittedAssistantUpdate
+  );
+}
+
+function maybeEmitPreToolPreamble(ctx: ToolHandlerContext, toolName: string) {
+  if (!shouldEmitPreToolPreamble(ctx, toolName)) {
+    return;
+  }
+  ctx.state.preToolPreambleEmitted = true;
+  ctx.emitBlockReply({ text: PRE_TOOL_PREAMBLE_TEXT }, { bypassDefer: true });
 }
 
 function readToolResultDetailsRecord(result: unknown): Record<string, unknown> | undefined {
@@ -875,6 +901,7 @@ export function handleToolExecutionStart(
     const args = evt.args;
     const runId = ctx.params.runId;
     ctx.state.toolExecutionSinceLastBlockReply = true;
+    maybeEmitPreToolPreamble(ctx, toolName);
     ctx.params.onExecutionPhase?.({
       phase: "tool_execution_started",
       tool: toolName,

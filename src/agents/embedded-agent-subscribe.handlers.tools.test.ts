@@ -26,6 +26,7 @@ function createTestContext(): {
   onBlockReplyFlush: ReturnType<typeof vi.fn<() => Promise<void>>>;
   onAgentEvent: ReturnType<typeof vi.fn>;
   onExecutionPhase: ReturnType<typeof vi.fn>;
+  emitBlockReply: ReturnType<typeof vi.fn>;
   trace: ReturnType<typeof vi.fn>;
   isEnabled: ReturnType<typeof vi.fn>;
 } {
@@ -34,6 +35,7 @@ function createTestContext(): {
   const onBlockReplyFlush = vi.fn<() => Promise<void>>();
   const onAgentEvent = vi.fn();
   const onExecutionPhase = vi.fn();
+  const emitBlockReply = vi.fn();
   const warn = vi.fn();
   const trace = vi.fn();
   const isEnabled = vi.fn(() => false);
@@ -46,6 +48,7 @@ function createTestContext(): {
       onBlockReplyFlush,
       onAgentEvent,
       onExecutionPhase,
+      onBlockReply: undefined,
       onToolResult: undefined,
     },
     flushBlockReplyBuffer: vi.fn(),
@@ -81,15 +84,29 @@ function createTestContext(): {
       successfulCronAdds: 0,
       deterministicApprovalPromptSent: false,
       toolExecutionSinceLastBlockReply: false,
+      emittedAssistantUpdate: false,
+      visibleBlockReplyCount: 0,
+      deferBlockReplyDelivery: false,
+      preToolPreambleEmitted: false,
     },
     shouldEmitToolResult: () => false,
     shouldEmitToolOutput: () => false,
+    emitBlockReply,
     emitToolSummary: vi.fn(),
     emitToolOutput: vi.fn(),
     trimMessagingToolSent: vi.fn(),
   };
 
-  return { ctx, warn, onBlockReplyFlush, onAgentEvent, onExecutionPhase, trace, isEnabled };
+  return {
+    ctx,
+    warn,
+    onBlockReplyFlush,
+    onAgentEvent,
+    onExecutionPhase,
+    emitBlockReply,
+    trace,
+    isEnabled,
+  };
 }
 
 type CapturedAgentEvent = { stream?: string; data?: Record<string, unknown> };
@@ -166,6 +183,64 @@ function requireSingleMessagingTarget(ctx: ToolHandlerContext) {
   expect(targets).toHaveLength(1);
   return requireRecord(targets[0], "messaging target");
 }
+
+describe("handleToolExecutionStart pre-tool preamble", () => {
+  it("emits a visible preamble before the first work tool when no text was visible", async () => {
+    const { ctx, emitBlockReply, onExecutionPhase } = createTestContext();
+    ctx.params.onBlockReply = vi.fn();
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "tool-preamble-1",
+      args: { command: "sleep 10" },
+    });
+
+    expect(emitBlockReply).toHaveBeenCalledWith(
+      { text: "I'll start working on this now." },
+      { bypassDefer: true },
+    );
+    expect(ctx.state.preToolPreambleEmitted).toBe(true);
+    expect(emitBlockReply.mock.invocationCallOrder[0]).toBeLessThan(
+      onExecutionPhase.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+  });
+
+  it("emits the preamble even when terminal block replies are deferred", async () => {
+    const { ctx, emitBlockReply } = createTestContext();
+    ctx.params.onBlockReply = vi.fn();
+    ctx.state.deferBlockReplyDelivery = true;
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "tool-preamble-deferred-terminal",
+      args: { command: "sleep 10" },
+    });
+
+    expect(emitBlockReply).toHaveBeenCalledWith(
+      { text: "I'll start working on this now." },
+      { bypassDefer: true },
+    );
+    expect(ctx.state.preToolPreambleEmitted).toBe(true);
+  });
+
+  it("does not emit the preamble after assistant text was already visible", async () => {
+    const { ctx, emitBlockReply } = createTestContext();
+    ctx.params.onBlockReply = vi.fn();
+    ctx.state.emittedAssistantUpdate = true;
+
+    await handleToolExecutionStart(ctx, {
+      type: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "tool-preamble-skip",
+      args: { command: "echo ok" },
+    });
+
+    expect(emitBlockReply).not.toHaveBeenCalled();
+    expect(ctx.state.preToolPreambleEmitted).toBe(false);
+  });
+});
 
 describe("handleToolExecutionStart read path checks", () => {
   it("emits trace-only tool start diagnostics when trace logging is enabled", async () => {

@@ -124,6 +124,15 @@ describe("buildAgentSystemPrompt", () => {
     );
   });
 
+  it("asks for a brief preamble before tools on complex work", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+    });
+
+    expect(prompt).toContain("send one brief user-visible preamble before the first tool call");
+    expect(prompt).toContain("Direct answers, exact-output requests, and obvious one-step work");
+  });
+
   it("omits extended sections in minimal prompt mode", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

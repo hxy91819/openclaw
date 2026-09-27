@@ -53,6 +53,7 @@ function createToolHandlerCtx(): ToolHandlerContext {
     flushBlockReplyBuffer: vi.fn(),
     shouldEmitToolResult: () => false,
     shouldEmitToolOutput: () => false,
+    emitBlockReply: vi.fn(),
     emitToolSummary: vi.fn(),
     emitToolOutput: vi.fn(),
     trimMessagingToolSent: vi.fn(),

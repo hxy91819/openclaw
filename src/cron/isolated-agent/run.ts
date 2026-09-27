@@ -326,6 +326,7 @@ function resolveCronSourceDeliveryPlan(params: {
       target,
       messageToolEnabled: true,
       messageToolForced: false,
+      requireExplicitMessageTarget: true,
       directFallback: false,
     });
   }
@@ -335,6 +336,7 @@ function resolveCronSourceDeliveryPlan(params: {
     target,
     messageToolEnabled: true,
     messageToolForced: false,
+    requireExplicitMessageTarget: true,
     directFallback: true,
     skipFallbackWhenMessageToolSentToTarget: params.resolvedDelivery.ok,
   });

@@ -458,7 +458,7 @@ function buildExecutionBiasSection(params: { isMinimal: boolean }) {
     "- Weak/empty tool result: vary query, path, command, or source before concluding.",
     "- Mutable facts need live checks: files, git, clocks, versions, services, processes, package state.",
     "- Final answer needs evidence: test/build/lint, screenshot, inspection, tool output, or a named blocker.",
-    "- Longer work: brief progress update, then keep going; use background work or sub-agents when they fit.",
+    "- Longer work: after the first preamble, keep going; use background work or sub-agents when they fit.",
     "",
   ];
 }
@@ -1079,6 +1079,8 @@ export function buildAgentSystemPrompt(params: {
         override: providerSectionOverrides.tool_call_style,
         fallback: [
           "## Tool Call Style",
+          "Complex, ambiguous, or potentially long work: send one brief user-visible preamble before the first tool call with the immediate approach and next step.",
+          "Direct answers, exact-output requests, and obvious one-step work: skip the preamble.",
           "Routine low-risk calls: no narration.",
           "Narrate only for complex, sensitive/destructive, or explicitly requested steps.",
           "First-class tool exists: use it; do not ask user to run equivalent CLI/slash command.",

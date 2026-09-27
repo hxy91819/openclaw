@@ -195,6 +195,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     deferredBlockReplies: [],
     deferredAssistantEvents: [],
     toolExecutionSinceLastBlockReply: false,
+    preToolPreambleEmitted: false,
     reasoningStreamOpen: false,
     assistantMessageIndex: 0,
     lastAssistantStreamItemId: undefined,
@@ -334,14 +335,18 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
   };
   const emitBlockReply = (
     payload: BlockReplyPayload,
-    options?: { assistantMessageIndex?: number; consumePendingToolMedia?: boolean },
+    options?: {
+      assistantMessageIndex?: number;
+      consumePendingToolMedia?: boolean;
+      bypassDefer?: boolean;
+    },
   ) => {
     const withAssistantDirectives = consumePendingAssistantReplyDirectivesIntoReply(state, payload);
     const withToolMedia =
       options?.consumePendingToolMedia === false
         ? withAssistantDirectives
         : consumePendingToolMediaIntoReply(state, withAssistantDirectives);
-    if (state.deferBlockReplyDelivery) {
+    if (state.deferBlockReplyDelivery && options?.bypassDefer !== true) {
       const deferredPayload =
         options?.assistantMessageIndex !== undefined
           ? setReplyPayloadMetadata(withToolMedia, {
@@ -1204,6 +1209,7 @@ export function subscribeEmbeddedAgentSession(params: SubscribeEmbeddedAgentSess
     state.pendingToolAudioAsVoice = false;
     state.pendingToolTrustedLocalMedia = false;
     state.visibleBlockReplyCount = 0;
+    state.preToolPreambleEmitted = false;
     state.deferBlockReplyDelivery = typeof params.onBeforeTerminalDelivery === "function";
     clearDeferredAssistantEvents();
     clearDeferredBlockReplies();

@@ -166,6 +166,28 @@ describe("source delivery plan", () => {
     expect(outcome.unverifiedMessageToolDelivery).toBe(false);
   });
 
+  it("does not synthesize an implicit target when explicit target evidence is required", () => {
+    const contract = createSourceDeliveryPlan({
+      owner: "direct_fallback",
+      reason: "cron_announce",
+      target: { channel: "slack", to: "channel:C1" },
+      messageToolEnabled: true,
+      requireExplicitMessageTarget: true,
+      directFallback: true,
+      skipFallbackWhenMessageToolSentToTarget: true,
+    });
+
+    const outcome = resolveSourceDeliveryOutcome(contract, {
+      didSendViaMessageTool: true,
+      messageToolSentTargets: [],
+    });
+
+    expect(outcome.visibleDeliveries).toEqual([]);
+    expect(outcome.verifiedMessageToolDelivery).toBe(false);
+    expect(outcome.satisfiesSourceDelivery).toBe(false);
+    expect(outcome.unverifiedMessageToolDelivery).toBe(false);
+  });
+
   it("matches source targets through the same provider normalization used by delivery", () => {
     expect(
       sourceDeliveryTargetsMatch(

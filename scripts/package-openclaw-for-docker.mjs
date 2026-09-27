@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Builds the OpenClaw package artifact used by Docker E2E.
-// The script owns the build/inventory/pack sequence so local scheduler, shell
-// helpers, and GitHub Actions all prepare the exact same npm tarball.
+// Builds a local OpenClaw npm tarball for Docker E2E and ad hoc deployment.
+// Definition: owns one build/inventory/smoke/pack/check sequence and packs with
+// --ignore-scripts so npm lifecycle hooks cannot repeat the expensive build.
+// Parameters: --output-dir, --output-name, --source-dir, --profile, --skip-build.
+// Outputs: prints the generated tarball path on stdout; logs progress to stderr.
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -15,6 +17,7 @@ const DEFAULT_PACKAGE_PACK_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_PACKAGE_TARBALL_CHECK_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_KILL_AFTER_MS = 5_000;
 const DEFAULT_CAPTURED_STDOUT_MAX_BYTES = 1024 * 1024;
+const DEFAULT_BUILD_PROFILE = "full";
 const ACTIVE_CHILD_KILLERS = new Set();
 const SIGNAL_EXIT_CODES = {
   SIGHUP: 129,
@@ -75,16 +78,50 @@ function readEqualsOptionValue(value, optionName) {
   return value;
 }
 
+export function usage() {
+  return [
+    "Usage:",
+    "  node scripts/package-openclaw-for-docker.mjs [options]",
+    "",
+    "Description:",
+    "  Build and pack a local OpenClaw npm tarball for Docker E2E or deployment testing.",
+    "  The script runs build-all at most once, writes the package dist inventory,",
+    "  prepares the package changelog, packs with npm --ignore-scripts, restores the",
+    "  changelog, and validates the resulting tarball.",
+    "",
+    "Options:",
+    "  --output-dir <path>   Directory for the .tgz artifact. Default: .artifacts/docker-e2e-package",
+    "  --output-name <name>  Rename the generated tarball after packing.",
+    "  --source-dir <path>   Repository root to package. Default: current repository root.",
+    `  --profile <name>      build-all profile to run before packing. Default: ${DEFAULT_BUILD_PROFILE}`,
+    "  --skip-build          Reuse existing dist artifacts and only run inventory/pack/check.",
+    "  -h, --help            Show this help.",
+    "",
+    "Outputs:",
+    "  stdout: absolute path to the generated tarball.",
+    "  stderr: build, packaging, and validation progress.",
+    "  exit code: 0 on success, non-zero when build, pack, or validation fails.",
+    "",
+    "Examples:",
+    "  node scripts/package-openclaw-for-docker.mjs --output-dir /tmp/openclaw-pack",
+    "  node scripts/package-openclaw-for-docker.mjs --skip-build --output-dir /tmp/openclaw-pack --output-name openclaw-current.tgz",
+  ].join("\n");
+}
+
 export function parseArgs(argv) {
   const options = {
+    help: false,
     outputDir: "",
     outputName: "",
+    profile: DEFAULT_BUILD_PROFILE,
     skipBuild: false,
     sourceDir: ROOT_DIR,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--output-dir") {
+    if (arg === "--") {
+      continue;
+    } else if (arg === "--output-dir") {
       options.outputDir = readOptionValue(argv, index, arg);
       index += 1;
     } else if (arg?.startsWith("--output-dir=")) {
@@ -97,6 +134,11 @@ export function parseArgs(argv) {
         arg.slice("--output-name=".length),
         "--output-name",
       );
+    } else if (arg === "--profile") {
+      options.profile = readOptionValue(argv, index, arg);
+      index += 1;
+    } else if (arg?.startsWith("--profile=")) {
+      options.profile = readEqualsOptionValue(arg.slice("--profile=".length), "--profile");
     } else if (arg === "--skip-build") {
       options.skipBuild = true;
     } else if (arg === "--source-dir") {
@@ -104,8 +146,10 @@ export function parseArgs(argv) {
       index += 1;
     } else if (arg?.startsWith("--source-dir=")) {
       options.sourceDir = readEqualsOptionValue(arg.slice("--source-dir=".length), "--source-dir");
+    } else if (arg === "--help" || arg === "-h") {
+      options.help = true;
     } else {
-      throw new Error(`unknown argument: ${arg}`);
+      throw new Error(`unknown argument: ${arg}\n\n${usage()}`);
     }
   }
   return options;
@@ -236,30 +280,21 @@ function run(command, args, cwd, options = {}) {
   });
 }
 
-const PACKAGE_ARTIFACT_BUILD_STEPS = [
-  {
-    label: "Building OpenClaw package artifacts",
-    command: "node",
-    args: ["scripts/build-all.mjs"],
-  },
-];
-
 export async function buildPackageArtifacts(sourceDir, options = {}) {
   const runImpl = options.runImpl ?? run;
-  for (const step of PACKAGE_ARTIFACT_BUILD_STEPS) {
-    console.error(`==> ${step.label}`);
-    await runImpl(step.command, step.args, sourceDir, {
-      env: {
-        ...process.env,
-        OPENCLAW_BUILD_ALL_NO_PNPM: "1",
-        OPENCLAW_RUN_NODE_SKIP_DTS_BUILD: "1",
-      },
-      timeoutMs: resolveTimeoutMs(
-        "OPENCLAW_DOCKER_PACKAGE_BUILD_TIMEOUT_MS",
-        DEFAULT_PACKAGE_BUILD_TIMEOUT_MS,
-      ),
-    });
-  }
+  const profile = options.profile ?? DEFAULT_BUILD_PROFILE;
+  console.error(`==> Building OpenClaw package artifacts (${profile})`);
+  await runImpl("node", ["scripts/build-all.mjs", profile], sourceDir, {
+    env: {
+      ...process.env,
+      OPENCLAW_BUILD_ALL_NO_PNPM: "1",
+      OPENCLAW_RUN_NODE_SKIP_DTS_BUILD: "1",
+    },
+    timeoutMs: resolveTimeoutMs(
+      "OPENCLAW_DOCKER_PACKAGE_BUILD_TIMEOUT_MS",
+      DEFAULT_PACKAGE_BUILD_TIMEOUT_MS,
+    ),
+  });
 }
 
 export const runCommandForTest = run;
@@ -319,6 +354,10 @@ export async function packOpenClawPackageForDocker(sourceDir, outputDir, options
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    process.stdout.write(`${usage()}\n`);
+    return;
+  }
   const sourceDir = path.resolve(ROOT_DIR, options.sourceDir || ROOT_DIR);
   const outputDir = path.resolve(
     ROOT_DIR,
@@ -327,7 +366,7 @@ async function main() {
   await fs.mkdir(outputDir, { recursive: true });
 
   if (!options.skipBuild) {
-    await buildPackageArtifacts(sourceDir);
+    await buildPackageArtifacts(sourceDir, { profile: options.profile });
   }
 
   console.error("==> Writing OpenClaw package inventory");

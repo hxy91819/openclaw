@@ -126,6 +126,7 @@ export type EmbeddedAgentSubscribeState = {
   deferredBlockReplies: BlockReplyPayload[];
   deferredAssistantEvents: AssistantStreamDelivery[];
   toolExecutionSinceLastBlockReply: boolean;
+  preToolPreambleEmitted: boolean;
   reasoningStreamOpen: boolean;
   assistantMessageIndex: number;
   lastAssistantStreamItemId?: string;
@@ -251,7 +252,7 @@ export type EmbeddedAgentSubscribeContext = {
     data: AssistantStreamData,
     options?: { emitPartialReply?: boolean },
   ) => void;
-  emitBlockReply: (payload: BlockReplyPayload) => void;
+  emitBlockReply: (payload: BlockReplyPayload, options?: { bypassDefer?: boolean }) => void;
   flushDeferredAssistantEvents: () => void;
   flushDeferredBlockReplies: () => void;
   clearDeferredAssistantEvents: () => void;
@@ -267,6 +268,7 @@ type ToolHandlerParams = Pick<
   SubscribeEmbeddedAgentSessionParams,
   | "runId"
   | "onBlockReplyFlush"
+  | "onBlockReply"
   | "onAgentEvent"
   | "onExecutionPhase"
   | "onHeartbeatToolResponse"
@@ -307,6 +309,10 @@ type ToolHandlerState = Pick<
   | "successfulCronAdds"
   | "deterministicApprovalPromptSent"
   | "toolExecutionSinceLastBlockReply"
+  | "emittedAssistantUpdate"
+  | "visibleBlockReplyCount"
+  | "deferBlockReplyDelivery"
+  | "preToolPreambleEmitted"
 >;
 
 export type ToolHandlerContext = {
@@ -319,6 +325,7 @@ export type ToolHandlerContext = {
   flushBlockReplyBuffer: () => void | Promise<void>;
   shouldEmitToolResult: () => boolean;
   shouldEmitToolOutput: () => boolean;
+  emitBlockReply: (payload: BlockReplyPayload, options?: { bypassDefer?: boolean }) => void;
   emitToolSummary: (toolName?: string, meta?: string) => void;
   emitToolOutput: (toolName?: string, meta?: string, output?: string, result?: unknown) => void;
   trimMessagingToolSent: () => void;

@@ -239,11 +239,13 @@ export function resolveSourceDeliveryOutcome(
 ): SourceDeliveryOutcome {
   const didSendViaMessageTool = params.didSendViaMessageTool === true;
   const explicitTargets = params.messageToolSentTargets ?? [];
-  // A send without explicit target metadata still counts when the plan has a default target.
+  // A send without explicit target metadata can only count for legacy
+  // message-tool-owned flows. Cron delivery state requires concrete target
+  // evidence so pending/inter-session sends cannot masquerade as channel acks.
   const sentTargets =
     explicitTargets.length > 0
       ? explicitTargets
-      : didSendViaMessageTool
+      : didSendViaMessageTool && !plan.messageTool.requireExplicitTarget
         ? [resolveImplicitMessageToolDeliveryTarget(plan)].filter(
             (target): target is SourceDeliveryMessageToolTarget => Boolean(target),
           )

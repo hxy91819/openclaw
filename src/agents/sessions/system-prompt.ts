@@ -128,6 +128,12 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
   }
 
   // Always include these
+  addGuideline(
+    "For complex, ambiguous, or potentially long work, send one brief user-visible preamble before the first tool call with your immediate approach and next step.",
+  );
+  addGuideline(
+    "Skip the preamble for direct answers, exact-output requests, and obvious one-step work.",
+  );
   addGuideline("Be concise in your responses");
   addGuideline("Show file paths clearly when working with files");
 

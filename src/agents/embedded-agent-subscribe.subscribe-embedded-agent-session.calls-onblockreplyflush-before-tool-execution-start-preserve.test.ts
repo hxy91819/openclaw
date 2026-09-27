@@ -17,6 +17,87 @@ function firstBlockReplyText(onBlockReply: ReturnType<typeof vi.fn>): string | u
 }
 
 describe("subscribeEmbeddedAgentSession", () => {
+  it("emits a pre-tool preamble through block replies before the first visible tool", () => {
+    const { session, emit } = createStubSessionHarness();
+
+    const onBlockReply = vi.fn();
+    const onExecutionPhase = vi.fn();
+
+    subscribeEmbeddedAgentSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"],
+      runId: "run-pre-tool-preamble",
+      onBlockReply,
+      onExecutionPhase,
+      blockReplyBreak: "text_end",
+    });
+
+    emit({
+      type: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "tool-preamble",
+      args: { command: "sleep 10" },
+    });
+
+    expect(firstBlockReplyText(onBlockReply)).toBe("I'll start working on this now.");
+    expect(onBlockReply.mock.invocationCallOrder[0]).toBeLessThan(
+      onExecutionPhase.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
+  });
+
+  it("emits the pre-tool preamble before tools when terminal delivery is deferred", () => {
+    const { session, emit } = createStubSessionHarness();
+
+    const onBlockReply = vi.fn();
+    const onBeforeTerminalDelivery = vi.fn();
+
+    subscribeEmbeddedAgentSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"],
+      runId: "run-pre-tool-preamble-deferred-terminal",
+      onBlockReply,
+      onBeforeTerminalDelivery,
+      blockReplyBreak: "text_end",
+    });
+
+    emit({
+      type: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "tool-preamble-deferred-terminal",
+      args: { command: "sleep 10" },
+    });
+
+    expect(firstBlockReplyText(onBlockReply)).toBe("I'll start working on this now.");
+    expect(onBeforeTerminalDelivery).not.toHaveBeenCalled();
+  });
+
+  it("does not emit a pre-tool preamble after assistant text was visible", () => {
+    const { session, emit } = createStubSessionHarness();
+
+    const onBlockReply = vi.fn();
+
+    subscribeEmbeddedAgentSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"],
+      runId: "run-pre-tool-preamble-skip",
+      onBlockReply,
+      blockReplyBreak: "text_end",
+    });
+
+    emit({
+      type: "message_start",
+      message: { role: "assistant" },
+    });
+    emitAssistantTextDelta({ emit, delta: "I will inspect the code first." });
+
+    emit({
+      type: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "tool-preamble-skip",
+      args: { command: "echo ok" },
+    });
+
+    expect(firstBlockReplyText(onBlockReply)).toBe("I will inspect the code first.");
+    expect(onBlockReply).toHaveBeenCalledTimes(1);
+  });
+
   it("calls onBlockReplyFlush before tool_execution_start to preserve message boundaries", () => {
     const { session, emit } = createStubSessionHarness();
 

@@ -900,14 +900,36 @@ describe("runCronIsolatedAgentTurn message tool policy", () => {
     });
   });
 
-  it("skips cron fallback delivery when the message tool sends to the bound target", async () => {
-    await expectCronFallbackSkippedForMessageToolDelivery({
-      sentTargets: [],
-      job: {
+  it("uses announce fallback when the message tool has no target metadata", async () => {
+    mockRunCronFallbackPassthrough();
+    resolveCronDeliveryPlanMock.mockReturnValue(makeAnnounceDeliveryPlan());
+    runEmbeddedAgentMock.mockResolvedValue(makeMessageToolRunResult([]));
+
+    const result = await runCronIsolatedAgentTurn({
+      ...makeParams(),
+      job: makeAnnounceMessageToolJob({
         id: "message-tool-bound-target",
         name: "Message Tool Bound Target",
+      }),
+    });
+
+    expect(dispatchCronDeliveryMock).toHaveBeenCalledTimes(1);
+    expectDispatchFields({
+      deliveryRequested: true,
+      sourceDeliveryOutcome: {
+        visibleDeliveries: [],
+        verifiedMessageToolDelivery: false,
+        satisfiesSourceDelivery: false,
+        unverifiedMessageToolDelivery: false,
       },
     });
+    expectDeliveryFields(result.delivery, {
+      intended: { channel: "messagechat", to: "123", source: "explicit" },
+      resolved: { ok: true, channel: "messagechat", to: "123", source: "explicit" },
+      fallbackUsed: true,
+      delivered: true,
+    });
+    expect(result.delivery).not.toHaveProperty("messageToolSentTo");
   });
 
   it("rewrites generic message provider to resolved channel in delivery trace", async () => {
