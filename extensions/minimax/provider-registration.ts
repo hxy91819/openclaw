@@ -38,6 +38,7 @@ import {
   buildMinimaxProvider,
   resolveMinimaxCatalogBaseUrl,
 } from "./provider-catalog.js";
+import { createMiniMaxMessageEndMarkerWrapper } from "./stream-output.js";
 import { resolveMinimaxThinkingProfile } from "./thinking.js";
 
 const API_PROVIDER_ID = "minimax";
@@ -63,7 +64,9 @@ const HYBRID_ANTHROPIC_OPENAI_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
 });
 const MINIMAX_PROVIDER_HOOKS = {
   ...HYBRID_ANTHROPIC_OPENAI_REPLAY_HOOKS,
-  ...MINIMAX_FAST_MODE_STREAM_HOOKS,
+  wrapStreamFn: (
+    ctx: Parameters<NonNullable<typeof MINIMAX_FAST_MODE_STREAM_HOOKS.wrapStreamFn>>[0],
+  ) => createMiniMaxMessageEndMarkerWrapper(MINIMAX_FAST_MODE_STREAM_HOOKS.wrapStreamFn!(ctx)),
   resolveReasoningOutputMode: () => "native" as const,
   resolveThinkingProfile: ({ modelId }: { modelId: string }) =>
     resolveMinimaxThinkingProfile(modelId),
