@@ -100,6 +100,7 @@ describe("listChannelCatalogEntries", () => {
     expect(discoverSpy).toHaveBeenCalledTimes(1);
     expect(firstDiscoverOptions(discoverSpy)).toStrictEqual({
       env: ENV,
+      extraPaths: undefined,
       installRecords: RECORDS,
       workspaceDir: undefined,
     });
@@ -129,6 +130,7 @@ describe("listChannelCatalogEntries", () => {
     expect(loadRecordsSpy).not.toHaveBeenCalled();
     expect(firstDiscoverOptions(discoverSpy)).toStrictEqual({
       env: ENV,
+      extraPaths: undefined,
       installRecords: supplied,
       workspaceDir: undefined,
     });
@@ -143,6 +145,22 @@ describe("listChannelCatalogEntries", () => {
 
     expect(loadRecordsSpy).toHaveBeenCalledTimes(1);
     expect(firstDiscoverOptions(discoverSpy)).not.toHaveProperty("installRecords");
+  });
+
+  it("forwards caller-supplied extraPaths to discovery", async () => {
+    const { module, discoverSpy } = await loadWithMocks({});
+
+    module.listChannelCatalogEntries({
+      env: ENV,
+      extraPaths: ["/tmp/plugins/a", "/tmp/plugins/b"],
+    });
+
+    expect(firstDiscoverOptions(discoverSpy)).toStrictEqual({
+      env: ENV,
+      extraPaths: ["/tmp/plugins/a", "/tmp/plugins/b"],
+      installRecords: RECORDS,
+      workspaceDir: undefined,
+    });
   });
 
   it("treats ledger read errors as a soft fallback (no installRecords propagated)", async () => {
