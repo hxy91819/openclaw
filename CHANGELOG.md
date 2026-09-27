@@ -1,3 +1,9 @@
+## 2026.7.4
+
+### Highlights
+
+- OpenClaw2 acceptance build from HEAD at 80b40a85359.
+
 ﻿# Changelog
 
 Docs: https://docs.openclaw.ai
