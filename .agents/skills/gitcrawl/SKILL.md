@@ -1,17 +1,22 @@
 ---
 name: gitcrawl
-description: "GitHub archive: issue/PR search, sync freshness, duplicate clusters, gh-shim PR status, and Gitcrawl repo work."
+description: "GitHub archive: issue/PR search, sync freshness, duplicate clusters, octopool PR status, and Gitcrawl repo work."
 metadata:
   openclaw:
     homepage: https://github.com/openclaw/gitcrawl
     requires:
       bins:
         - gitcrawl
+        - octopool
     install:
       - kind: go
         module: github.com/openclaw/gitcrawl/cmd/gitcrawl@latest
         bins:
           - gitcrawl
+      - kind: go
+        module: github.com/openclaw/octopool/cmd/octopool@latest
+        bins:
+          - octopool
 ---
 
 # Gitcrawl
@@ -32,12 +37,18 @@ gitcrawl clusters openclaw/openclaw --sort size --min-size 5
 gitcrawl cluster-detail openclaw/openclaw --id <cluster-id>
 ```
 
-For PR triage, start cached and go live only before mutation/merge decisions:
+Hydrate missing PR details/comments before PR triage; check completeness first (rate-limit aware, stops before crossing a reserve floor):
 
 ```bash
-gitcrawl gh pr status <number-or-url> -R openclaw/openclaw --compact
-gitcrawl gh pr view <number-or-url> -R openclaw/openclaw --json number,title,state,url,isDraft,headRef,headSha
-gitcrawl gh --live pr status <number-or-url> -R openclaw/openclaw --compact
+gitcrawl coverage openclaw/openclaw --json
+gitcrawl fill-pr-details openclaw/openclaw --order open-first --include-comments --json
+```
+
+For PR status, use octopool (the `gitcrawl gh` shim moved to octopool): use cached archive data first and go live only before mutation/merge decisions:
+
+```bash
+octopool gh pr status <number-or-url> -R openclaw/openclaw --compact
+octopool gh pr view <number-or-url> -R openclaw/openclaw --json number,title,state,url,isDraft,headRef,headSha
 ```
 
 Use live `gh` plus checkout proof before commenting, labeling, closing, reopening, merging, or filing a PR review:
