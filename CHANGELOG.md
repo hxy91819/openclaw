@@ -1,3 +1,9 @@
+## 2026.6.15
+
+### Highlights
+
+- Daily build from upstream main at 8682d0701b.
+
 ﻿# Changelog
 
 Docs: https://docs.openclaw.ai
